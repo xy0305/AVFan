@@ -411,28 +411,28 @@ enum HTMLParser {
             let path = url.path.lowercased()
             if path.contains("/api/") { return }
             let isMedia = path.hasSuffix(".m3u8") || path.hasSuffix(".mp4") || path.hasSuffix(".m4v")
-                || path.contains(".m3u8") || (path.hasSuffix(".mp4") && !path.contains("/covers/"))
-            guard isMedia else { return }
+                || path.contains(".m3u8")
+            guard isMedia, !path.contains("/covers/") else { return }
             if seen.insert(url.absoluteString).inserted {
                 results.append(WatchStream(url: url.absoluteString, label: label))
             }
         }
-        if let content = firstMatch("contentUrl"\s*:\s*"([^"]+)"", in: html) {
+        if let content = firstMatch(#"contentUrl"\s*:\s*"([^"]+)""#, in: html) {
             accept(content, label: "在线观看")
         }
-        if let regex = try? NSRegularExpression(pattern: "<source[^>]+src=["']([^"']+)["'][^>]*>", options: [.caseInsensitive]) {
+        if let regex = try? NSRegularExpression(pattern: #"<source[^>]+src=["']([^"']+)["'][^>]*>"#, options: [.caseInsensitive]) {
             let ns = html as NSString
             for match in regex.matches(in: html, range: NSRange(location: 0, length: ns.length)) {
                 accept(ns.substring(with: match.range(at: 1)), label: "在线观看")
             }
         }
-        if let regex = try? NSRegularExpression(pattern: "<video[^>]+src=["']([^"']+)["']", options: [.caseInsensitive]) {
+        if let regex = try? NSRegularExpression(pattern: #"<video[^>]+src=["']([^"']+)["']"#, options: [.caseInsensitive]) {
             let ns = html as NSString
             for match in regex.matches(in: html, range: NSRange(location: 0, length: ns.length)) {
                 accept(ns.substring(with: match.range(at: 1)), label: "在线观看")
             }
         }
-        if let regex = try? NSRegularExpression(pattern: "https?://[^\s"'<>]+\.(m3u8|mp4|m4v)(\?[^\s"'<>]*)?", options: [.caseInsensitive]) {
+        if let regex = try? NSRegularExpression(pattern: #"https?://[^\s"'<>]+\.(m3u8|mp4|m4v)(\?[^\s"'<>]*)?"#, options: [.caseInsensitive]) {
             let ns = html as NSString
             for match in regex.matches(in: html, range: NSRange(location: 0, length: ns.length)) {
                 accept(ns.substring(with: match.range), label: "在线观看")
