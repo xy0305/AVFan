@@ -1,0 +1,97 @@
+name: Build unsigned IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-ipa-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ipa:
+    name: Build Release IPA
+    runs-on: macos-26
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Show Xcode version
+        run: |
+          xcodebuild -version
+          xcodebuild -showsdks
+          swift --version
+
+      - name: Parser fixture tests (macOS, no simulator)
+        run: |
+          set -euo pipefail
+          swiftc \
+            -o "$RUNNER_TEMP/parser-tests" \
+            AVFan/Models/Models.swift \
+            AVFan/Parsing/HTMLParser.swift \
+            scripts/test_parser_main.swift
+          "$RUNNER_TEMP/parser-tests"
+
+      - name: Native 115 crypto tests (macOS, no simulator)
+        run: python3 scripts/test-115-native.py
+
+      - name: Build unsigned (iphoneos)
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project AVFan.xcodeproj \
+            -scheme AVFan \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGN_ENTITLEMENTS="" \
+            clean build \
+            | tee "$RUNNER_TEMP/xcodebuild.log"
+
+      - name: Package IPA
+        run: |
+          set -euo pipefail
+          app_path="$RUNNER_TEMP/DerivedData/Build/Products/Release-iphoneos/AVFan.app"
+          test -d "$app_path"
+          /usr/libexec/PlistBuddy -c "Add :AVFanSourceCommit string $GITHUB_SHA" "$app_path/Info.plist"
+          /usr/libexec/PlistBuddy -c "Add :AVFanSourceTree string $(git rev-parse HEAD^{tree})" "$app_path/Info.plist"
+          mkdir -p "$RUNNER_TEMP/ipa/Payload"
+          ditto "$app_path" "$RUNNER_TEMP/ipa/Payload/AVFan.app"
+          find "$RUNNER_TEMP/ipa/Payload" -name '*.xcent' -delete
+          find "$RUNNER_TEMP/ipa/Payload" -name 'embedded.mobileprovision' -delete
+          version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app_path/Info.plist")
+          build=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$app_path/Info.plist")
+          ipa_name="AVFan-unsigned-${version}-${build}.ipa"
+          cd "$RUNNER_TEMP/ipa"
+          zip -qry "$GITHUB_WORKSPACE/$ipa_name" Payload
+          echo "IPA_NAME=$ipa_name" >> "$GITHUB_ENV"
+          ls -lh "$GITHUB_WORKSPACE/$ipa_name"
+          TZ=Asia/Shanghai date +"Packaged at %Y-%m-%d %H:%M:%S %Z"
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: AVFan-unsigned-${{ github.run_number }}
+          path: AVFan-unsigned-*.ipa
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-log-${{ github.run_number }}
+          path: ${{ runner.temp }}/xcodebuild.log
+          if-no-files-found: ignore
+          retention-days: 7
