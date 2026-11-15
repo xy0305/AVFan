@@ -33,10 +33,12 @@ assert 'avfan.115' in s or 'KeychainStore' in s
 assert 'avdb.115' not in s
 assert 'SecRandomCopyBytes' in s
 player = (root / 'AVFan/Views/Pan115PlayerView.swift').read_text()
-assert 'addOfflineTask' in player and 'waitOfflineReady' in player
-assert 'streamsForVideo' in player or 'originalPlayURL' in player
-assert 'AVPlayer' in player
-print('PASS: AVFan 115 storage isolation and player uses push/wait/play APIs')
+assert 'addOfflineTask' in player
+assert 'waitUntilPlayable' in player or 'waitOfflineReady' in player
+assert 'listOfflineTasks' in player or 'findMatchedVideos' in player
+assert 'streamsForVideo' in player or 'originalStream' in player
+assert 'KSChromePlayer' in player
+print('PASS: AVFan 115 storage isolation and player uses KSPlayer push/wait/play APIs')
 with tempfile.TemporaryDirectory() as d:
     p = Path(d) / 'main.swift'
     p.write_text('import Foundation\nimport Security\nenum Pan115Error: Error { case api(String) }\n' + crypto + test)
