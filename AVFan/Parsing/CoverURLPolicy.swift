@@ -50,6 +50,7 @@ enum CoverURLPolicy {
     }
 
     static func isOfficialStoreImage(_ value: String) -> Bool {
+        guard looksLikeImage(value), !looksLikeVideo(value) else { return false }
         let host = hostOf(value)
         return host.contains("dmm.co.jp") || host.contains("dmm.com")
             || host.contains("fanza") || host.contains("awsimgsrc")
@@ -89,10 +90,17 @@ enum CoverURLPolicy {
         return 0
     }
 
-    private static func looksLikeImage(_ value: String) -> Bool {
+    static func looksLikeImage(_ value: String) -> Bool {
+        if looksLikeVideo(value) { return false }
         let lower = value.lowercased()
         return lower.contains(".jpg") || lower.contains(".jpeg") || lower.contains(".png")
             || lower.contains(".webp") || lower.contains("/covers/")
+    }
+
+    static func looksLikeVideo(_ value: String) -> Bool {
+        let lower = value.lowercased()
+        return lower.contains(".mp4") || lower.contains(".m4v") || lower.contains(".m3u8")
+            || lower.contains("/pv/") || lower.contains("/hls/")
     }
 
     private static func normalized(_ raw: String) -> String? {
@@ -102,6 +110,8 @@ enum CoverURLPolicy {
         if value.hasPrefix("/") { value = "https://avfan.com" + value }
         guard value.hasPrefix("http://") || value.hasPrefix("https://") else { return nil }
         if value.contains("gdario.com") || value.contains("/assets/") { return nil }
+        if looksLikeVideo(value) { return nil }
+        guard looksLikeImage(value) || isAvfanCover(value) else { return nil }
         return value
     }
 
