@@ -175,7 +175,7 @@ enum HTMLParser {
                 href: href,
                 code: code,
                 title: title,
-                coverURL: imgSrc.map(absoluteURL),
+                coverURL: imgSrc.map { absoluteURL($0) },
                 date: date,
                 ratingText: rating.map(stripTags),
                 badges: Array(Set(badges)),
