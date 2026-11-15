@@ -156,13 +156,17 @@ struct HomeAnchoredFill: View {
 final class PosterImageModel: ObservableObject {
     @Published var image: UIImage?
     @Published var failed = false
+    /// The URL whose bitmap is currently shown (page cover, or the validated
+    /// HQ source after an upgrade). Crop policy keys off this, not the request.
+    @Published var resolvedURL: String?
     private var token = 0
 
-    func load(url: String?, displayPoints: CGSize, allowUpscale: Bool) {
+    func load(url: String?, code: String? = nil, displayPoints: CGSize, allowUpscale: Bool) {
         token += 1
         let current = token
         image = nil
         failed = false
+        resolvedURL = url
         guard let url, !url.isEmpty else {
             failed = true
             return
@@ -181,12 +185,27 @@ final class PosterImageModel: ObservableObject {
                 failed = true
             }
         }
+        // AVDB HQ cover sources (DMM / MGS), on by default: probe in the
+        // background and swap in the validated winner when one exists.
+        if let code, !code.isEmpty, HQCoverResolver.enabled {
+            Task {
+                guard let winner = await HQCoverResolver.shared.winner(for: code, pageCover: url),
+                      winner != url else { return }
+                let upgraded = await ImageLoader.shared.load(winner, maxPixelSize: max(cap, 1200))
+                guard current == token, let upgraded else { return }
+                resolvedURL = winner
+                image = upgraded
+                failed = false
+            }
+        }
     }
 }
 
 /// Front-cropped cover that paints the original bitmap with a 332 crop window.
 struct CoverImage: View {
     let url: String?
+    /// Catalog number used to look up AVDB-style HQ cover sources (DMM / MGS).
+    var code: String? = nil
     var anchorY: CGFloat = 0.22
     var allowUpscale: Bool = false
     var validatedJacket: Bool = false
@@ -199,7 +218,7 @@ struct CoverImage: View {
             ZStack {
                 placeholder
                 if let image = model.image {
-                    HomeAnchoredFill(image: image, size: proxy.size, source: url,
+                    HomeAnchoredFill(image: image, size: proxy.size, source: model.resolvedURL ?? url,
                                      anchorY: anchorY, allowUpscale: allowUpscale)
                 } else if !model.failed {
                     ProgressView().tint(.secondary)
@@ -213,7 +232,7 @@ struct CoverImage: View {
     private func reload(size: CGSize) {
         if lastURL != url || model.image == nil {
             lastURL = url
-            model.load(url: url, displayPoints: size, allowUpscale: allowUpscale)
+            model.load(url: url, code: code, displayPoints: size, allowUpscale: allowUpscale)
         }
     }
 

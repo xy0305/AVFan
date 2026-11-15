@@ -55,6 +55,9 @@
 		AF1100000000000000000053 /* ImageLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF1100000000000000000052 /* ImageLoader.swift */; };
 		AF1100000000000000000055 /* CookieBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF1100000000000000000054 /* CookieBridge.swift */; };
 		AF1100000000000000000057 /* SiteSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF1100000000000000000056 /* SiteSession.swift */; };
+		AF1100000000000000000061 /* DMMCoverResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF1100000000000000000060 /* DMMCoverResolver.swift */; };
+		AF1100000000000000000063 /* DMMLabelSeed.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF1100000000000000000062 /* DMMLabelSeed.swift */; };
+		AF1100000000000000000065 /* HQCoverResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF1100000000000000000064 /* HQCoverResolver.swift */; };
 		AF1100000000000000000059 /* HeroSwipePolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF1100000000000000000058 /* HeroSwipePolicy.swift */; };
 		AF110000000000000000005B /* SiteLoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF110000000000000000005A /* SiteLoginView.swift */; };
 		AF110000000000000000005D /* DetailPlayPill.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF110000000000000000005C /* DetailPlayPill.swift */; };
@@ -110,6 +113,9 @@
 		AF1100000000000000000052 /* ImageLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageLoader.swift; sourceTree = "<group>"; };
 		AF1100000000000000000054 /* CookieBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CookieBridge.swift; sourceTree = "<group>"; };
 		AF1100000000000000000056 /* SiteSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SiteSession.swift; sourceTree = "<group>"; };
+		AF1100000000000000000060 /* DMMCoverResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DMMCoverResolver.swift; sourceTree = "<group>"; };
+		AF1100000000000000000062 /* DMMLabelSeed.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DMMLabelSeed.swift; sourceTree = "<group>"; };
+		AF1100000000000000000064 /* HQCoverResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HQCoverResolver.swift; sourceTree = "<group>"; };
 		AF1100000000000000000058 /* HeroSwipePolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HeroSwipePolicy.swift; sourceTree = "<group>"; };
 		AF110000000000000000005A /* SiteLoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SiteLoginView.swift; sourceTree = "<group>"; };
 		AF110000000000000000005C /* DetailPlayPill.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DetailPlayPill.swift; sourceTree = "<group>"; };
@@ -198,6 +204,9 @@
 				AF1100000000000000000052 /* ImageLoader.swift */,
 				AF1100000000000000000054 /* CookieBridge.swift */,
 				AF1100000000000000000056 /* SiteSession.swift */,
+				AF1100000000000000000060 /* DMMCoverResolver.swift */,
+				AF1100000000000000000062 /* DMMLabelSeed.swift */,
+				AF1100000000000000000064 /* HQCoverResolver.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -390,6 +399,9 @@
 				AF1100000000000000000053 /* ImageLoader.swift in Sources */,
 				AF1100000000000000000055 /* CookieBridge.swift in Sources */,
 				AF1100000000000000000057 /* SiteSession.swift in Sources */,
+				AF1100000000000000000061 /* DMMCoverResolver.swift in Sources */,
+				AF1100000000000000000063 /* DMMLabelSeed.swift in Sources */,
+				AF1100000000000000000065 /* HQCoverResolver.swift in Sources */,
 				AF1100000000000000000059 /* HeroSwipePolicy.swift in Sources */,
 				AF110000000000000000005B /* SiteLoginView.swift in Sources */,
 				AF110000000000000000005D /* DetailPlayPill.swift in Sources */,
@@ -445,7 +457,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -474,7 +486,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;

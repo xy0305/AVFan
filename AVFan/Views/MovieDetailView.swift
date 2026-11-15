@@ -20,6 +20,21 @@ struct MovieDetailView: View {
     @State private var toast: String?
     @State private var resume115: PlaybackResumeEntry?
     @State private var resumeOnline: PlaybackResumeEntry?
+    @State private var sourceOverride: PlaySource?
+
+    private enum PlaySource { case online, pan115 }
+
+    /// Default playback source: online whenever the page offered a stream,
+    /// 115 otherwise. The user can switch with the source chips; the play
+    /// pill, the chips and the resource-card order all follow this value.
+    private var effectiveSource: PlaySource {
+        if let sourceOverride { return sourceOverride }
+        return display.watchStreams.isEmpty ? .pan115 : .online
+    }
+
+    private var activeResume: PlaybackResumeEntry? {
+        effectiveSource == .online ? resumeOnline : resume115
+    }
 
     private var display: MovieDetail {
         model.detail ?? MovieDetail(
@@ -114,29 +129,42 @@ struct MovieDetailView: View {
             }
             ShareLink(item: shareText) {
                 Image(systemName: "square.and.arrow.up")
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(.system(size: 18, weight: .semibold))
                     .foregroundStyle(.white)
-                    .frame(width: 36, height: 36)
-                    .liquidGlassCircle(interactive: true)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Circle())
+                    .background(.black.opacity(0.30), in: Circle())
+                    .liquidGlassCircle(interactive: false)
             }
             .buttonStyle(.plain)
+            .frame(width: 44, height: 44)
+            .contentShape(Circle())
         }
         .padding(.horizontal, 16)
         .padding(.top, 6)
     }
 
+    // Mirrors AVDB's working detail chrome button: 44 pt hit target, explicit
+    // content shape, and NON-interactive glass. The interactive glass effect
+    // installs its own press handling inside the label and can swallow the
+    // button's tap on iOS 26/27 — with interactive: true the back button
+    // rendered fine but never fired.
     private func chromeButton(_ icon: String, action: @escaping () -> Void) -> some View {
         Button {
             GlassHaptic.tap()
             action()
         } label: {
             Image(systemName: icon)
-                .font(.system(size: 16, weight: .semibold))
+                .font(.system(size: 18, weight: .semibold))
                 .foregroundStyle(.white)
-                .frame(width: 36, height: 36)
-                .liquidGlassCircle(interactive: true)
+                .frame(width: 44, height: 44)
+                .contentShape(Circle())
+                .background(.black.opacity(0.30), in: Circle())
+                .liquidGlassCircle(interactive: false)
         }
         .buttonStyle(.plain)
+        .frame(width: 44, height: 44)
+        .contentShape(Circle())
     }
 
     private func detailContent(_ detail: MovieDetail, width: CGFloat, height: CGFloat) -> some View {
@@ -151,6 +179,7 @@ struct MovieDetailView: View {
                 if model.loading && model.detail == nil {
                     ProgressView("正在加载详情…").frame(maxWidth: .infinity)
                 }
+                resourceCards(detail)
                 movieInfoCard(detail)
                 if !detail.tags.isEmpty { tagsSection(detail.tags) }
                 if !detail.casts.isEmpty { linkSection("演员", detail.casts) }
@@ -173,7 +202,7 @@ struct MovieDetailView: View {
         let imageHeight = geometry.imageHeight
         let titleTop = geometry.titleTop
         return ZStack(alignment: .top) {
-            CoverImage(url: detail.coverURL ?? card.coverURL, anchorY: 0.18, allowUpscale: true)
+            CoverImage(url: detail.coverURL ?? card.coverURL, code: detail.code ?? card.code, anchorY: 0.18, allowUpscale: true)
                 .frame(width: width, height: imageHeight, alignment: .top)
                 .clipped()
                 .accessibilityHidden(true)
@@ -204,9 +233,6 @@ struct MovieDetailView: View {
                 .frame(minHeight: max(0, geometry.controlsTop - titleTop - 18), alignment: .bottom)
                 portraitControls(detail)
                     .padding(.horizontal, 18).padding(.top, 18)
-                resourceCards(detail)
-                    .padding(.horizontal, 18).padding(.top, 30)
-                    .buttonStyle(.plain)
             }
             .padding(.top, titleTop)
             .foregroundStyle(.white)
@@ -242,10 +268,7 @@ struct MovieDetailView: View {
     }
 
     private var playProgress: Double? {
-        if let resume = resume115, let length = optionalLength(resume), length > 0 {
-            return min(max(resume.position / length, 0), 1)
-        }
-        if let resume = resumeOnline, let length = optionalLength(resume), length > 0 {
+        if let resume = activeResume, let length = optionalLength(resume), length > 0 {
             return min(max(resume.position / length, 0), 1)
         }
         return nil
@@ -256,8 +279,8 @@ struct MovieDetailView: View {
     }
 
     private var portraitPlayButton: some View {
-        let compact = PlaybackResumePolicy.compactTitle(position: resume115?.position ?? resumeOnline?.position,
-                                                        length: resume115?.length ?? resumeOnline?.length)
+        let compact = PlaybackResumePolicy.compactTitle(position: activeResume?.position,
+                                                        length: activeResume?.length)
         return Button {
             GlassHaptic.tap()
             playPrimary()
@@ -329,33 +352,28 @@ struct MovieDetailView: View {
         .accessibilityLabel(label)
     }
 
+    // Lives in the light content sheet below the hero (it used to sit inside
+    // the hero's white-text stack while extending past the artwork, which
+    // rendered white-on-white and broke the layout).
     private func resourceCards(_ detail: MovieDetail) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(spacing: 12) {
-                Text("播放资源:").font(.system(size: 17, weight: .bold))
-                Button("115 原画") {
-                    startFromBeginning = false
-                    showPlayer = true
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Text("播放资源").font(.headline)
+                Spacer()
+                if !detail.watchStreams.isEmpty {
+                    sourceChip(.online, title: "在线播放")
                 }
-                .font(.system(size: 15, weight: .semibold))
-                .padding(.horizontal, 14).padding(.vertical, 6)
-                .overlay(Capsule().stroke(.white.opacity(0.22)))
+                sourceChip(.pan115, title: "115 原画")
             }
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(alignment: .top, spacing: 12) {
-                    resourceCard(title: "115 原画",
-                                 caption: pan115.isConfigured ? "打开 115 匹配资源" : "需先在设置里配置 115",
-                                 action: "选择播放文件", icon: "play.circle", emphasized: true) {
-                        startFromBeginning = false
-                        showPlayer = true
-                    }
-                    if let first = detail.watchStreams.first {
-                        resourceCard(title: "在线播放",
-                                     caption: "来自当前公开页面的媒体地址",
-                                     action: first.label, icon: "play.rectangle", emphasized: true) {
-                            startFromBeginning = true
-                            activeWatch = first
-                            showWatchPlayer = true
+                    if effectiveSource == .online, let first = detail.watchStreams.first {
+                        onlineResourceCard(detail, first: first)
+                        pan115ResourceCard(detail)
+                    } else {
+                        pan115ResourceCard(detail)
+                        if let first = detail.watchStreams.first {
+                            onlineResourceCard(detail, first: first)
                         }
                     }
                     resourceCard(title: "磁力与推送",
@@ -364,33 +382,70 @@ struct MovieDetailView: View {
                         showMagnetList = true
                     }
                 }
-                .padding(.horizontal, 18)
             }
-            .padding(.horizontal, -18)
         }
         .accessibilityIdentifier("detail.resource.cards")
+    }
+
+    private func sourceChip(_ source: PlaySource, title: String) -> some View {
+        let selected = effectiveSource == source
+        return Button {
+            sourceOverride = source
+        } label: {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(selected ? AVFanTheme.accent : Color.secondary.opacity(0.14), in: Capsule())
+                .foregroundStyle(selected ? Color.white : Color.primary)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func pan115ResourceCard(_ detail: MovieDetail) -> some View {
+        resourceCard(title: "115 原画",
+                     caption: pan115.isConfigured ? "打开 115 匹配资源" : "需先在设置里配置 115",
+                     action: "选择播放文件", icon: "play.circle", emphasized: effectiveSource == .pan115) {
+            startFromBeginning = false
+            showPlayer = true
+        }
+    }
+
+    private func onlineResourceCard(_ detail: MovieDetail, first: WatchStream) -> some View {
+        resourceCard(title: "在线播放",
+                     caption: "来自当前公开页面的媒体地址",
+                     action: first.label, icon: "play.rectangle", emphasized: effectiveSource == .online) {
+            startFromBeginning = true
+            activeWatch = first
+            showWatchPlayer = true
+        }
     }
 
     private func resourceCard(title: String, caption: String, action: String, icon: String, emphasized: Bool, perform: @escaping () -> Void) -> some View {
         Button(action: perform) {
             VStack(alignment: .leading, spacing: 10) {
-                Text(title).font(.title3.bold())
-                Text(caption).font(.caption)
+                Text(title).font(.title3.bold()).foregroundStyle(.primary)
+                Text(caption).font(.caption).foregroundStyle(.secondary)
                 Label(action, systemImage: icon).font(.subheadline)
+                    .foregroundStyle(emphasized ? AVFanTheme.accent : .secondary)
             }
             .padding(16).frame(minWidth: 220, alignment: .leading)
-            .overlay(RoundedRectangle(cornerRadius: 20).stroke(.white.opacity(emphasized ? 0.45 : 0.22)))
+            .liquidGlassRect(cornerRadius: 20)
         }
         .buttonStyle(.plain)
     }
 
     private func playPrimary() {
-        if let first = display.watchStreams.first, resume115 == nil {
+        if effectiveSource == .online, let first = display.watchStreams.first {
             startFromBeginning = PlaybackResumePolicy.compactTitle(position: resumeOnline?.position, length: resumeOnline?.length) == nil
             activeWatch = first
             showWatchPlayer = true
             return
         }
+        play115()
+    }
+
+    private func play115() {
         if pan115.isConfigured || resume115 != nil {
             startFromBeginning = resume115 == nil
             showPlayer = true

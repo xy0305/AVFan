@@ -16,7 +16,7 @@ struct ListsView: View {
                         MovieDetailView(card: item.asCard)
                     } label: {
                         HStack(spacing: 12) {
-                            CoverImage(url: item.coverURL)
+                            CoverImage(url: item.coverURL, code: item.code)
                                 .frame(width: 84, height: 56)
                                 .clipped()
                                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))

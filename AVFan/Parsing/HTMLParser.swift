@@ -249,14 +249,28 @@ enum HTMLParser {
         let cards = movieCards(in: html)
         var people: [NamedLink] = []
         var seen = Set<String>()
-        for href in allMatches("href=\"([^\"]*/casts/[A-Za-z0-9]{8}[^\"]*)\"", in: html) {
-            let id = firstMatch("/casts/([A-Za-z0-9]{8})", in: href) ?? href
-            if !seen.insert(id).inserted { continue }
-            if let name = firstMatch("href=\"[^\"]*/casts/\(id)[^\"]*\"[^>]*>([^<]+)", in: html) {
-                let trimmed = stripTags(name)
-                if !trimmed.isEmpty, trimmed != "推荐" {
-                    people.append(NamedLink(name: trimmed, href: href, kind: "cast"))
-                }
+        // Hot-cast pages wrap the photo and the name in ONE anchor
+        // (<a href="/casts/ID"><img …><div>name</div></a>), so the name is the
+        // anchor block's full text — reading only the anchor's first text node
+        // (the old approach) yields whitespace and zero people.
+        if let regex = try? NSRegularExpression(
+            pattern: "<a[^>]+href=\"([^\"]*/casts/([A-Za-z0-9]{8})[^\"]*)\"[^>]*>([\\s\\S]*?)</a>",
+            options: [.caseInsensitive]
+        ) {
+            let ns = html as NSString
+            for match in regex.matches(in: html, range: NSRange(location: 0, length: ns.length)) {
+                guard match.numberOfRanges >= 4 else { continue }
+                let href = ns.substring(with: match.range(at: 1))
+                let id = ns.substring(with: match.range(at: 2))
+                let block = ns.substring(with: match.range(at: 3))
+                if !seen.insert(id).inserted { continue }
+                let name = stripTags(block)
+                    .split(whereSeparator: { $0.isWhitespace })
+                    .joined(separator: " ")
+                guard !name.isEmpty, name != "推荐" else { continue }
+                let avatar = firstMatch("<img[^>]+(?:src|data-src|data-original)=\"([^\"]+)\"", in: block)
+                    .map { unescape($0) }
+                people.append(NamedLink(name: name, href: href, kind: "cast", imageURL: avatar))
             }
         }
         return RankingPage(title: heading, cards: cards, people: people)

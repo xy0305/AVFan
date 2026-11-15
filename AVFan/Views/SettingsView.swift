@@ -21,6 +21,13 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
+            Section("封面") {
+                Toggle("高清封面源", isOn: $settings.hqCoversEnabled)
+                Text("默认开启：按番号从 DMM / FANZA 与 MGStage 官方图源取高清封面（与 AVDB 相同的来源与校验），取不到时用页面原封面。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("年龄确认") {
                 Toggle("已确认已达法定成年年龄", isOn: $settings.ageConfirmed)
                 Text("确认后会在请求中附带 legal_age=1（与网站 cookie 一致），并记在本机。")

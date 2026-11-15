@@ -4,6 +4,7 @@ struct NamedLink: Identifiable, Hashable, Codable {
     var name: String
     var href: String
     var kind: String?
+    var imageURL: String? = nil
 
     var id: String { href + "|" + name }
 }

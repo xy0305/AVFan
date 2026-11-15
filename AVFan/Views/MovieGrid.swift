@@ -28,7 +28,7 @@ struct MoviePosterCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             ZStack(alignment: .topLeading) {
-                CoverImage(url: card.coverURL)
+                CoverImage(url: card.coverURL, code: card.code)
                     .aspectRatio(2.0/3.0, contentMode: .fill)
                     .clipped()
                     .liquidCover(cornerRadius: AVFanTheme.cardRadius)

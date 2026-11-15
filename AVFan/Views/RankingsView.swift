@@ -33,13 +33,26 @@ struct RankingsView: View {
                 FetchStatusBanner(source: source, error: errorMessage, webURL: pageURL) { showWeb = true }
                 if loading { ProgressView().frame(maxWidth: .infinity, minHeight: 180) }
                 if let page, !page.people.isEmpty && page.cards.isEmpty {
-                    ForEach(page.people) { person in
-                        Text(person.name)
-                            .font(.headline)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.vertical, 10)
-                            .padding(.horizontal, 14)
-                            .liquidGlassRect(cornerRadius: 14)
+                    LazyVGrid(columns: [GridItem(.flexible(), spacing: 12),
+                                        GridItem(.flexible(), spacing: 12),
+                                        GridItem(.flexible(), spacing: 12)], spacing: 14) {
+                        ForEach(page.people) { person in
+                            NavigationLink {
+                                CatalogListView(title: person.name, path: person.href)
+                            } label: {
+                                VStack(spacing: 6) {
+                                    CoverImage(url: person.imageURL)
+                                        .aspectRatio(3.0 / 4.0, contentMode: .fill)
+                                        .clipped()
+                                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                                    Text(person.name)
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(.primary)
+                                        .lineLimit(1)
+                                }
+                            }
+                            .buttonStyle(.plain)
+                        }
                     }
                 }
                 if let page {
