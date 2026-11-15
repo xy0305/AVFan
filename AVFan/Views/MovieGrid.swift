@@ -3,6 +3,15 @@ import SwiftUI
 struct MovieGrid: View {
     let cards: [MovieCard]
     var columns: Int? = nil
+    /// When set, cells are buttons reporting the tap instead of value
+    /// NavigationLinks. Hosts that are themselves PUSHED views (catalog
+    /// lists, news articles) must use this with their own item-based
+    /// destination: a value link tapped in a pushed view, resolved by a
+    /// destination registered at the tab root, pops back to the ROOT —
+    /// skipping the host — on this OS (builds 6/7 recordings). Root-hosted
+    /// grids (search, rankings) keep value links; their host IS the
+    /// registration owner and they pop correctly.
+    var onSelect: ((MovieCard) -> Void)? = nil
     /// Fired when the last card scrolls into view (infinite scroll hook).
     var onReachEnd: (() -> Void)? = nil
     @Environment(\.availableLayoutSize) private var layoutSize
@@ -23,10 +32,19 @@ struct MovieGrid: View {
     var body: some View {
         LazyVGrid(columns: grid, spacing: AVFanTheme.gridSpacing) {
             ForEach(cards) { card in
-                NavigationLink(value: card) {
-                    MoviePosterCard(card: card)
+                Group {
+                    if let onSelect {
+                        Button { onSelect(card) } label: {
+                            MoviePosterCard(card: card)
+                        }
+                        .buttonStyle(.plain)
+                    } else {
+                        NavigationLink(value: card) {
+                            MoviePosterCard(card: card)
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
-                .buttonStyle(.plain)
                 .onAppear {
                     if card.pathID == prefetchID { onReachEnd?() }
                 }

@@ -43,9 +43,5 @@ struct ListsView: View {
         .background(AVFanTheme.pageBackground)
         .liquidGlassList()
         .navigationTitle("收藏")
-        // The one MovieCard registration for this stack (detail pages
-        // reached from bookmarks can push catalog lists whose grids use
-        // value links).
-        .navigationDestination(for: MovieCard.self) { MovieDetailView(card: $0) }
     }
 }

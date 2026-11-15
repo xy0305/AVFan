@@ -31,7 +31,6 @@ struct CategoriesView: View {
         .background(AVFanTheme.pageBackground)
         .liquidGlassList()
         .navigationTitle("类别")
-        .navigationDestination(for: MovieCard.self) { MovieDetailView(card: $0) }
     }
 }
 

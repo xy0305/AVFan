@@ -81,7 +81,6 @@ struct SeriesView: View {
         }
         .background(AVFanTheme.pageBackground)
         .navigationTitle("系列")
-        .navigationDestination(for: MovieCard.self) { MovieDetailView(card: $0) }
         .task { if items.isEmpty { await load() } }
         .refreshable { await load() }
         .sheet(isPresented: $showWeb) {

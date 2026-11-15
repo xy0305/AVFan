@@ -65,7 +65,6 @@ struct NewsView: View {
         .background(AVFanTheme.pageBackground)
         .navigationTitle("资讯")
         .navigationDestination(for: NewsItem.self) { NewsArticleView(item: $0) }
-        .navigationDestination(for: MovieCard.self) { MovieDetailView(card: $0) }
         .task { if items.isEmpty { await load() } }
         .refreshable { await load() }
         .sheet(isPresented: $showWeb) {
@@ -225,6 +224,11 @@ struct NewsArticleView: View {
     @State private var source: FetchSource?
     @State private var showWeb = false
     @State private var pageURL: URL?
+    /// Self-hosted item navigation for the related sections — this view
+    /// is pushed, and value links resolved at the tab root pop past it
+    /// (see MovieGrid.onSelect).
+    @State private var openCard: MovieCard?
+    @State private var openNews: NewsItem?
 
     var body: some View {
         ScrollView {
@@ -272,7 +276,7 @@ struct NewsArticleView: View {
                     }
                     if !article.relatedMovies.isEmpty {
                         Text("相关影片").font(.headline).padding(.top, 8)
-                        MovieGrid(cards: article.relatedMovies)
+                        MovieGrid(cards: article.relatedMovies, onSelect: { openCard = $0 })
                     }
                     if !article.relatedCasts.isEmpty {
                         Text("相关女优").font(.headline).padding(.top, 8)
@@ -281,7 +285,7 @@ struct NewsArticleView: View {
                     if !article.relatedNews.isEmpty {
                         Text("同分类资讯").font(.headline).padding(.top, 8)
                         ForEach(article.relatedNews) { news in
-                            NavigationLink(value: news) {
+                            Button { openNews = news } label: {
                                 NewsRow(item: news)
                             }
                             .buttonStyle(.plain)
@@ -296,9 +300,8 @@ struct NewsArticleView: View {
         .background(AVFanTheme.pageBackground)
         .navigationTitle(item.category ?? "资讯")
         .navigationBarTitleDisplayMode(.inline)
-        // NewsItem / MovieCard destinations are registered once, at the
-        // NewsView tab root — registering them again in this pushed view
-        // corrupts the stack's pop bookkeeping (build 7 fix).
+        .navigationDestination(item: $openCard) { MovieDetailView(card: $0) }
+        .navigationDestination(item: $openNews) { NewsArticleView(item: $0) }
         .task { await load() }
         .sheet(isPresented: $showWeb) {
             if let pageURL { InAppWebView(url: pageURL, title: item.title) }

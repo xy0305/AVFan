@@ -16,7 +16,6 @@ struct HomeView: View {
         }
         .toolbar(.hidden, for: .navigationBar)
         .navigationDestination(isPresented: $goSearch) { SearchView() }
-        .navigationDestination(for: MovieCard.self) { MovieDetailView(card: $0) }
         .navigationDestination(item: $openCard) { MovieDetailView(card: $0) }
         .navigationDestination(item: $openCatalog) { dest in
             CatalogListView(title: dest.title, path: dest.path)
@@ -535,13 +534,18 @@ struct CatalogListView: View {
     /// them and appends (build 5), instead of stopping at page 1.
     @State private var nextPath: String?
     @State private var currentPage = 1
+    /// This list is always a PUSHED view, so it hosts its own detail
+    /// navigation as item-based state (the pattern HomeView uses for its
+    /// hero, which pops correctly). Value links resolved by a tab-root
+    /// registration popped straight to the root, skipping this list.
+    @State private var openCard: MovieCard?
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
                 FetchStatusBanner(source: source, error: errorMessage, webURL: pageURL) { showWeb = true }
                 if loading && cards.isEmpty { ProgressView().frame(maxWidth: .infinity, minHeight: 180) }
-                MovieGrid(cards: cards) { Task { await loadMore() } }
+                MovieGrid(cards: cards, onSelect: { openCard = $0 }) { Task { await loadMore() } }
                 if loadingMore {
                     ProgressView().frame(maxWidth: .infinity).padding(.vertical, 8)
                 }
@@ -551,11 +555,7 @@ struct CatalogListView: View {
         }
         .background(AVFanTheme.pageBackground)
         .navigationTitle(title)
-        // No navigationDestination(for: MovieCard.self) here on purpose:
-        // every tab root registers it exactly once for its stack. When
-        // this pushed view registered it too, the stack's bookkeeping
-        // broke — popping a detail jumped straight back to the tab root,
-        // skipping this list (build 7 fix).
+        .navigationDestination(item: $openCard) { MovieDetailView(card: $0) }
         .task { await load() }
         .sheet(isPresented: $showWeb) {
             if let pageURL { InAppWebView(url: pageURL, title: title) }
