@@ -3,6 +3,8 @@ import SwiftUI
 struct MovieGrid: View {
     let cards: [MovieCard]
     var columns: Int? = nil
+    /// Fired when the last card scrolls into view (infinite scroll hook).
+    var onReachEnd: (() -> Void)? = nil
     @Environment(\.availableLayoutSize) private var layoutSize
 
     private var grid: [GridItem] {
@@ -17,6 +19,9 @@ struct MovieGrid: View {
                     MoviePosterCard(card: card)
                 }
                 .buttonStyle(.plain)
+                .onAppear {
+                    if card.pathID == cards.last?.pathID { onReachEnd?() }
+                }
             }
         }
     }

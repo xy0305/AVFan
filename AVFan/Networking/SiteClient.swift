@@ -47,6 +47,13 @@ actor SiteClient {
         URL(string: "https://avfan.com/\(locale.rawValue)/\(kind.path)")!
     }
 
+    /// Ranking sub-category paths come from the ranking page's own links
+    /// (they already carry a locale prefix); re-apply the requested locale.
+    nonisolated func rankingURL(path: String, locale: SiteLocale) -> URL {
+        if path.hasPrefix("http"), let url = URL(string: path) { return url }
+        return URL(string: "https://avfan.com/\(locale.rawValue)/\(HTMLParser.stripLocale(path))")!
+    }
+
     nonisolated func searchURL(query: String) -> URL {
         var components = URLComponents(string: "https://avfan.com/search")!
         components.queryItems = [

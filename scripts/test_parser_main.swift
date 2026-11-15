@@ -122,12 +122,53 @@ enum ParserTests {
         expect(DMMImageValidation.classify(width: 745, height: 1081, bytes: 300_000, source: "https://awsimgsrc.dmm.co.jp/pics_dig/digital/video/mida00860/mida00860ps.jpg") == .portrait, "745x1081 ps is a portrait")
         expect(DMMImageValidation.classify(width: 1600, height: 1081, bytes: 500_000, source: "https://awsimgsrc.dmm.co.jp/pics_dig/digital/video/mida00860/mida00860pl.jpg") == .jacket, "1600x1081 pl is a jacket")
 
+        // Ranking sub-categories come from the page's own links (build 5):
+        // same-base-path anchors/options, minus the current variant, minus
+        // pagination, minus other boards.
+        let fanzaHTML = """
+        <h2>FANZA排行榜</h2>
+        <div class="tabs">
+          <a href="/zh-CN/rankings/fanza_ranking?t=summary">满分(2D)</a>
+          <a href="/zh-CN/rankings/fanza_ranking?t=vr">满分(VR)</a>
+          <a href="/zh-CN/rankings/fanza_ranking?t=daily">日热销</a>
+          <a href="/zh-CN/rankings/fanza_ranking?t=weekly">周热销</a>
+          <a href="/zh-CN/rankings/fanza_ranking?t=monthly">月热销</a>
+          <a href="/zh-CN/rankings/fanza_ranking?page=2">2</a>
+          <a href="/zh-CN/rankings/mgs_ranking?t=daily">别榜</a>
+        </div>
+        """
+        let fanzaTabs = HTMLParser.rankingTabs(in: fanzaHTML, basePath: "rankings/fanza_ranking", currentPath: "rankings/fanza_ranking?t=summary")
+        expect(fanzaTabs.map(\.name) == ["满分(VR)", "日热销", "周热销", "月热销"], "fanza tabs, got \(fanzaTabs.map(\.name))")
+        expect(fanzaTabs.first?.href.contains("t=vr") == true, "fanza tab href kept")
+
+        let topHTML = """
+        <select>
+          <option value="/zh-CN/rankings/top_movies">总榜</option>
+          <option value="/zh-CN/rankings/top_movies?t=censored">有码榜</option>
+          <option value="/zh-CN/rankings/top_movies?t=fc2">FC2榜</option>
+        </select>
+        """
+        let topTabs = HTMLParser.rankingTabs(in: topHTML, basePath: "rankings/top_movies", currentPath: "rankings/top_movies")
+        expect(topTabs.map(\.name) == ["有码榜", "FC2榜"], "top300 category options, got \(topTabs.map(\.name))")
+
+        // Pagination -> infinite scroll (build 5).
+        let listHTML = """
+        <a href="/zh-CN/casts/AbCd1234?page=1">1</a>
+        <a href="/zh-CN/casts/AbCd1234?page=2">2</a>
+        <a href="/zh-CN/casts/AbCd1234?page=3">3</a>
+        <a href="/zh-CN/casts/AbCd1234?page=2">下一页</a>
+        """
+        expect(HTMLParser.nextPagePath(in: listHTML, currentPage: 1)?.contains("page=2") == true, "next from page 1")
+        expect(HTMLParser.nextPagePath(in: listHTML, currentPage: 2)?.contains("page=3") == true, "next from page 2 via numbered link")
+        expect(HTMLParser.nextPagePath(in: listHTML, currentPage: 3) == nil, "no page 4 means last page")
+        expect(HTMLParser.nextPagePath(in: "<a href=\"/x?page=9\" rel=\"next\">go</a>", currentPage: 1)?.contains("page=9") == true, "rel=next wins")
+
         let signedHTML = "<a href=\"/zh-CN/sign_out\">退出登录</a>"
         expect(HTMLParser.isSignedIn(html: signedHTML), "sign_out means signed in")
         expect(HTMLParser.signOutURL(in: signedHTML)?.contains("sign_out") == true, "sign_out url")
         expect(HTMLParser.containsSignInLink("<a href=\"/zh-CN/sign_in\">登录</a>"), "sign_in link")
 
-        print("PASS: home, detail magnets, ranking merge, hot casts, HQ cover sources, empty shell, block detection, cover policy, login signals")
+        print("PASS: home, detail magnets, ranking merge, hot casts, HQ cover sources, empty shell, block detection, cover policy, login signals, ranking tabs, pagination")
     }
 }
 

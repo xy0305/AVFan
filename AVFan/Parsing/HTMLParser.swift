@@ -68,6 +68,100 @@ enum HTMLParser {
         }
     }
 
+    /// Parsing is pure CPU work over large HTML. Running it on the main actor
+    /// froze navigation transitions (build 5: entering a detail page stalled
+    /// ~1.7 s mid-push), so view models parse through this detached hop.
+    static func detached<T>(_ work: @escaping @Sendable () -> T) async -> T {
+        await Task.detached(priority: .userInitiated, operation: work).value
+    }
+
+    /// "/zh-CN/rankings/fanza_ranking?t=daily" -> "rankings/fanza_ranking?t=daily".
+    static func stripLocale(_ path: String) -> String {
+        var p = path
+        if p.hasPrefix("https://avfan.com") { p = String(p.dropFirst("https://avfan.com".count)) }
+        if p.hasPrefix("/") { p.removeFirst() }
+        for prefix in localePrefixes where p.hasPrefix(prefix + "/") {
+            p = String(p.dropFirst(prefix.count + 1))
+            break
+        }
+        return p
+    }
+
+    /// Sub-category links a ranking page carries itself (FANZA/MGS tab bars,
+    /// TOP300 category + year dropdowns, FC2 year tabs). The values are NOT
+    /// guessable from outside (no archive has them), so the app reads the
+    /// page's own anchors / select options whose locale-stripped path equals
+    /// the ranking's base path. Pagination links (page=) are excluded; the
+    /// currently shown variant is excluded too.
+    static func rankingTabs(in html: String, basePath: String, currentPath: String) -> [NamedLink] {
+        let base = stripLocale(basePath)
+        let current = stripLocale(currentPath)
+        var results: [NamedLink] = []
+        var seen = Set<String>()
+        func consider(href rawHref: String, label rawLabel: String) {
+            let href = unescape(rawHref).trimmingCharacters(in: .whitespacesAndNewlines)
+            let label = stripTags(rawLabel)
+            guard !label.isEmpty, label.count <= 14 else { return }
+            guard stripLocale(href) != current else { return }
+            guard stripLocale(href).split(separator: "?").first.map(String.init) == base else { return }
+            guard !href.contains("page=") else { return }
+            guard seen.insert(stripLocale(href)).inserted else { return }
+            results.append(NamedLink(name: label, href: href, kind: "ranktab"))
+        }
+        if let regex = try? NSRegularExpression(
+            pattern: "<a[^>]+href=\"([^\"]+)\"[^>]*>([\\s\\S]*?)</a>",
+            options: [.caseInsensitive]
+        ) {
+            let ns = html as NSString
+            for match in regex.matches(in: html, range: NSRange(location: 0, length: ns.length)) {
+                consider(href: ns.substring(with: match.range(at: 1)), label: ns.substring(with: match.range(at: 2)))
+            }
+        }
+        if let regex = try? NSRegularExpression(
+            pattern: "<option[^>]+value=\"([^\"]+)\"[^>]*>([\\s\\S]*?)</option>",
+            options: [.caseInsensitive]
+        ) {
+            let ns = html as NSString
+            for match in regex.matches(in: html, range: NSRange(location: 0, length: ns.length)) {
+                consider(href: ns.substring(with: match.range(at: 1)), label: ns.substring(with: match.range(at: 2)))
+            }
+        }
+        return results
+    }
+
+    /// The site paginates catalog/search/ranking lists with page= links; the
+    /// app turns that into infinite scroll. Returns the href of the page
+    /// after `currentPage` (rel=next wins, then a "下一页/Next" label, then
+    /// the numbered link for currentPage + 1), or nil on the last page.
+    static func nextPagePath(in html: String, currentPage: Int) -> String? {
+        if let href = firstMatch("<link[^>]+rel=\"next\"[^>]+href=\"([^\"]+)\"", in: html)
+            ?? firstMatch("<link[^>]+href=\"([^\"]+)\"[^>]+rel=\"next\"", in: html) {
+            return unescape(href)
+        }
+        var numbered: String?
+        var labelled: String?
+        if let regex = try? NSRegularExpression(
+            pattern: "<a([^>]+href=\"([^\"]+)\"[^>]*)>([\\s\\S]*?)</a>",
+            options: [.caseInsensitive]
+        ) {
+            let ns = html as NSString
+            for match in regex.matches(in: html, range: NSRange(location: 0, length: ns.length)) {
+                let tag = ns.substring(with: match.range(at: 1))
+                let href = unescape(ns.substring(with: match.range(at: 2)))
+                guard let pageText = firstMatch("[?&]page=(\\d+)", in: href), let page = Int(pageText) else { continue }
+                if tag.contains("rel=\"next\"") { return href }
+                guard page == currentPage + 1 else { continue }
+                let label = stripTags(ns.substring(with: match.range(at: 3)))
+                if ["下一页", "下一頁", "下页", "Next", "next", "›", "»"].contains(label) {
+                    labelled = labelled ?? href
+                } else {
+                    numbered = numbered ?? href
+                }
+            }
+        }
+        return labelled ?? numbered
+    }
+
     static func isBlocked(_ html: String, status: Int?) -> Bool {
         if let status, status == 403 || status == 429 || status == 503 { return true }
         let lowered = html.lowercased()

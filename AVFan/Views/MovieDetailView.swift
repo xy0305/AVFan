@@ -24,12 +24,14 @@ struct MovieDetailView: View {
 
     private enum PlaySource { case online, pan115 }
 
-    /// Default playback source: online whenever the page offered a stream,
-    /// 115 otherwise. The user can switch with the source chips; the play
-    /// pill, the chips and the resource-card order all follow this value.
+    /// Default playback source: 115 (owner's call, build 5 — this reverses
+    /// build 4's online-first default). Online stays one tap away via the
+    /// source chips whenever the page offered a stream, and play115() still
+    /// falls back to a stream when 115 is not configured. The play pill, the
+    /// chips and the resource-card order all follow this value.
     private var effectiveSource: PlaySource {
         if let sourceOverride { return sourceOverride }
-        return display.watchStreams.isEmpty ? .pan115 : .online
+        return .pan115
     }
 
     private var activeResume: PlaybackResumeEntry? {
@@ -172,7 +174,7 @@ struct MovieDetailView: View {
                                               isPad: AdaptiveLayout.isPad)
         return VStack(spacing: 0) {
             portraitHero(detail, geometry: geometry)
-            VStack(alignment: .leading, spacing: 20) {
+            LazyVStack(alignment: .leading, spacing: 20) {
                 FetchStatusBanner(source: model.source, error: model.errorMessage, webURL: model.pageURL) {
                     showWeb = true
                 }
@@ -496,7 +498,17 @@ struct MovieDetailView: View {
         if !links.isEmpty {
             HStack(alignment: .top) {
                 Text(label).foregroundStyle(.secondary).frame(width: 72, alignment: .leading)
-                Text(links.map(\.name).joined(separator: "、"))
+                FlowLayout(spacing: 6) {
+                    ForEach(links) { link in
+                        NavigationLink {
+                            CatalogListView(title: link.name, path: link.href)
+                        } label: {
+                            Text(link.name)
+                                .foregroundStyle(AVFanTheme.accent)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
                 Spacer()
             }
             .font(.subheadline)
@@ -506,15 +518,14 @@ struct MovieDetailView: View {
     private func tagsSection(_ tags: [NamedLink]) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             GlassSectionHeader(title: "标签", icon: "tag", trailingTitle: nil)
-            FlowTags(names: tags.map(\.name))
+            LinkChips(links: tags)
         }
     }
 
     private func linkSection(_ title: String, _ links: [NamedLink]) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             GlassSectionHeader(title: title, icon: "person.2", trailingTitle: nil)
-            Text(links.map(\.name).joined(separator: "、"))
-                .font(.subheadline)
+            LinkChips(links: links)
         }
     }
 
@@ -677,17 +688,25 @@ private struct DetailReadableTitle: View {
     }
 }
 
-struct FlowTags: View {
-    let names: [String]
+/// Tappable chips for a detail page's casts / tags: each chip pushes the
+/// matching catalog list (the cast's, tag's, maker's… own movie list).
+struct LinkChips: View {
+    let links: [NamedLink]
     var body: some View {
         FlowLayout(spacing: 8) {
-            ForEach(Array(names.enumerated()), id: \.offset) { _, name in
-                Text(name)
-                    .font(.caption.weight(.semibold))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(AVFanTheme.accent.opacity(0.12), in: Capsule())
-                    .foregroundStyle(AVFanTheme.accent)
+            ForEach(links) { link in
+                NavigationLink {
+                    CatalogListView(title: link.name, path: link.href)
+                } label: {
+                    Text(link.name)
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(AVFanTheme.accent.opacity(0.12), in: Capsule())
+                        .foregroundStyle(AVFanTheme.accent)
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
             }
         }
     }
@@ -807,7 +826,8 @@ final class MovieDetailViewModel: ObservableObject {
                 allowWebViewFallback: true,
                 expectCatalog: true
             )
-            var parsed = HTMLParser.movieDetail(from: result.html, url: url)
+            let html = result.html
+            var parsed = await HTMLParser.detached { HTMLParser.movieDetail(from: html, url: url) }
             if parsed.pathID.isEmpty { parsed.pathID = card.pathID }
             if parsed.code == nil { parsed.code = card.code }
             if parsed.title.isEmpty { parsed.title = card.title }

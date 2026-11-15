@@ -506,7 +506,8 @@ final class HomeViewModel: ObservableObject {
                 allowWebViewFallback: true,
                 expectCatalog: true
             )
-            page = HTMLParser.home(from: result.html)
+            let html = result.html
+            page = await HTMLParser.detached { HTMLParser.home(from: html) }
             source = result.source
             if page.sections.isEmpty {
                 errorMessage = "首页没有解析到影片，可以改用应用内网页查看。"
@@ -524,17 +525,25 @@ struct CatalogListView: View {
     @EnvironmentObject private var settings: AppSettings
     @State private var cards: [MovieCard] = []
     @State private var loading = false
+    @State private var loadingMore = false
     @State private var errorMessage: String?
     @State private var source: FetchSource?
     @State private var showWeb = false
     @State private var pageURL: URL?
+    /// The site paginates with page= links; scrolling to the end follows
+    /// them and appends (build 5), instead of stopping at page 1.
+    @State private var nextPath: String?
+    @State private var currentPage = 1
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
                 FetchStatusBanner(source: source, error: errorMessage, webURL: pageURL) { showWeb = true }
                 if loading && cards.isEmpty { ProgressView().frame(maxWidth: .infinity, minHeight: 180) }
-                MovieGrid(cards: cards)
+                MovieGrid(cards: cards) { Task { await loadMore() } }
+                if loadingMore {
+                    ProgressView().frame(maxWidth: .infinity).padding(.vertical, 8)
+                }
             }
             .padding(.horizontal, AdaptiveLayout.horizontalPadding)
             .padding(.vertical, 12)
@@ -553,6 +562,7 @@ struct CatalogListView: View {
         defer { loading = false }
         let url = SiteClient.shared.catalogURL(path: path)
         pageURL = url
+        currentPage = Int(HTMLParser.firstMatch("[?&]page=(\\d+)", in: path) ?? "") ?? 1
         do {
             let result = try await SiteClient.shared.html(
                 for: url,
@@ -561,12 +571,54 @@ struct CatalogListView: View {
                 allowWebViewFallback: true,
                 expectCatalog: true
             )
-            cards = HTMLParser.movieCards(in: result.html)
+            let html = result.html
+            let page = currentPage
+            let parsed = await HTMLParser.detached {
+                (cards: HTMLParser.movieCards(in: html),
+                 next: HTMLParser.nextPagePath(in: html, currentPage: page))
+            }
+            cards = parsed.cards
+            nextPath = parsed.next
             source = result.source
             if cards.isEmpty { showWeb = true }
         } catch {
             errorMessage = error.localizedDescription
             showWeb = true
+        }
+    }
+
+    private func loadMore() async {
+        guard let nextPath, !loading, !loadingMore else { return }
+        loadingMore = true
+        defer { loadingMore = false }
+        let url = SiteClient.shared.catalogURL(path: nextPath)
+        let targetPage = Int(HTMLParser.firstMatch("[?&]page=(\\d+)", in: nextPath) ?? "") ?? (currentPage + 1)
+        do {
+            let result = try await SiteClient.shared.html(
+                for: url,
+                locale: settings.locale,
+                ageCookie: settings.legalAgeCookie,
+                allowWebViewFallback: true,
+                expectCatalog: true
+            )
+            let html = result.html
+            let parsed = await HTMLParser.detached {
+                (cards: HTMLParser.movieCards(in: html),
+                 next: HTMLParser.nextPagePath(in: html, currentPage: targetPage))
+            }
+            let known = Set(cards.map(\.pathID))
+            let fresh = parsed.cards.filter { !known.contains($0.pathID) }
+            if fresh.isEmpty {
+                self.nextPath = nil
+                return
+            }
+            cards.append(contentsOf: fresh)
+            currentPage = targetPage
+            self.nextPath = parsed.next
+            source = result.source
+        } catch {
+            // Keep nextPath so a later scroll can retry; don't spam errors
+            // for an append the user didn't explicitly request.
         }
     }
 }

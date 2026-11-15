@@ -5,10 +5,13 @@ struct SearchView: View {
     @State private var query = ""
     @State private var cards: [MovieCard] = []
     @State private var loading = false
+    @State private var loadingMore = false
     @State private var errorMessage: String?
     @State private var source: FetchSource?
     @State private var showWeb = false
     @State private var pageURL: URL?
+    @State private var nextPath: String?
+    @State private var currentPage = 1
 
     var body: some View {
         VStack(spacing: 0) {
@@ -39,7 +42,10 @@ struct SearchView: View {
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
-                    MovieGrid(cards: cards)
+                    MovieGrid(cards: cards) { Task { await loadMore() } }
+                    if loadingMore {
+                        ProgressView().frame(maxWidth: .infinity).padding(.vertical, 8)
+                    }
                 }
                 .padding(.horizontal, AdaptiveLayout.horizontalPadding)
                 .padding(.vertical, 12)
@@ -59,6 +65,8 @@ struct SearchView: View {
         loading = true
         errorMessage = nil
         cards = []
+        nextPath = nil
+        currentPage = 1
         defer { loading = false }
         let url = SiteClient.shared.searchURL(query: trimmed)
         pageURL = url
@@ -70,13 +78,54 @@ struct SearchView: View {
                 allowWebViewFallback: true,
                 expectCatalog: true
             )
-            cards = HTMLParser.movieCards(in: result.html)
+            let html = result.html
+            let parsed = await HTMLParser.detached {
+                (cards: HTMLParser.movieCards(in: html),
+                 next: HTMLParser.nextPagePath(in: html, currentPage: 1))
+            }
+            cards = parsed.cards
+            nextPath = parsed.next
             source = result.source
             if cards.isEmpty {
                 errorMessage = "搜索页没有可解析的影片，可改用应用内网页。"
             }
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    /// Search results paginate on the site; scrolling appends the next page.
+    private func loadMore() async {
+        guard let nextPath, !loading, !loadingMore else { return }
+        loadingMore = true
+        defer { loadingMore = false }
+        let url = SiteClient.shared.catalogURL(path: nextPath)
+        let targetPage = Int(HTMLParser.firstMatch("[?&]page=(\\d+)", in: nextPath) ?? "") ?? (currentPage + 1)
+        do {
+            let result = try await SiteClient.shared.html(
+                for: url,
+                locale: settings.locale,
+                ageCookie: settings.legalAgeCookie,
+                allowWebViewFallback: true,
+                expectCatalog: true
+            )
+            let html = result.html
+            let parsed = await HTMLParser.detached {
+                (cards: HTMLParser.movieCards(in: html),
+                 next: HTMLParser.nextPagePath(in: html, currentPage: targetPage))
+            }
+            let known = Set(cards.map(\.pathID))
+            let fresh = parsed.cards.filter { !known.contains($0.pathID) }
+            if fresh.isEmpty {
+                self.nextPath = nil
+                return
+            }
+            cards.append(contentsOf: fresh)
+            currentPage = targetPage
+            self.nextPath = parsed.next
+            source = result.source
+        } catch {
+            // Keep nextPath for a later retry.
         }
     }
 }
