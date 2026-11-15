@@ -12,16 +12,21 @@ struct RankingsView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 16) {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
                         ForEach(RankingKind.allCases) { item in
-                            Button(item.title) {
+                            Button {
                                 kind = item
                                 Task { await load() }
+                            } label: {
+                                Text(item.title)
+                                    .font(.subheadline.weight(.semibold))
+                                    .padding(.horizontal, 14)
+                                    .padding(.vertical, 8)
                             }
-                            .buttonStyle(.bordered)
-                            .tint(kind == item ? AVFanTheme.accent : .secondary)
+                            .buttonStyle(.plain)
+                            .liquidGlass(tint: kind == item ? AVFanTheme.accent : nil, interactive: true)
                         }
                     }
                 }
@@ -30,16 +35,21 @@ struct RankingsView: View {
                 if let page, !page.people.isEmpty && page.cards.isEmpty {
                     ForEach(page.people) { person in
                         Text(person.name)
+                            .font(.headline)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.vertical, 6)
+                            .padding(.vertical, 10)
+                            .padding(.horizontal, 14)
+                            .liquidGlassRect(cornerRadius: 14)
                     }
                 }
                 if let page {
                     MovieGrid(cards: page.cards)
                 }
             }
-            .padding()
+            .padding(.horizontal, AdaptiveLayout.horizontalPadding)
+            .padding(.vertical, 12)
         }
+        .background(AVFanTheme.pageBackground)
         .navigationTitle("排行榜")
         .navigationDestination(for: MovieCard.self) { MovieDetailView(card: $0) }
         .task { await load() }

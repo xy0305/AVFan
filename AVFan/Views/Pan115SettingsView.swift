@@ -33,6 +33,7 @@ struct Pan115SettingsView: View {
 
             Section {
                 Button("保存") { save() }
+                    .glassChromeButton(prominent: true)
                 Button {
                     Task { await testPush() }
                 } label: {
@@ -43,6 +44,7 @@ struct Pan115SettingsView: View {
                     }
                 }
                 .disabled(testing)
+                .glassChromeButton()
             }
 
             if let status {
@@ -65,6 +67,9 @@ struct Pan115SettingsView: View {
                 }
             }
         }
+        .scrollContentBackground(.hidden)
+        .background(AVFanTheme.pageBackground)
+        .liquidGlassList()
         .navigationTitle("115 离线")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {

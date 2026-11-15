@@ -12,16 +12,22 @@ struct SearchView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
+            HStack(spacing: 10) {
                 TextField("搜索番号、标题、演员…", text: $query)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .submitLabel(.search)
                     .onSubmit { Task { await search() } }
                 Button("搜索") { Task { await search() } }
+                    .font(.subheadline.weight(.semibold))
                     .disabled(query.trimmingCharacters(in: .whitespaces).isEmpty || loading)
+                    .glassChromeButton(prominent: true)
             }
-            .padding()
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .liquidGlassRect(cornerRadius: 18, interactive: true)
+            .padding(.horizontal, AdaptiveLayout.horizontalPadding)
+            .padding(.top, 8)
             if loading {
                 ProgressView("正在搜索…").padding()
             }
@@ -35,9 +41,11 @@ struct SearchView: View {
                     }
                     MovieGrid(cards: cards)
                 }
-                .padding()
+                .padding(.horizontal, AdaptiveLayout.horizontalPadding)
+                .padding(.vertical, 12)
             }
         }
+        .background(AVFanTheme.pageBackground)
         .navigationTitle("搜索")
         .navigationDestination(for: MovieCard.self) { MovieDetailView(card: $0) }
         .sheet(isPresented: $showWeb) {
@@ -52,7 +60,6 @@ struct SearchView: View {
         errorMessage = nil
         cards = []
         defer { loading = false }
-        // Locked working URL: /search?q=&st=all with no language prefix.
         let url = SiteClient.shared.searchURL(query: trimmed)
         pageURL = url
         do {

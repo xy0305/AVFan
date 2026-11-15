@@ -17,18 +17,19 @@ struct ListsView: View {
                     } label: {
                         HStack(spacing: 12) {
                             CoverImage(url: item.coverURL)
-                                .frame(width: 72, height: 48)
+                                .frame(width: 84, height: 56)
                                 .clipped()
-                                .clipShape(RoundedRectangle(cornerRadius: 6))
-                            VStack(alignment: .leading, spacing: 2) {
+                                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            VStack(alignment: .leading, spacing: 3) {
                                 Text(item.code ?? item.pathID)
-                                    .font(.subheadline.weight(.semibold))
+                                    .font(AVFanTheme.codeFont)
                                 Text(item.title)
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
-                                    .lineLimit(1)
+                                    .lineLimit(2)
                             }
                         }
+                        .padding(.vertical, 4)
                     }
                 }
                 .onDelete { indexSet in
@@ -46,6 +47,9 @@ struct ListsView: View {
                 }
             }
         }
+        .scrollContentBackground(.hidden)
+        .background(AVFanTheme.pageBackground)
+        .liquidGlassList()
         .navigationTitle("收藏与列表")
     }
 }

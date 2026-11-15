@@ -71,6 +71,12 @@ struct MagnetItem: Identifiable, Hashable {
     }
 }
 
+struct WatchStream: Identifiable, Hashable {
+    var url: String
+    var label: String
+    var id: String { url }
+}
+
 struct MovieDetail: Hashable {
     var pathID: String
     var pageURL: String
@@ -89,6 +95,7 @@ struct MovieDetail: Hashable {
     var casts: [NamedLink]
     var tags: [NamedLink]
     var magnets: [MagnetItem]
+    var watchStreams: [WatchStream] = []
 
     var displayCode: String { code ?? pathID }
     var displayTitle: String { title.isEmpty ? displayCode : title }

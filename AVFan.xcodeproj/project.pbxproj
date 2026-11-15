@@ -32,6 +32,23 @@
 		4BF3379E41514F8C89DD4AF8 /* AVKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = FE74B3E868424510AD0E6335 /* AVKit.framework */; };
 		5DE54A0CCB1F4EB7A43F71CB /* AVFoundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1E37F36ED144475EA5D19285 /* AVFoundation.framework */; };
 		72965330C15B4157804EF71C /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A1C94BD1F2F447B89003D2A2 /* Security.framework */; };
+		AF1100000000000000000001 /* GlassUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF1100000000000000000002 /* GlassUI.swift */; };
+		AF1100000000000000000003 /* AVFanTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF1100000000000000000004 /* AVFanTheme.swift */; };
+		AF1100000000000000000005 /* TabBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF1100000000000000000006 /* TabBar.swift */; };
+		AF1100000000000000000007 /* PlaybackResume.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF1100000000000000000008 /* PlaybackResume.swift */; };
+		AF1100000000000000000009 /* PlaybackProgressStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF110000000000000000000A /* PlaybackProgressStore.swift */; };
+		AF110000000000000000000B /* PlaybackAudioSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF110000000000000000000C /* PlaybackAudioSession.swift */; };
+		AF110000000000000000000D /* PlaybackVideoMetrics.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF110000000000000000000E /* PlaybackVideoMetrics.swift */; };
+		AF110000000000000000000F /* PlaybackDiagnostic.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF1100000000000000000010 /* PlaybackDiagnostic.swift */; };
+		AF1100000000000000000011 /* SeekPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF1100000000000000000012 /* SeekPreview.swift */; };
+		AF1100000000000000000013 /* PlaybackAdjustmentPan.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF1100000000000000000014 /* PlaybackAdjustmentPan.swift */; };
+		AF1100000000000000000015 /* OnlineSubtitle.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF1100000000000000000016 /* OnlineSubtitle.swift */; };
+		AF1100000000000000000017 /* OnlineSubtitleModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF1100000000000000000018 /* OnlineSubtitleModel.swift */; };
+		AF1100000000000000000019 /* SubtitleCatProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF110000000000000000001A /* SubtitleCatProvider.swift */; };
+		AF110000000000000000001B /* KSChromePlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF110000000000000000001C /* KSChromePlayer.swift */; };
+		AF110000000000000000001D /* WatchOnlinePlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF110000000000000000001E /* WatchOnlinePlayerView.swift */; };
+		AF1100000000000000000021 /* KSPlayer in Frameworks */ = {isa = PBXBuildFile; productRef = AF1100000000000000000023 /* KSPlayer */; };
+		AF1100000000000000000024 /* MediaPlayer.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AF1100000000000000000025 /* MediaPlayer.framework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -62,6 +79,22 @@
 		FE74B3E868424510AD0E6335 /* AVKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AVKit.framework; path = System/Library/Frameworks/AVKit.framework; sourceTree = SDKROOT; };
 		1E37F36ED144475EA5D19285 /* AVFoundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AVFoundation.framework; path = System/Library/Frameworks/AVFoundation.framework; sourceTree = SDKROOT; };
 		A1C94BD1F2F447B89003D2A2 /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = System/Library/Frameworks/Security.framework; sourceTree = SDKROOT; };
+		AF1100000000000000000002 /* GlassUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlassUI.swift; sourceTree = "<group>"; };
+		AF1100000000000000000004 /* AVFanTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AVFanTheme.swift; sourceTree = "<group>"; };
+		AF1100000000000000000006 /* TabBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabBar.swift; sourceTree = "<group>"; };
+		AF1100000000000000000008 /* PlaybackResume.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackResume.swift; sourceTree = "<group>"; };
+		AF110000000000000000000A /* PlaybackProgressStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackProgressStore.swift; sourceTree = "<group>"; };
+		AF110000000000000000000C /* PlaybackAudioSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackAudioSession.swift; sourceTree = "<group>"; };
+		AF110000000000000000000E /* PlaybackVideoMetrics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackVideoMetrics.swift; sourceTree = "<group>"; };
+		AF1100000000000000000010 /* PlaybackDiagnostic.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackDiagnostic.swift; sourceTree = "<group>"; };
+		AF1100000000000000000012 /* SeekPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SeekPreview.swift; sourceTree = "<group>"; };
+		AF1100000000000000000014 /* PlaybackAdjustmentPan.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackAdjustmentPan.swift; sourceTree = "<group>"; };
+		AF1100000000000000000016 /* OnlineSubtitle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnlineSubtitle.swift; sourceTree = "<group>"; };
+		AF1100000000000000000018 /* OnlineSubtitleModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnlineSubtitleModel.swift; sourceTree = "<group>"; };
+		AF110000000000000000001A /* SubtitleCatProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubtitleCatProvider.swift; sourceTree = "<group>"; };
+		AF110000000000000000001C /* KSChromePlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KSChromePlayer.swift; sourceTree = "<group>"; };
+		AF110000000000000000001E /* WatchOnlinePlayerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchOnlinePlayerView.swift; sourceTree = "<group>"; };
+		AF1100000000000000000025 /* MediaPlayer.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = MediaPlayer.framework; path = System/Library/Frameworks/MediaPlayer.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -73,6 +106,8 @@
 				4BF3379E41514F8C89DD4AF8 /* AVKit.framework in Frameworks */,
 				5DE54A0CCB1F4EB7A43F71CB /* AVFoundation.framework in Frameworks */,
 				72965330C15B4157804EF71C /* Security.framework in Frameworks */,
+				AF1100000000000000000024 /* MediaPlayer.framework in Frameworks */,
+				AF1100000000000000000021 /* KSPlayer in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -93,6 +128,7 @@
 			isa = PBXGroup;
 			children = (
 				2A2373FD51A849AFB372FF43 /* AVFanApp.swift */,
+				AF110000000000000000001F /* Theme */,
 				6A4E2BF45AF043768E3B1E5E /* Models */,
 				59EDC5FD40B04ACCA8AAB863 /* Parsing */,
 				5B21BACB23B84B1A988E165D /* Networking */,
@@ -136,6 +172,8 @@
 				7DC85DADAD984CEC99E28663 /* BookmarkStore.swift */,
 				00E65764E9D74E75A765F8C8 /* KeychainStore.swift */,
 				446F11F6B8B34E66BF5C05FB /* Pan115Client.swift */,
+				AF1100000000000000000008 /* PlaybackResume.swift */,
+				AF110000000000000000000A /* PlaybackProgressStore.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -143,6 +181,8 @@
 		B04355D44095406AA2C3AFE7 /* Views */ = {
 			isa = PBXGroup;
 			children = (
+				AF1100000000000000000020 /* Player */,
+				AF1100000000000000000006 /* TabBar.swift */,
 				5A62611B4DC44F99B6939DE8 /* HomeView.swift */,
 				D7536CF0AAA1498ABC8EEBAA /* InAppWebView.swift */,
 				1067F984E5A444D589D62CDE /* ListsView.swift */,
@@ -173,11 +213,39 @@
 				FE74B3E868424510AD0E6335 /* AVKit.framework */,
 				1E37F36ED144475EA5D19285 /* AVFoundation.framework */,
 				A1C94BD1F2F447B89003D2A2 /* Security.framework */,
+				AF1100000000000000000025 /* MediaPlayer.framework */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
 		};
 
+
+		AF110000000000000000001F /* Theme */ = {
+			isa = PBXGroup;
+			children = (
+				AF1100000000000000000002 /* GlassUI.swift */,
+				AF1100000000000000000004 /* AVFanTheme.swift */,
+			);
+			path = Theme;
+			sourceTree = "<group>";
+		};
+		AF1100000000000000000020 /* Player */ = {
+			isa = PBXGroup;
+			children = (
+				AF110000000000000000000C /* PlaybackAudioSession.swift */,
+				AF110000000000000000000E /* PlaybackVideoMetrics.swift */,
+				AF1100000000000000000010 /* PlaybackDiagnostic.swift */,
+				AF1100000000000000000012 /* SeekPreview.swift */,
+				AF1100000000000000000014 /* PlaybackAdjustmentPan.swift */,
+				AF1100000000000000000016 /* OnlineSubtitle.swift */,
+				AF1100000000000000000018 /* OnlineSubtitleModel.swift */,
+				AF110000000000000000001A /* SubtitleCatProvider.swift */,
+				AF110000000000000000001C /* KSChromePlayer.swift */,
+				AF110000000000000000001E /* WatchOnlinePlayerView.swift */,
+			);
+			path = Player;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -194,6 +262,9 @@
 			dependencies = (
 			);
 			name = AVFan;
+			packageProductDependencies = (
+				AF1100000000000000000023 /* KSPlayer */,
+			);
 			productName = AVFan;
 			productReference = FA24C521C2E146E79612314E /* AVFan.app */;
 			productType = "com.apple.product-type.application";
@@ -223,6 +294,9 @@
 				"zh-Hans",
 			);
 			mainGroup = 540B77516E524134A44282E6;
+			packageReferences = (
+				AF1100000000000000000022 /* XCRemoteSwiftPackageReference "KSPlayer" */,
+			);
 			productRefGroup = 1909AAC9EE1E417483F70233 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -268,6 +342,21 @@
 				3DE5EDD69CD446899C0B184F /* RootView.swift in Sources */,
 				E78A984D13424E0BB08F86FE /* SearchView.swift in Sources */,
 				AE5DB420ADB648148DD86AF4 /* SettingsView.swift in Sources */,
+				AF1100000000000000000001 /* GlassUI.swift in Sources */,
+				AF1100000000000000000003 /* AVFanTheme.swift in Sources */,
+				AF1100000000000000000005 /* TabBar.swift in Sources */,
+				AF1100000000000000000007 /* PlaybackResume.swift in Sources */,
+				AF1100000000000000000009 /* PlaybackProgressStore.swift in Sources */,
+				AF110000000000000000000B /* PlaybackAudioSession.swift in Sources */,
+				AF110000000000000000000D /* PlaybackVideoMetrics.swift in Sources */,
+				AF110000000000000000000F /* PlaybackDiagnostic.swift in Sources */,
+				AF1100000000000000000011 /* SeekPreview.swift in Sources */,
+				AF1100000000000000000013 /* PlaybackAdjustmentPan.swift in Sources */,
+				AF1100000000000000000015 /* OnlineSubtitle.swift in Sources */,
+				AF1100000000000000000017 /* OnlineSubtitleModel.swift in Sources */,
+				AF1100000000000000000019 /* SubtitleCatProvider.swift in Sources */,
+				AF110000000000000000001B /* KSChromePlayer.swift in Sources */,
+				AF110000000000000000001D /* WatchOnlinePlayerView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -320,7 +409,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -332,7 +421,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.xy0305.avfan;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -349,7 +438,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -361,7 +450,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.xy0305.avfan;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -394,6 +483,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		AF1100000000000000000022 /* XCRemoteSwiftPackageReference "KSPlayer" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/kingslay/KSPlayer.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.3.4;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		AF1100000000000000000023 /* KSPlayer */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = AF1100000000000000000022 /* XCRemoteSwiftPackageReference "KSPlayer" */;
+			productName = KSPlayer;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = A5AF112A58B34532A4981C52 /* Project object */;
 }

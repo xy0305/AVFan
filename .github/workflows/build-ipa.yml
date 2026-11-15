@@ -17,7 +17,7 @@ jobs:
   ipa:
     name: Build Release IPA
     runs-on: macos-26
-    timeout-minutes: 30
+    timeout-minutes: 90
 
     steps:
       - name: Checkout source
@@ -41,6 +41,10 @@ jobs:
 
       - name: Native 115 crypto tests (macOS, no simulator)
         run: python3 scripts/test-115-native.py
+
+      - name: Resolve Swift packages
+        run: |
+          xcodebuild -project AVFan.xcodeproj -scheme AVFan -resolvePackageDependencies
 
       - name: Build unsigned (iphoneos)
         run: |

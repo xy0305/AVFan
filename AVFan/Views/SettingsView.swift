@@ -61,12 +61,15 @@ struct SettingsView: View {
             }
 
             Section("关于") {
-                LabeledContent("版本", value: "1.0 (1)")
-                Text("AVFan 是独立的个人侧载应用，不是 avfan.com 的官方客户端，也不做公开分发。抓取范围仅限公开 HTML 目录字段，且按页面按需请求。")
+                LabeledContent("版本", value: "1.1 (2)")
+                Text("AVFan 是独立的个人侧载应用，不是 avfan.com 的官方客户端，也不做公开分发。抓取范围仅限公开 HTML 目录字段，且按页面按需请求。播放器使用 KSPlayer（GPL-3.0）。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
         }
+        .scrollContentBackground(.hidden)
+        .background(AVFanTheme.pageBackground)
+        .liquidGlassList()
         .navigationTitle("设置")
         .sheet(isPresented: $showSiteLogin) {
             InAppWebView(url: URL(string: "https://avfan.com/\(settings.locale.rawValue)")!, title: "AVFan 网站")

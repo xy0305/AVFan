@@ -6,7 +6,7 @@ struct HomeView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: AVFanTheme.sectionSpacing) {
                 FetchStatusBanner(source: model.source, error: model.errorMessage, webURL: model.pageURL) {
                     model.showWeb = true
                 }
@@ -14,26 +14,46 @@ struct HomeView: View {
                     ProgressView("正在加载首页…")
                         .frame(maxWidth: .infinity, minHeight: 200)
                 }
-                ForEach(model.page.sections) { section in
-                    VStack(alignment: .leading, spacing: 10) {
-                        HStack {
+                ForEach(Array(model.page.sections.enumerated()), id: \.element.id) { index, section in
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack(alignment: .firstTextBaseline) {
                             Text(section.title)
-                                .font(.title3.bold())
+                                .font(AVFanTheme.sectionFont)
                             Spacer()
                             if let more = section.moreHref {
-                                NavigationLink("全部") {
+                                NavigationLink {
                                     CatalogListView(title: section.title, path: more)
+                                } label: {
+                                    Text("全部")
+                                        .font(.subheadline.weight(.semibold))
+                                        .padding(.horizontal, 12)
+                                        .padding(.vertical, 6)
                                 }
-                                .font(.subheadline)
+                                .liquidGlass(tint: nil, interactive: true)
+                                .buttonStyle(.plain)
                             }
                         }
-                        MovieGrid(cards: section.cards)
+                        if index == 0, let featured = section.cards.first {
+                            NavigationLink(value: featured) {
+                                FeaturedHero(card: featured)
+                            }
+                            .buttonStyle(.plain)
+                            MovieGrid(cards: Array(section.cards.dropFirst()))
+                        } else {
+                            MovieGrid(cards: section.cards)
+                        }
                     }
                 }
             }
-            .padding()
+            .padding(.horizontal, AdaptiveLayout.horizontalPadding)
+            .padding(.top, 8)
+            .padding(.bottom, 24)
+            .frame(maxWidth: AdaptiveLayout.contentMaxWidth)
+            .frame(maxWidth: .infinity)
         }
+        .background(AVFanTheme.pageBackground)
         .navigationTitle("AVFan")
+        .navigationBarTitleDisplayMode(.large)
         .navigationDestination(for: MovieCard.self) { card in
             MovieDetailView(card: card)
         }
@@ -45,6 +65,7 @@ struct HomeView: View {
                     Image(systemName: "arrow.clockwise")
                 }
                 .disabled(model.loading)
+                .liquidGlassCircle(interactive: true)
             }
         }
         .task { await model.load(settings: settings, force: false) }
@@ -57,6 +78,40 @@ struct HomeView: View {
         .onChange(of: settings.locale) { _, _ in
             Task { await model.load(settings: settings, force: true) }
         }
+    }
+}
+
+struct FeaturedHero: View {
+    let card: MovieCard
+
+    var body: some View {
+        ZStack(alignment: .bottomLeading) {
+            CoverImage(url: card.coverURL)
+                .aspectRatio(16/9, contentMode: .fill)
+                .clipped()
+            LinearGradient(colors: [.clear, .black.opacity(0.72)], startPoint: .center, endPoint: .bottom)
+            VStack(alignment: .leading, spacing: 4) {
+                if card.canPlay {
+                    Text("可播放")
+                        .font(.caption2.weight(.bold))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(AVFanTheme.accent, in: Capsule())
+                        .foregroundStyle(.white)
+                }
+                Text(card.displayCode)
+                    .font(.title3.weight(.bold))
+                    .foregroundStyle(.white)
+                Text(card.displayTitle)
+                    .font(.subheadline)
+                    .foregroundStyle(.white.opacity(0.88))
+                    .lineLimit(2)
+            }
+            .padding(16)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: AVFanTheme.heroRadius, style: .continuous))
+        .liquidCover(cornerRadius: AVFanTheme.heroRadius)
+        .shadow(color: .black.opacity(0.16), radius: 16, y: 8)
     }
 }
 
@@ -114,8 +169,10 @@ struct CatalogListView: View {
                 if loading && cards.isEmpty { ProgressView().frame(maxWidth: .infinity, minHeight: 180) }
                 MovieGrid(cards: cards)
             }
-            .padding()
+            .padding(.horizontal, AdaptiveLayout.horizontalPadding)
+            .padding(.vertical, 12)
         }
+        .background(AVFanTheme.pageBackground)
         .navigationTitle(title)
         .navigationDestination(for: MovieCard.self) { MovieDetailView(card: $0) }
         .task { await load() }

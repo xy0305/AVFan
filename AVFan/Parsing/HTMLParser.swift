@@ -393,8 +393,53 @@ enum HTMLParser {
             series: links(in: html, kind: "series", pathHint: "/series/"),
             casts: links(in: definitionHTML(named: "演员", in: html) ?? "", kind: "cast"),
             tags: links(in: definitionHTML(named: "标签", in: html) ?? "", kind: "tag"),
-            magnets: magnets(in: html)
+            magnets: magnets(in: html),
+            watchStreams: watchStreams(in: html, pageURL: pageURL)
         )
+    }
+
+
+    /// Public HTML media only: ld+json VideoObject contentUrl / <video><source> / visible m3u8|mp4.
+    /// Skips /api/ paths and non-http(s) schemes. Covers are never treated as streams.
+    static func watchStreams(in html: String, pageURL: String) -> [WatchStream] {
+        var results: [WatchStream] = []
+        var seen = Set<String>()
+        func accept(_ raw: String, label: String) {
+            let trimmed = unescape(raw).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let url = URL(string: trimmed), let scheme = url.scheme?.lowercased(),
+                  scheme == "http" || scheme == "https" else { return }
+            let path = url.path.lowercased()
+            if path.contains("/api/") { return }
+            let isMedia = path.hasSuffix(".m3u8") || path.hasSuffix(".mp4") || path.hasSuffix(".m4v")
+                || path.contains(".m3u8") || (path.hasSuffix(".mp4") && !path.contains("/covers/"))
+            guard isMedia else { return }
+            if seen.insert(url.absoluteString).inserted {
+                results.append(WatchStream(url: url.absoluteString, label: label))
+            }
+        }
+        if let content = firstMatch("contentUrl"\s*:\s*"([^"]+)"", in: html) {
+            accept(content, label: "在线观看")
+        }
+        if let regex = try? NSRegularExpression(pattern: "<source[^>]+src=["']([^"']+)["'][^>]*>", options: [.caseInsensitive]) {
+            let ns = html as NSString
+            for match in regex.matches(in: html, range: NSRange(location: 0, length: ns.length)) {
+                accept(ns.substring(with: match.range(at: 1)), label: "在线观看")
+            }
+        }
+        if let regex = try? NSRegularExpression(pattern: "<video[^>]+src=["']([^"']+)["']", options: [.caseInsensitive]) {
+            let ns = html as NSString
+            for match in regex.matches(in: html, range: NSRange(location: 0, length: ns.length)) {
+                accept(ns.substring(with: match.range(at: 1)), label: "在线观看")
+            }
+        }
+        if let regex = try? NSRegularExpression(pattern: "https?://[^\s"'<>]+\.(m3u8|mp4|m4v)(\?[^\s"'<>]*)?", options: [.caseInsensitive]) {
+            let ns = html as NSString
+            for match in regex.matches(in: html, range: NSRange(location: 0, length: ns.length)) {
+                accept(ns.substring(with: match.range), label: "在线观看")
+            }
+        }
+        _ = pageURL
+        return results
     }
 
     private static func definition(named label: String, in html: String) -> String? {
