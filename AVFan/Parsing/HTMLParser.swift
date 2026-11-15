@@ -302,7 +302,7 @@ enum HTMLParser {
                                       endMarkers: ["同分类", "同分類", "资讯评论", "資訊評論"]) {
             var seen = Set<String>()
             for anchor in anchorBlocks(in: region) {
-                guard firstMatch("/casts/[A-Za-z0-9]{8}", in: anchor.href) != nil else { continue }
+                guard firstMatch("/casts/([A-Za-z0-9]{8})", in: anchor.href) != nil else { continue }
                 let name = stripTags(anchor.inner)
                 guard !name.isEmpty, seen.insert(anchor.href).inserted else { continue }
                 article.relatedCasts.append(NamedLink(name: name, href: anchor.href, kind: "cast"))
@@ -349,7 +349,7 @@ enum HTMLParser {
         var out: [NamedLink] = []
         var seen = Set<String>()
         for anchor in anchorBlocks(in: html) {
-            guard firstMatch("/series/[A-Za-z0-9]{8}(?:[?#].*)?$", in: anchor.href) != nil else { continue }
+            guard firstMatch("/series/([A-Za-z0-9]{8})(?:[?#].*)?$", in: anchor.href) != nil else { continue }
             let name = stripTags(anchor.inner)
             guard !name.isEmpty, name.count <= 80, seen.insert(anchor.href).inserted else { continue }
             out.append(NamedLink(name: name, href: anchor.href, kind: "series"))
