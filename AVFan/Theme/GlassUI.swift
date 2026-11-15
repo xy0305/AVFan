@@ -723,7 +723,7 @@ struct GlassButton: View {
                     .font(.system(size: 15, weight: .semibold))
             }
         }
-        .avdbGlassButton(prominent: style == .primary || style == .destructive)
+        .glassChromeButton(prominent: style == .primary || style == .destructive)
         .tint(style == .destructive ? .red : .accentColor)
         .pressableGlass()
     }

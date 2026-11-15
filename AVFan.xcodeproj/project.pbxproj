@@ -49,6 +49,8 @@
 		AF110000000000000000001D /* WatchOnlinePlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF110000000000000000001E /* WatchOnlinePlayerView.swift */; };
 		AF1100000000000000000021 /* KSPlayer in Frameworks */ = {isa = PBXBuildFile; productRef = AF1100000000000000000023 /* KSPlayer */; };
 		AF1100000000000000000024 /* MediaPlayer.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AF1100000000000000000025 /* MediaPlayer.framework */; };
+		AF1100000000000000000040 /* JRHTML.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF1100000000000000000041 /* JRHTML.swift */; };
+		AF1100000000000000000042 /* OnlineFailure.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF1100000000000000000043 /* OnlineFailure.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -95,6 +97,8 @@
 		AF110000000000000000001C /* KSChromePlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KSChromePlayer.swift; sourceTree = "<group>"; };
 		AF110000000000000000001E /* WatchOnlinePlayerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchOnlinePlayerView.swift; sourceTree = "<group>"; };
 		AF1100000000000000000025 /* MediaPlayer.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = MediaPlayer.framework; path = System/Library/Frameworks/MediaPlayer.framework; sourceTree = SDKROOT; };
+		AF1100000000000000000041 /* JRHTML.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JRHTML.swift; sourceTree = "<group>"; };
+		AF1100000000000000000043 /* OnlineFailure.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnlineFailure.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -174,6 +178,8 @@
 				446F11F6B8B34E66BF5C05FB /* Pan115Client.swift */,
 				AF1100000000000000000008 /* PlaybackResume.swift */,
 				AF110000000000000000000A /* PlaybackProgressStore.swift */,
+				AF1100000000000000000041 /* JRHTML.swift */,
+				AF1100000000000000000043 /* OnlineFailure.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -357,6 +363,8 @@
 				AF1100000000000000000019 /* SubtitleCatProvider.swift in Sources */,
 				AF110000000000000000001B /* KSChromePlayer.swift in Sources */,
 				AF110000000000000000001D /* WatchOnlinePlayerView.swift in Sources */,
+				AF1100000000000000000040 /* JRHTML.swift in Sources */,
+				AF1100000000000000000042 /* OnlineFailure.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
