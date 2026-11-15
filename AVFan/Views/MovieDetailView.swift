@@ -6,104 +6,69 @@ struct MovieDetailView: View {
     @EnvironmentObject private var settings: AppSettings
     @EnvironmentObject private var bookmarks: BookmarkStore
     @EnvironmentObject private var pan115: Pan115Settings
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.availableLayoutSize) private var layoutSize
     @StateObject private var model = MovieDetailViewModel()
+    @ScaledMetric(relativeTo: .largeTitle) private var portraitTitleSize: CGFloat = 34
     @State private var showWeb = false
     @State private var showPlayer = false
     @State private var showWatchPlayer = false
+    @State private var showMagnetList = false
     @State private var activeMagnet: MagnetItem?
     @State private var activeWatch: WatchStream?
     @State private var startFromBeginning = false
     @State private var toast: String?
     @State private var resume115: PlaybackResumeEntry?
+    @State private var resumeOnline: PlaybackResumeEntry?
+
+    private var display: MovieDetail {
+        model.detail ?? MovieDetail(
+            pathID: card.pathID,
+            pageURL: HTMLParser.absoluteURL(card.href),
+            code: card.code,
+            title: card.title,
+            coverURL: card.coverURL,
+            summary: nil,
+            releaseDate: card.date,
+            duration: nil,
+            rating: nil,
+            ratingCount: nil,
+            makers: [],
+            publishers: [],
+            directors: [],
+            series: [],
+            casts: [],
+            tags: [],
+            magnets: [],
+            watchStreams: []
+        )
+    }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                CoverImage(url: model.detail?.coverURL ?? card.coverURL)
-                    .aspectRatio(3/2, contentMode: .fill)
-                    .clipped()
-                    .liquidCover(cornerRadius: AVFanTheme.heroRadius)
-                    .shadow(color: .black.opacity(0.14), radius: 16, y: 8)
-
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(model.detail?.displayCode ?? card.displayCode)
-                        .font(AVFanTheme.titleFont)
-                    Text(model.detail?.displayTitle ?? card.displayTitle)
-                        .font(.body)
-                        .foregroundStyle(.primary)
-                    if let rating = model.detail?.rating {
-                        let count = model.detail?.ratingCount.map { " · \($0)人评分" } ?? ""
-                        Text(String(format: "%.1f 分%@", rating, count))
-                            .font(.footnote.weight(.semibold))
-                            .foregroundStyle(AVFanTheme.accent)
-                    }
-                }
-
-                playPills
-
-                FetchStatusBanner(source: model.source, error: model.errorMessage, webURL: model.pageURL) {
-                    showWeb = true
-                }
-
-                if model.loading && model.detail == nil {
-                    ProgressView("正在加载详情…")
-                        .frame(maxWidth: .infinity)
-                }
-
-                if let detail = model.detail {
-                    VStack(alignment: .leading, spacing: 8) {
-                        infoBlock("发行日期", detail.releaseDate)
-                        infoBlock("片长", detail.duration)
-                        linkBlock("制作商", detail.makers)
-                        linkBlock("发行商", detail.publishers)
-                        linkBlock("导演", detail.directors)
-                        linkBlock("系列", detail.series)
-                        linkBlock("演员", detail.casts)
-                        linkBlock("标签", detail.tags)
-                    }
-                    .padding(14)
-                    .liquidGlassRect(cornerRadius: 18)
-
-                    if let summary = detail.summary, !summary.isEmpty {
-                        Text(summary)
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                            .padding(14)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .liquidGlassRect(cornerRadius: 16)
-                    }
-
-                    magnetsSection(detail)
-                }
+        GeometryReader { proxy in
+            ScrollView {
+                detailContent(display, width: proxy.size.width, height: proxy.size.height)
             }
-            .padding(.horizontal, AdaptiveLayout.horizontalPadding)
-            .padding(.top, 8)
-            .padding(.bottom, 28)
+            .scrollIndicators(.hidden)
+            .ignoresSafeArea(.container, edges: .top)
+            .background(AVFanTheme.pageBackground)
         }
-        .background(AVFanTheme.pageBackground)
-        .navigationTitle(model.detail?.displayCode ?? card.displayCode)
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItemGroup(placement: .topBarTrailing) {
-                Button {
-                    if let detail = model.detail {
-                        bookmarks.toggle(detail)
-                    }
-                } label: {
-                    Image(systemName: bookmarks.contains(model.detail?.pathID ?? card.pathID) ? "bookmark.fill" : "bookmark")
-                }
-                .disabled(model.detail == nil)
-                ShareLink(item: shareText) {
-                    Image(systemName: "square.and.arrow.up")
-                }
-            }
-        }
+        .toolbar(.hidden, for: .navigationBar)
         .task {
             await model.load(card: card, settings: settings)
             refreshResume()
         }
         .sheet(isPresented: $showWeb) {
             if let url = model.pageURL { InAppWebView(url: url, title: card.displayCode) }
+        }
+        .sheet(isPresented: $showMagnetList) {
+            NavigationStack {
+                ScrollView { magnetsSection(display).padding(16) }
+                    .background(AVFanTheme.pageBackground)
+                    .navigationTitle("磁力列表")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar { ToolbarItem(placement: .cancellationAction) { Button("完成") { showMagnetList = false } } }
+            }
         }
         .fullScreenCover(isPresented: $showPlayer) {
             if let detail = model.detail {
@@ -127,6 +92,7 @@ struct MovieDetailView: View {
         }
         .onChange(of: showPlayer) { _, open in if !open { refreshResume() } }
         .onChange(of: showWatchPlayer) { _, open in if !open { refreshResume() } }
+        .overlay(alignment: .topLeading) { detailChrome }
         .overlay(alignment: .bottom) {
             if let toast {
                 Text(toast)
@@ -139,77 +105,327 @@ struct MovieDetailView: View {
         }
     }
 
-    @ViewBuilder
-    private var playPills: some View {
-        let watch = model.detail?.watchStreams ?? []
-        let resumeTitle = PlaybackResumePolicy.compactTitle(position: resume115?.position, length: resume115?.length)
-        if !watch.isEmpty || resumeTitle != nil {
-            VStack(alignment: .leading, spacing: 10) {
-                if let first = watch.first {
-                    Button {
-                        startFromBeginning = true
-                        activeWatch = first
-                        showWatchPlayer = true
-                    } label: {
-                        Label(first.label, systemImage: "play.fill")
-                            .font(.headline)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 4)
-                    }
-                    .glassChromeButton(prominent: true)
-                    if watch.count > 1 {
-                        Menu("其他在线线路") {
-                            ForEach(watch.dropFirst()) { stream in
-                                Button(stream.label) {
-                                    startFromBeginning = true
-                                    activeWatch = stream
-                                    showWatchPlayer = true
-                                }
-                            }
-                        }
-                    }
-                    Text("来自当前公开页面的媒体地址。若无法播放，可改用应用内网页。")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+    private var detailChrome: some View {
+        HStack {
+            chromeButton("chevron.left") { dismiss() }
+            Spacer()
+            chromeButton(bookmarks.contains(display.pathID) ? "bookmark.fill" : "bookmark") {
+                if let detail = model.detail { bookmarks.toggle(detail) }
+            }
+            ShareLink(item: shareText) {
+                Image(systemName: "square.and.arrow.up")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 36, height: 36)
+                    .liquidGlassCircle(interactive: true)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 6)
+    }
+
+    private func chromeButton(_ icon: String, action: @escaping () -> Void) -> some View {
+        Button {
+            GlassHaptic.tap()
+            action()
+        } label: {
+            Image(systemName: icon)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 36, height: 36)
+                .liquidGlassCircle(interactive: true)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func detailContent(_ detail: MovieDetail, width: CGFloat, height: CGFloat) -> some View {
+        let geometry = DetailPortraitGeometry(availableSize: CGSize(width: width, height: height),
+                                              isPad: AdaptiveLayout.isPad)
+        return VStack(spacing: 0) {
+            portraitHero(detail, geometry: geometry)
+            VStack(alignment: .leading, spacing: 20) {
+                FetchStatusBanner(source: model.source, error: model.errorMessage, webURL: model.pageURL) {
+                    showWeb = true
                 }
-                if let resumeTitle {
-                    Button {
-                        startFromBeginning = false
-                        if (model.detail?.watchStreams.isEmpty ?? true) || pan115.isConfigured {
-                            showPlayer = true
-                        } else if let first = model.detail?.watchStreams.first {
-                            activeWatch = first
-                            showWatchPlayer = true
-                        }
-                    } label: {
-                        Label(resumeTitle + " · 115", systemImage: "clock.arrow.circlepath")
-                            .font(.subheadline.weight(.semibold))
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 4)
-                    }
-                    .glassChromeButton()
+                if model.loading && model.detail == nil {
+                    ProgressView("正在加载详情…").frame(maxWidth: .infinity)
                 }
+                movieInfoCard(detail)
+                if !detail.tags.isEmpty { tagsSection(detail.tags) }
+                if !detail.casts.isEmpty { linkSection("演员", detail.casts) }
+                if let summary = detail.summary, !summary.isEmpty { summarySection(summary) }
+                magnetsSection(detail)
+            }
+            .padding(.top, 26)
+            .padding(.bottom, 40)
+            .padding(.horizontal, 20)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color(.systemBackground))
+            .clipShape(UnevenRoundedRectangle(topLeadingRadius: 28, topTrailingRadius: 28))
+        }
+        .frame(maxWidth: AdaptiveLayout.isPad ? 900 : AdaptiveLayout.contentMaxWidth)
+        .frame(maxWidth: .infinity)
+    }
+
+    private func portraitHero(_ detail: MovieDetail, geometry: DetailPortraitGeometry) -> some View {
+        let width = geometry.width
+        let imageHeight = geometry.imageHeight
+        let titleTop = geometry.titleTop
+        return ZStack(alignment: .top) {
+            CoverImage(url: detail.coverURL ?? card.coverURL, anchorY: 0.18, allowUpscale: true)
+                .frame(width: width, height: imageHeight, alignment: .top)
+                .clipped()
+                .accessibilityHidden(true)
+                .accessibilityIdentifier("detail-hero-artwork")
+            LinearGradient(stops: [
+                .init(color: .clear, location: 0.36),
+                .init(color: Color.black.opacity(0.24), location: 0.57),
+                .init(color: Color.black.opacity(0.78), location: 0.86),
+                .init(color: Color.black.opacity(0.92), location: 1),
+            ], startPoint: .top, endPoint: .bottom)
+            .frame(height: imageHeight + 30)
+            .allowsHitTesting(false)
+
+            VStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: 0) {
+                    DetailReadableTitle(
+                        title: detail.displayTitle,
+                        identifier: "portrait-hero-title",
+                        font: .system(size: portraitTitleSize * (AdaptiveLayout.isPad ? 1.24 : 1), weight: .bold),
+                        collapsedLines: 2
+                    )
+                    .foregroundStyle(.white)
+                    .shadow(color: .black.opacity(0.25), radius: 8)
+                    .padding(.horizontal, 32)
+                    portraitMetadata(detail)
+                        .padding(.horizontal, 18).padding(.top, 16)
+                }
+                .frame(minHeight: max(0, geometry.controlsTop - titleTop - 18), alignment: .bottom)
+                portraitControls(detail)
+                    .padding(.horizontal, 18).padding(.top, 18)
+                resourceCards(detail)
+                    .padding(.horizontal, 18).padding(.top, 30)
+                    .buttonStyle(.plain)
+            }
+            .padding(.top, titleTop)
+            .foregroundStyle(.white)
+        }
+        .frame(width: width)
+        .frame(maxWidth: .infinity)
+    }
+
+    private func portraitMetadata(_ detail: MovieDetail) -> some View {
+        let values = [detail.displayCode, detail.releaseDate, detail.duration].compactMap { value -> String? in
+            guard let value, !value.isEmpty else { return nil }
+            return value
+        }
+        return Text(values.joined(separator: " · "))
+            .font(.subheadline.weight(.semibold))
+            .multilineTextAlignment(.center)
+            .frame(maxWidth: .infinity)
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityIdentifier("portrait-hero-metadata")
+    }
+
+    private func portraitControls(_ detail: MovieDetail) -> some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 12) {
+                portraitPlayButton
+                portraitActionGroup
+            }
+            VStack(spacing: 12) {
+                portraitPlayButton.frame(maxWidth: .infinity)
+                portraitActionGroup.frame(maxWidth: .infinity, alignment: .trailing)
             }
         }
     }
 
-    private func refreshResume() {
-        let code = model.detail?.displayCode ?? card.displayCode
-        if let key = PlaybackResumeKey.make(number: code, source: "115") {
-            resume115 = PlaybackResumeStore.shared.entry(key, scope: "avfan")
+    private var playProgress: Double? {
+        if let resume = resume115, let length = optionalLength(resume), length > 0 {
+            return min(max(resume.position / length, 0), 1)
         }
+        if let resume = resumeOnline, let length = optionalLength(resume), length > 0 {
+            return min(max(resume.position / length, 0), 1)
+        }
+        return nil
     }
 
-    private var shareText: String {
-        let detail = model.detail
-        let code = detail?.displayCode ?? card.displayCode
-        let title = detail?.displayTitle ?? card.displayTitle
-        let url = detail?.pageURL ?? HTMLParser.absoluteURL(card.href)
-        return "\(code) \(title)\n\(url)"
+    private func optionalLength(_ entry: PlaybackResumeEntry) -> Double? {
+        entry.length > 0 ? entry.length : nil
+    }
+
+    private var portraitPlayButton: some View {
+        let compact = PlaybackResumePolicy.compactTitle(position: resume115?.position ?? resumeOnline?.position,
+                                                        length: resume115?.length ?? resumeOnline?.length)
+        return Button {
+            GlassHaptic.tap()
+            playPrimary()
+        } label: {
+            DetailPlayPill(title: compact ?? "播放", progress: playProgress)
+        }
+        .buttonStyle(.plain)
+        .contextMenu { playMenu }
+        .accessibilityLabel(compact ?? "播放")
+        .accessibilityIdentifier("portrait-hero-play")
     }
 
     @ViewBuilder
-    private func infoBlock(_ label: String, _ value: String?) -> some View {
+    private var playMenu: some View {
+        if PlaybackResumePolicy.compactTitle(position: resume115?.position, length: resume115?.length) != nil {
+            Button {
+                startFromBeginning = false
+                showPlayer = true
+            } label: { Label("续播 115", systemImage: "clock.arrow.circlepath") }
+            Button {
+                startFromBeginning = true
+                showPlayer = true
+            } label: { Label("从头播放 115", systemImage: "backward.end") }
+        }
+        if let first = display.watchStreams.first {
+            Button {
+                startFromBeginning = true
+                activeWatch = first
+                showWatchPlayer = true
+            } label: { Label(first.label, systemImage: "play.rectangle") }
+        }
+        Button {
+            startFromBeginning = false
+            showPlayer = true
+        } label: { Label("播放 115 原画", systemImage: "play.fill") }
+    }
+
+    private var portraitActionGroup: some View {
+        HStack(spacing: 0) {
+            posterAction("link", label: "磁力列表") { showMagnetList = true }
+            posterAction(bookmarks.contains(display.pathID) ? "bookmark.fill" : "bookmark", label: "收藏") {
+                if let detail = model.detail { bookmarks.toggle(detail) }
+            }
+            posterAction("safari", label: "网页") { showWeb = true }
+            ShareLink(item: shareText) {
+                Image(systemName: "square.and.arrow.up")
+                    .font(.system(size: 23, weight: .regular))
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .accessibilityLabel("分享")
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 6).padding(.vertical, 2)
+        .background(.clear, in: Capsule())
+        .overlay(Capsule().stroke(.white.opacity(0.72), lineWidth: 1.5).allowsHitTesting(false))
+        .accessibilityIdentifier("portrait-hero-actions")
+    }
+
+    private func posterAction(_ icon: String, label: String, action: @escaping () -> Void) -> some View {
+        Button {
+            GlassHaptic.tap()
+            action()
+        } label: {
+            Image(systemName: icon).font(.system(size: 23, weight: .regular))
+                .frame(width: 44, height: 44).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+    }
+
+    private func resourceCards(_ detail: MovieDetail) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 12) {
+                Text("播放资源:").font(.system(size: 17, weight: .bold))
+                Button("115 原画") {
+                    startFromBeginning = false
+                    showPlayer = true
+                }
+                .font(.system(size: 15, weight: .semibold))
+                .padding(.horizontal, 14).padding(.vertical, 6)
+                .overlay(Capsule().stroke(.white.opacity(0.22)))
+            }
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(alignment: .top, spacing: 12) {
+                    resourceCard(title: "115 原画",
+                                 caption: pan115.isConfigured ? "打开 115 匹配资源" : "需先在设置里配置 115",
+                                 action: "选择播放文件", icon: "play.circle", emphasized: true) {
+                        startFromBeginning = false
+                        showPlayer = true
+                    }
+                    if let first = detail.watchStreams.first {
+                        resourceCard(title: "在线播放",
+                                     caption: "来自当前公开页面的媒体地址",
+                                     action: first.label, icon: "play.rectangle", emphasized: true) {
+                            startFromBeginning = true
+                            activeWatch = first
+                            showWatchPlayer = true
+                        }
+                    }
+                    resourceCard(title: "磁力与推送",
+                                 caption: detail.magnets.isEmpty ? "这个页面还没有解析到磁力" : "查看可用链接后选择推送",
+                                 action: "查看资源", icon: "link", emphasized: false) {
+                        showMagnetList = true
+                    }
+                }
+                .padding(.horizontal, 18)
+            }
+            .padding(.horizontal, -18)
+        }
+        .accessibilityIdentifier("detail.resource.cards")
+    }
+
+    private func resourceCard(title: String, caption: String, action: String, icon: String, emphasized: Bool, perform: @escaping () -> Void) -> some View {
+        Button(action: perform) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text(title).font(.title3.bold())
+                Text(caption).font(.caption)
+                Label(action, systemImage: icon).font(.subheadline)
+            }
+            .padding(16).frame(minWidth: 220, alignment: .leading)
+            .overlay(RoundedRectangle(cornerRadius: 20).stroke(.white.opacity(emphasized ? 0.45 : 0.22)))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func playPrimary() {
+        if let first = display.watchStreams.first, resume115 == nil {
+            startFromBeginning = PlaybackResumePolicy.compactTitle(position: resumeOnline?.position, length: resumeOnline?.length) == nil
+            activeWatch = first
+            showWatchPlayer = true
+            return
+        }
+        if pan115.isConfigured || resume115 != nil {
+            startFromBeginning = resume115 == nil
+            showPlayer = true
+            return
+        }
+        if let first = display.watchStreams.first {
+            startFromBeginning = true
+            activeWatch = first
+            showWatchPlayer = true
+        } else {
+            toast = pan115.isConfigured ? "没有可播放的资源" : "请先在设置里填写 115 Cookie 和目录 CID，或使用页面里的在线地址。"
+            hideToastLater()
+        }
+    }
+
+    private func movieInfoCard(_ detail: MovieDetail) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            infoRow("番号", detail.displayCode)
+            infoRow("发行日期", detail.releaseDate)
+            infoRow("片长", detail.duration)
+            if let rating = detail.rating {
+                let count = detail.ratingCount.map { " · \($0)人评分" } ?? ""
+                infoRow("评分", String(format: "%.1f 分%@", rating, count))
+            }
+            linkRow("制作商", detail.makers)
+            linkRow("发行商", detail.publishers)
+            linkRow("导演", detail.directors)
+            linkRow("系列", detail.series)
+        }
+        .padding(16)
+        .liquidGlassRect(cornerRadius: 18)
+    }
+
+    @ViewBuilder
+    private func infoRow(_ label: String, _ value: String?) -> some View {
         if let value, !value.isEmpty {
             HStack(alignment: .top) {
                 Text(label).foregroundStyle(.secondary).frame(width: 72, alignment: .leading)
@@ -221,7 +437,7 @@ struct MovieDetailView: View {
     }
 
     @ViewBuilder
-    private func linkBlock(_ label: String, _ links: [NamedLink]) -> some View {
+    private func linkRow(_ label: String, _ links: [NamedLink]) -> some View {
         if !links.isEmpty {
             HStack(alignment: .top) {
                 Text(label).foregroundStyle(.secondary).frame(width: 72, alignment: .leading)
@@ -232,18 +448,35 @@ struct MovieDetailView: View {
         }
     }
 
+    private func tagsSection(_ tags: [NamedLink]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            GlassSectionHeader(title: "标签", icon: "tag", trailingTitle: nil)
+            FlowTags(names: tags.map(\.name))
+        }
+    }
+
+    private func linkSection(_ title: String, _ links: [NamedLink]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            GlassSectionHeader(title: title, icon: "person.2", trailingTitle: nil)
+            Text(links.map(\.name).joined(separator: "、"))
+                .font(.subheadline)
+        }
+    }
+
+    private func summarySection(_ summary: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            GlassSectionHeader(title: "简介", icon: "text.alignleft", trailingTitle: nil)
+            Text(summary)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
     @ViewBuilder
     private func magnetsSection(_ detail: MovieDetail) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("磁力列表")
-                    .font(AVFanTheme.sectionFont)
-                Text("\(detail.magnets.count)")
-                    .font(.caption.weight(.semibold))
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .liquidGlass()
-            }
+            GlassSectionHeader(title: "磁力链接", icon: "link", badge: "\(detail.magnets.count)", trailingTitle: nil)
             if detail.magnets.isEmpty {
                 Text("这个页面没有解析到磁力链接。")
                     .font(.footnote)
@@ -302,7 +535,150 @@ struct MovieDetailView: View {
             toast = nil
         }
     }
+
+    private func refreshResume() {
+        let code = model.detail?.displayCode ?? card.displayCode
+        if let key = PlaybackResumeKey.make(number: code, source: "115") {
+            resume115 = PlaybackResumeStore.shared.entry(key, scope: "avfan")
+        }
+        if let key = PlaybackResumeKey.make(number: code, source: "avfan") {
+            resumeOnline = PlaybackResumeStore.shared.entry(key, scope: "avfan")
+        }
+    }
+
+    private var shareText: String {
+        let detail = model.detail
+        let code = detail?.displayCode ?? card.displayCode
+        let title = detail?.displayTitle ?? card.displayTitle
+        let url = detail?.pageURL ?? HTMLParser.absoluteURL(card.href)
+        return "\(code) \(title)\n\(url)"
+    }
 }
+
+struct DetailPortraitGeometry {
+    let width: CGFloat
+    let imageHeight: CGFloat
+    let titleTop: CGFloat
+    let controlsTop: CGFloat
+
+    init(availableSize: CGSize, isPad: Bool) {
+        width = max(1, min(availableSize.width, isPad ? 900 : 600))
+        imageHeight = min(width * 1.58, max(600, availableSize.height * 0.8))
+        titleTop = min(width * 1.06, max(390, availableSize.height * 0.56))
+        controlsTop = max(titleTop + 132, min(width * 1.42, availableSize.height * 0.64))
+    }
+}
+
+private struct DetailTitleHeights: PreferenceKey {
+    static var defaultValue: [String: CGFloat] = [:]
+    static func reduce(value: inout [String: CGFloat], nextValue: () -> [String: CGFloat]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
+    }
+}
+
+private struct DetailReadableTitle: View {
+    let title: String
+    let identifier: String
+    var font: Font = .title2.weight(.bold)
+    var collapsedLines: Int = 3
+    @State private var expanded = false
+    @State private var truncated = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            titleText.lineLimit(expanded ? nil : collapsedLines)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier(identifier)
+                .background(alignment: .topLeading) {
+                    VStack(spacing: 0) {
+                        titleText.lineLimit(collapsedLines).fixedSize(horizontal: false, vertical: true)
+                            .background { GeometryReader { proxy in
+                                Color.clear.preference(key: DetailTitleHeights.self, value: ["collapsed": proxy.size.height])
+                            } }
+                        titleText.fixedSize(horizontal: false, vertical: true)
+                            .background { GeometryReader { proxy in
+                                Color.clear.preference(key: DetailTitleHeights.self, value: ["full": proxy.size.height])
+                            } }
+                    }.hidden().accessibilityHidden(true).allowsHitTesting(false)
+                }
+            if truncated {
+                Button { expanded.toggle() } label: {
+                    Text(expanded ? "收起标题" : "展开全文")
+                        .font(.subheadline.weight(.semibold))
+                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("detail-title-toggle")
+            }
+        }
+        .onPreferenceChange(DetailTitleHeights.self) { heights in
+            truncated = (heights["full"] ?? 0) > (heights["collapsed"] ?? 0) + 1
+        }
+    }
+
+    private var titleText: some View {
+        Text(title).font(font).lineSpacing(4).multilineTextAlignment(.leading)
+    }
+}
+
+struct FlowTags: View {
+    let names: [String]
+    var body: some View {
+        FlowLayout(spacing: 8) {
+            ForEach(Array(names.enumerated()), id: \.offset) { _, name in
+                Text(name)
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(AVFanTheme.accent.opacity(0.12), in: Capsule())
+                    .foregroundStyle(AVFanTheme.accent)
+            }
+        }
+    }
+}
+
+private struct FlowLayout: Layout {
+    var spacing: CGFloat = 8
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let maxWidth = proposal.width ?? .infinity
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        var row: CGFloat = 0
+        var width: CGFloat = 0
+        for sub in subviews {
+            let size = sub.sizeThatFits(.unspecified)
+            if x > 0, x + size.width > maxWidth {
+                x = 0
+                y += row + spacing
+                row = 0
+            }
+            row = max(row, size.height)
+            x += size.width + spacing
+            width = max(width, x - spacing)
+        }
+        return CGSize(width: maxWidth.isFinite ? maxWidth : width, height: y + row)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var x = bounds.minX
+        var y = bounds.minY
+        var row: CGFloat = 0
+        for sub in subviews {
+            let size = sub.sizeThatFits(.unspecified)
+            if x > bounds.minX, x + size.width > bounds.maxX {
+                x = bounds.minX
+                y += row + spacing
+                row = 0
+            }
+            sub.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
+            x += size.width + spacing
+            row = max(row, size.height)
+        }
+    }
+}
+
 
 struct MagnetRow: View {
     let magnet: MagnetItem

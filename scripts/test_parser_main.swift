@@ -73,7 +73,28 @@ enum ParserTests {
         let search = HTMLParser.searchURLCheck()
         expect(search, "search URL helper")
 
-        print("PASS: home, detail magnets, ranking merge, empty shell, block detection")
+        // HQ cover preference: official front portrait beats c1 jacket already in the HTML.
+        let mixed = """
+        <a href="/zh-CN/movies/s6bNHCTN"><img src="https://c1.avfan.com/covers/4j/4jOrgf.jpg"></a>
+        <meta property="og:image" content="https://pics.dmm.co.jp/digital/video/ipzz00936/ipzz00936ps.jpg">
+        """
+        let preferred = CoverURLPolicy.preferred(in: mixed)
+        expect(preferred?.contains("ipzz00936ps.jpg") == true, "prefer official ps.jpg, got \(preferred ?? "nil")")
+
+        let jacket = FrontPosterPolicy.cropRect(width: 800, height: 538, source: "https://c1.avfan.com/covers/4j/4jOrgf.jpg")
+        expect(jacket != nil, "800x538 avfan cover is a jacket")
+        expect(Int(jacket?.width ?? -1) == 377, "front width 0.70*538=377, got \(jacket?.width ?? -1)")
+        expect(Int(jacket?.origin.x ?? -1) == 423, "front is right-aligned, x=423, got \(jacket?.origin.x ?? -1)")
+
+        let portrait = FrontPosterPolicy.cropRect(width: 800, height: 538, source: "https://pics.dmm.co.jp/digital/video/ipzz00936/ipzz00936ps.jpg")
+        expect(portrait == nil, "official ps.jpg is already a front portrait and must not be cropped as a jacket")
+
+        let signedHTML = "<a href=\"/zh-CN/sign_out\">退出登录</a>"
+        expect(HTMLParser.isSignedIn(html: signedHTML), "sign_out means signed in")
+        expect(HTMLParser.signOutURL(in: signedHTML)?.contains("sign_out") == true, "sign_out url")
+        expect(HTMLParser.containsSignInLink("<a href=\"/zh-CN/sign_in\">登录</a>"), "sign_in link")
+
+        print("PASS: home, detail magnets, ranking merge, empty shell, block detection, cover policy, login signals")
     }
 }
 

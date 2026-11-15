@@ -16,6 +16,9 @@ struct RootView: View {
         }
         .background(AVFanTheme.pageBackground.ignoresSafeArea())
         .modifier(SceneLayoutReader())
+        .onChange(of: settings.ageConfirmed) { _, confirmed in
+            Task { await CookieBridge.applyLegalAge(confirmed) }
+        }
         .fullScreenCover(isPresented: Binding(
             get: { !settings.ageConfirmed },
             set: { if $0 == false { settings.ageConfirmed = true } }

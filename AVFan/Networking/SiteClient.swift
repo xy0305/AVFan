@@ -13,10 +13,11 @@ actor SiteClient {
     private let cacheDir: URL
 
     init(session: URLSession? = nil) {
-        let config = URLSessionConfiguration.ephemeral
+        let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 30
         config.timeoutIntervalForResource = 45
-        config.httpCookieAcceptPolicy = .onlyFromMainDocumentDomain
+        config.httpCookieStorage = HTTPCookieStorage.shared
+        config.httpCookieAcceptPolicy = .always
         config.httpShouldSetCookies = true
         self.session = session ?? URLSession(configuration: config)
         let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
@@ -81,6 +82,7 @@ actor SiteClient {
                 throw SiteClientError.emptyPage(url: url)
             }
             store(html: html, source: .urlSession, key: key)
+            await rememberSession(html: html, url: url)
             return (html, .urlSession)
         } catch {
             let shouldFallback: Bool
@@ -103,6 +105,7 @@ actor SiteClient {
                     throw SiteClientError.emptyPage(url: url)
                 }
                 store(html: html, source: .wkWebView, key: key)
+                await rememberSession(html: html, url: url)
                 return (html, .wkWebView)
             }
 
@@ -115,14 +118,12 @@ actor SiteClient {
 
     private func fetchWithURLSession(url: URL, locale: SiteLocale, ageCookie: String?) async throws -> String {
         try await respectRateLimit()
+        await CookieBridge.applyLegalAge(ageCookie != nil)
         var request = URLRequest(url: url)
         request.setValue(Self.mobileSafariUA, forHTTPHeaderField: "User-Agent")
         request.setValue(acceptLanguage(for: locale), forHTTPHeaderField: "Accept-Language")
         request.setValue("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", forHTTPHeaderField: "Accept")
         request.setValue("https://avfan.com/", forHTTPHeaderField: "Referer")
-        if let ageCookie {
-            request.setValue(ageCookie, forHTTPHeaderField: "Cookie")
-        }
         let (data, response) = try await session.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         if status == 403 || status == 429 || status == 503 {
@@ -136,7 +137,10 @@ actor SiteClient {
 
     private func fetchWithWebView(url: URL, ageCookie: String?) async throws -> String {
         try await respectRateLimit()
-        return try await WebViewFetcher.shared.html(for: url, ageCookie: ageCookie)
+        await CookieBridge.applyLegalAge(ageCookie != nil)
+        let html = try await WebViewFetcher.shared.html(for: url, ageCookie: ageCookie)
+        await CookieBridge.exportWebKitToShared()
+        return html
     }
 
     private func respectRateLimit() async throws {
@@ -182,6 +186,12 @@ actor SiteClient {
             .replacingOccurrences(of: "/", with: "_")
             .replacingOccurrences(of: "+", with: "-")
         return cacheDir.appendingPathComponent(name)
+    }
+
+    private func rememberSession(html: String, url: URL) async {
+        await MainActor.run {
+            SiteSession.shared.applyPageSignals(html: html, url: url)
+        }
     }
 }
 

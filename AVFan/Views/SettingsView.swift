@@ -3,8 +3,10 @@ import SwiftUI
 struct SettingsView: View {
     @EnvironmentObject private var settings: AppSettings
     @EnvironmentObject private var pan115: Pan115Settings
+    @EnvironmentObject private var session: SiteSession
     @State private var showSiteLogin = false
     @State private var cleared = false
+    @State private var signingOut = false
 
     var body: some View {
         Form {
@@ -42,11 +44,27 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
-            Section("网站") {
-                Button("在应用内打开 avfan.com") {
-                    showSiteLogin = true
+            Section("网站登录") {
+                if session.isSignedIn {
+                    HStack {
+                        Text("当前账号")
+                        Spacer()
+                        Text(session.displayName.isEmpty ? "已登录" : session.displayName)
+                            .foregroundStyle(.secondary)
+                    }
+                    Button(signingOut ? "正在退出…" : "退出登录") {
+                        Task {
+                            signingOut = true
+                            await session.signOut(locale: settings.locale)
+                            signingOut = false
+                        }
+                    }
+                    .disabled(signingOut)
+                    .foregroundStyle(.red)
+                } else {
+                    Button("登录 avfan 账号") { showSiteLogin = true }
                 }
-                Text("如需登录网站，请在这个内置网页里自行操作。应用不会去抓取登录接口或墙内数据。")
+                Text("默认使用原生登录表单。真正的提交在网站登录页完成：应用会把账号填进去，验证码也在这个网页里输入。不会把 /sessions 当成接口来用，也不会和 115 登录混用。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -61,7 +79,7 @@ struct SettingsView: View {
             }
 
             Section("关于") {
-                LabeledContent("版本", value: "1.1 (2)")
+                LabeledContent("版本", value: "1.2 (3)")
                 Text("AVFan 是独立的个人侧载应用，不是 avfan.com 的官方客户端，也不做公开分发。抓取范围仅限公开 HTML 目录字段，且按页面按需请求。播放器使用 KSPlayer（GPL-3.0）。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -72,7 +90,9 @@ struct SettingsView: View {
         .liquidGlassList()
         .navigationTitle("设置")
         .sheet(isPresented: $showSiteLogin) {
-            InAppWebView(url: URL(string: "https://avfan.com/\(settings.locale.rawValue)")!, title: "AVFan 网站")
+            SiteLoginView()
+                .environmentObject(settings)
+                .environmentObject(session)
         }
     }
 }

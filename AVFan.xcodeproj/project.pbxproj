@@ -51,6 +51,13 @@
 		AF1100000000000000000024 /* MediaPlayer.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AF1100000000000000000025 /* MediaPlayer.framework */; };
 		AF1100000000000000000040 /* JRHTML.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF1100000000000000000041 /* JRHTML.swift */; };
 		AF1100000000000000000042 /* OnlineFailure.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF1100000000000000000043 /* OnlineFailure.swift */; };
+		AF1100000000000000000051 /* CoverURLPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF1100000000000000000050 /* CoverURLPolicy.swift */; };
+		AF1100000000000000000053 /* ImageLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF1100000000000000000052 /* ImageLoader.swift */; };
+		AF1100000000000000000055 /* CookieBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF1100000000000000000054 /* CookieBridge.swift */; };
+		AF1100000000000000000057 /* SiteSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF1100000000000000000056 /* SiteSession.swift */; };
+		AF1100000000000000000059 /* HeroSwipePolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF1100000000000000000058 /* HeroSwipePolicy.swift */; };
+		AF110000000000000000005B /* SiteLoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF110000000000000000005A /* SiteLoginView.swift */; };
+		AF110000000000000000005D /* DetailPlayPill.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF110000000000000000005C /* DetailPlayPill.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -99,6 +106,13 @@
 		AF1100000000000000000025 /* MediaPlayer.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = MediaPlayer.framework; path = System/Library/Frameworks/MediaPlayer.framework; sourceTree = SDKROOT; };
 		AF1100000000000000000041 /* JRHTML.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JRHTML.swift; sourceTree = "<group>"; };
 		AF1100000000000000000043 /* OnlineFailure.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnlineFailure.swift; sourceTree = "<group>"; };
+		AF1100000000000000000050 /* CoverURLPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoverURLPolicy.swift; sourceTree = "<group>"; };
+		AF1100000000000000000052 /* ImageLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageLoader.swift; sourceTree = "<group>"; };
+		AF1100000000000000000054 /* CookieBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CookieBridge.swift; sourceTree = "<group>"; };
+		AF1100000000000000000056 /* SiteSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SiteSession.swift; sourceTree = "<group>"; };
+		AF1100000000000000000058 /* HeroSwipePolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HeroSwipePolicy.swift; sourceTree = "<group>"; };
+		AF110000000000000000005A /* SiteLoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SiteLoginView.swift; sourceTree = "<group>"; };
+		AF110000000000000000005C /* DetailPlayPill.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DetailPlayPill.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -156,6 +170,7 @@
 			isa = PBXGroup;
 			children = (
 				07409F5948DC411C83654002 /* HTMLParser.swift */,
+				AF1100000000000000000050 /* CoverURLPolicy.swift */,
 			);
 			path = Parsing;
 			sourceTree = "<group>";
@@ -180,6 +195,9 @@
 				AF110000000000000000000A /* PlaybackProgressStore.swift */,
 				AF1100000000000000000041 /* JRHTML.swift */,
 				AF1100000000000000000043 /* OnlineFailure.swift */,
+				AF1100000000000000000052 /* ImageLoader.swift */,
+				AF1100000000000000000054 /* CookieBridge.swift */,
+				AF1100000000000000000056 /* SiteSession.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -200,6 +218,9 @@
 				2274318EE999492AAF5C516E /* RootView.swift */,
 				5DFB74DD53F24CBCABF3174C /* SearchView.swift */,
 				B2DFCFC6CCA04F7EB8C1CE54 /* SettingsView.swift */,
+				AF1100000000000000000058 /* HeroSwipePolicy.swift */,
+				AF110000000000000000005A /* SiteLoginView.swift */,
+				AF110000000000000000005C /* DetailPlayPill.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -365,6 +386,13 @@
 				AF110000000000000000001D /* WatchOnlinePlayerView.swift in Sources */,
 				AF1100000000000000000040 /* JRHTML.swift in Sources */,
 				AF1100000000000000000042 /* OnlineFailure.swift in Sources */,
+				AF1100000000000000000051 /* CoverURLPolicy.swift in Sources */,
+				AF1100000000000000000053 /* ImageLoader.swift in Sources */,
+				AF1100000000000000000055 /* CookieBridge.swift in Sources */,
+				AF1100000000000000000057 /* SiteSession.swift in Sources */,
+				AF1100000000000000000059 /* HeroSwipePolicy.swift in Sources */,
+				AF110000000000000000005B /* SiteLoginView.swift in Sources */,
+				AF110000000000000000005D /* DetailPlayPill.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -417,7 +445,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 3;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -429,7 +457,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.1;
+				MARKETING_VERSION = 1.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.xy0305.avfan;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -446,7 +474,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 3;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -458,7 +486,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.1;
+				MARKETING_VERSION = 1.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.xy0305.avfan;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";

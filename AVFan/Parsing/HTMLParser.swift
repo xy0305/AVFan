@@ -175,7 +175,7 @@ enum HTMLParser {
                 href: href,
                 code: code,
                 title: title,
-                coverURL: imgSrc.map { absoluteURL($0) },
+                coverURL: CoverURLPolicy.preferred(from: CoverURLPolicy.collect(from: inner) + [imgSrc].compactMap { $0 }.map { absoluteURL($0) }),
                 date: date,
                 ratingText: rating.map(stripTags),
                 badges: Array(Set(badges)),
@@ -185,7 +185,7 @@ enum HTMLParser {
             if let index = cards.firstIndex(where: { $0.pathID == id }) {
                 if cards[index].code == nil { cards[index].code = incoming.code }
                 if cards[index].title.isEmpty { cards[index].title = incoming.title }
-                if cards[index].coverURL == nil { cards[index].coverURL = incoming.coverURL }
+                cards[index].coverURL = CoverURLPolicy.preferred(from: [cards[index].coverURL, incoming.coverURL].compactMap { $0 }) ?? cards[index].coverURL
                 if cards[index].date == nil { cards[index].date = incoming.date }
                 if cards[index].ratingText == nil { cards[index].ratingText = incoming.ratingText }
                 if incoming.canPlay { cards[index].canPlay = true }
@@ -208,9 +208,7 @@ enum HTMLParser {
                 let src = unescape(ns.substring(with: match.range(at: 3)))
                 guard let id = pathID(from: href) else { continue }
                 if let index = cards.firstIndex(where: { $0.pathID == id }) {
-                    if cards[index].coverURL == nil {
-                        cards[index].coverURL = absoluteURL(src)
-                    }
+                    cards[index].coverURL = CoverURLPolicy.preferred(from: [cards[index].coverURL, absoluteURL(src)].compactMap { $0 }) ?? cards[index].coverURL
                 }
             }
         }
@@ -376,12 +374,13 @@ enum HTMLParser {
             title = title.replacingOccurrences(of: code, with: "", options: [], range: title.startIndex..<title.index(title.startIndex, offsetBy: min(code.count + 1, title.count))).trimmingCharacters(in: .whitespacesAndNewlines)
         }
 
+        let preferredCover = CoverURLPolicy.preferred(in: html, fallback: cover.flatMap { $0.isEmpty ? nil : $0 })
         return MovieDetail(
             pathID: pathID,
             pageURL: pageURL,
             code: code,
             title: title,
-            coverURL: cover,
+            coverURL: preferredCover,
             summary: summary,
             releaseDate: releaseDate,
             duration: duration,
@@ -469,5 +468,42 @@ enum HTMLParser {
             results.append(NamedLink(name: name, href: href, kind: kind))
         }
         return results
+    }
+
+    // MARK: - Site session signals (public HTML only)
+
+    static func containsSignInLink(_ html: String) -> Bool {
+        html.contains("/sign_in") || html.contains(">登录<") || html.contains(">登入<")
+    }
+
+    static func isSignedIn(html: String) -> Bool {
+        if signOutURL(in: html) != nil { return true }
+        if html.contains(">退出登录<") || html.contains(">登出<") {
+            return true
+        }
+        if html.contains(">退出<") && html.contains("sign_out") {
+            return true
+        }
+        return false
+    }
+
+    static func signOutURL(in html: String) -> String? {
+        if let href = firstMatch("href=\"([^\"]*sign_out[^\"]*)\"", in: html) { return absoluteURL(href) }
+        if let href = firstMatch("href=\"([^\"]*logout[^\"]*)\"", in: html) { return absoluteURL(href) }
+        return nil
+    }
+
+    static func signedInDisplayName(in html: String) -> String? {
+        let candidates = [
+            "id=\"dropdown-user\"[\\s\\S]{0,800}?>([^<]{1,40})</",
+            "class=\"[^\"]*user-name[^\"]*\"[^>]*>([^<]+)",
+        ]
+        for pattern in candidates {
+            if let name = firstMatch(pattern, in: html).map(stripTags), !name.isEmpty,
+               name != "登录", name != "注册", name != "登入", name != "退出" {
+                return name
+            }
+        }
+        return nil
     }
 }

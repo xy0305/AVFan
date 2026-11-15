@@ -18,9 +18,11 @@ struct AVFanApp: App {
                 .environmentObject(AppSettings.shared)
                 .environmentObject(BookmarkStore.shared)
                 .environmentObject(Pan115Settings.shared)
+                .environmentObject(SiteSession.shared)
                 .tint(AVFanTheme.accent)
                 .preferredColorScheme(.light)
                 .liquidGlassChrome()
+                .task { await CookieBridge.syncOnLaunch() }
         }
     }
 }

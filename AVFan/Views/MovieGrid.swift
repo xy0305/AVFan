@@ -29,7 +29,7 @@ struct MoviePosterCard: View {
         VStack(alignment: .leading, spacing: 8) {
             ZStack(alignment: .topLeading) {
                 CoverImage(url: card.coverURL)
-                    .aspectRatio(3/2, contentMode: .fill)
+                    .aspectRatio(2.0/3.0, contentMode: .fill)
                     .clipped()
                     .liquidCover(cornerRadius: AVFanTheme.cardRadius)
                 HStack(spacing: 4) {
@@ -66,41 +66,6 @@ struct MoviePosterCard: View {
                     .foregroundStyle(.tertiary)
             }
         }
-    }
-}
-
-struct CoverImage: View {
-    let url: String?
-
-    var body: some View {
-        if let url, let parsed = URL(string: url) {
-            AsyncImage(url: parsed) { phase in
-                switch phase {
-                case .success(let image):
-                    image.resizable().scaledToFill()
-                case .failure:
-                    placeholder
-                case .empty:
-                    ZStack {
-                        placeholder
-                        ProgressView()
-                    }
-                @unknown default:
-                    placeholder
-                }
-            }
-        } else {
-            placeholder
-        }
-    }
-
-    private var placeholder: some View {
-        Rectangle()
-            .fill(Color.secondary.opacity(0.14))
-            .overlay {
-                Image(systemName: "photo")
-                    .foregroundStyle(.secondary)
-            }
     }
 }
 

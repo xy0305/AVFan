@@ -36,6 +36,7 @@ jobs:
             -o "$RUNNER_TEMP/parser-tests" \
             AVFan/Models/Models.swift \
             AVFan/Parsing/HTMLParser.swift \
+            AVFan/Parsing/CoverURLPolicy.swift \
             scripts/test_parser_main.swift
           "$RUNNER_TEMP/parser-tests"
 
