@@ -162,6 +162,201 @@ enum HTMLParser {
         return labelled ?? numbered
     }
 
+    // MARK: - News （资讯） and series （系列） (build 6)
+
+    /// The news categories the site labels items with (both script variants).
+    static let newsCategoryNames = ["新片情報", "新人情報", "活動情報", "八卦", "業界",
+                                    "新片情报", "新人情报", "活动情报"]
+
+    private static func anchorBlocks(in html: String) -> [(href: String, inner: String, start: Int)] {
+        var out: [(href: String, inner: String, start: Int)] = []
+        guard let regex = try? NSRegularExpression(
+            pattern: "<a[^>]+href=\"([^\"]+)\"[^>]*>([\\s\\S]*?)</a>",
+            options: [.caseInsensitive]
+        ) else { return out }
+        let ns = html as NSString
+        for match in regex.matches(in: html, range: NSRange(location: 0, length: ns.length)) {
+            out.append((href: ns.substring(with: match.range(at: 1)),
+                        inner: ns.substring(with: match.range(at: 2)),
+                        start: match.range.location))
+        }
+        return out
+    }
+
+    /// News list rows. A row links to /news/<8-char id> more than once
+    /// (cover anchor + title anchor), so anchors are grouped by id: the
+    /// title is the longest text any of them carries, the cover the first
+    /// image, and date / category / comment count come from the HTML
+    /// window around the group.
+    static func newsItems(in html: String) -> [NewsItem] {
+        var order: [String] = []
+        var groups: [String: [(href: String, inner: String, start: Int)]] = [:]
+        var firstStart: [String: Int] = [:]
+        for anchor in anchorBlocks(in: html) {
+            guard let id = firstMatch("/news/([A-Za-z0-9]{8})(?:[?#].*)?$", in: anchor.href) else { continue }
+            if groups[id] == nil { order.append(id); firstStart[id] = anchor.start }
+            groups[id, default: []].append(anchor)
+        }
+        let ns = html as NSString
+        var items: [NewsItem] = []
+        for (index, id) in order.enumerated() {
+            let group = groups[id] ?? []
+            var title = ""
+            var cover: String?
+            for anchor in group {
+                let text = stripTags(anchor.inner)
+                if text.count > title.count { title = text }
+                if cover == nil {
+                    cover = firstMatch("<img[^>]+(?:data-src|src)=\"([^\"]+)\"", in: anchor.inner)
+                }
+            }
+            let start = max(0, (firstStart[id] ?? 0) - 600)
+            let end = (index + 1 < order.count)
+                ? (firstStart[order[index + 1]] ?? ns.length)
+                : min(ns.length, (firstStart[id] ?? 0) + 3000)
+            let window = ns.substring(with: NSRange(location: start, length: max(0, end - start)))
+            if cover == nil {
+                cover = firstMatch("<img[^>]+(?:data-src|src)=\"([^\"]+)\"", in: window)
+            }
+            if title.isEmpty, let heading = firstMatch("<h[23][^>]*>([\\s\\S]*?)</h[23]>", in: window) {
+                title = stripTags(heading)
+            }
+            guard !title.isEmpty else { continue }
+            let comments = firstMatch("(\\d+)\\s*(?:条评论|條評論|则评论|則評論)", in: window)
+                ?? firstMatch("(\\d+)\\s*(?:评论|評論|留言)", in: window)
+            items.append(NewsItem(
+                pathID: id,
+                href: group.first?.href ?? "/news/\(id)",
+                title: title,
+                category: newsCategoryNames.first(where: { window.contains($0) }),
+                author: nil,
+                date: firstMatch("(\\d{4}-\\d{2}-\\d{2})", in: window),
+                commentCount: comments.flatMap(Int.init),
+                coverURL: cover.map { absoluteURL(unescape($0)) }
+            ))
+        }
+        return items
+    }
+
+    /// One news article: headline, byline bits, the body as ordered text /
+    /// image blocks, and the related movies / casts / same-category news
+    /// the page carries below the body.
+    static func newsArticle(from html: String, url: URL) -> NewsArticle {
+        var article = NewsArticle(title: "")
+        if let h1 = firstMatch("<h1[^>]*>([\\s\\S]*?)</h1>", in: html) {
+            article.title = stripTags(h1)
+        }
+        if article.title.isEmpty,
+           let og = firstMatch("<meta[^>]+property=\"og:title\"[^>]+content=\"([^\"]+)\"", in: html) {
+            article.title = unescape(og)
+        }
+        let header = String(html.prefix(6000))
+        article.category = newsCategoryNames.first(where: { header.contains($0) })
+        article.date = firstMatch("(\\d{4}-\\d{2}-\\d{2})", in: header)
+
+        // Body region: after the headline, before the related sections.
+        var body = html
+        if let h1End = html.range(of: "</h1>", options: .caseInsensitive) {
+            body = String(html[h1End.upperBound...])
+        }
+        let endMarkers = ["相关影片", "相關影片", "相关女优", "相關女優", "同分类", "同分類",
+                          "资讯评论", "資訊評論"]
+        var bodyEnd = body.endIndex
+        for marker in endMarkers {
+            if let r = body.range(of: marker), r.lowerBound < bodyEnd { bodyEnd = r.lowerBound }
+        }
+        body = String(body[..<bodyEnd])
+
+        // Ordered blocks: paragraphs and images in document order. Images
+        // nested inside a paragraph are emitted just before its text.
+        if let regex = try? NSRegularExpression(
+            pattern: "<p[^>]*>([\\s\\S]*?)</p>|<img[^>]*>",
+            options: [.caseInsensitive]
+        ) {
+            let ns = body as NSString
+            for match in regex.matches(in: body, range: NSRange(location: 0, length: ns.length)) {
+                if match.range(at: 1).location != NSNotFound {
+                    let inner = ns.substring(with: match.range(at: 1))
+                    for src in allMatches("<img[^>]+(?:data-src|src)=\"([^\"]+)\"", in: inner) {
+                        appendNewsImage(src, to: &article)
+                    }
+                    let text = stripTags(inner)
+                    if text.count >= 2 { article.blocks.append(.text(text)) }
+                } else {
+                    let tag = ns.substring(with: match.range)
+                    if let src = firstMatch("(?:data-src|src)=\"([^\"]+)\"", in: tag) {
+                        appendNewsImage(src, to: &article)
+                    }
+                }
+                if article.blocks.count > 160 { break }
+            }
+        }
+
+        // Related sections (best effort, scoped to their own regions).
+        let selfID = firstMatch("/news/([A-Za-z0-9]{8})", in: url.absoluteString)
+        if let region = sectionRegion(in: html, markers: ["相关影片", "相關影片"],
+                                      endMarkers: ["相关女优", "相關女優", "同分类", "同分類", "资讯评论", "資訊評論"]) {
+            article.relatedMovies = Array(movieCards(in: region).prefix(12))
+        }
+        if let region = sectionRegion(in: html, markers: ["相关女优", "相關女優"],
+                                      endMarkers: ["同分类", "同分類", "资讯评论", "資訊評論"]) {
+            var seen = Set<String>()
+            for anchor in anchorBlocks(in: region) {
+                guard firstMatch("/casts/[A-Za-z0-9]{8}", in: anchor.href) != nil else { continue }
+                let name = stripTags(anchor.inner)
+                guard !name.isEmpty, seen.insert(anchor.href).inserted else { continue }
+                article.relatedCasts.append(NamedLink(name: name, href: anchor.href, kind: "cast"))
+            }
+        }
+        if let region = sectionRegion(in: html, markers: ["同分类", "同分類"],
+                                      endMarkers: ["资讯评论", "資訊評論"]) {
+            article.relatedNews = newsItems(in: region).filter { $0.pathID != selfID }
+        }
+        return article
+    }
+
+    private static func appendNewsImage(_ rawSrc: String, to article: inout NewsArticle) {
+        let src = unescape(rawSrc)
+        guard !src.hasPrefix("data:"), !src.contains("avatar"), !src.contains("/icon"),
+              !src.contains("logo"), !src.contains("emoji") else { return }
+        let url = absoluteURL(src)
+        if case .image(let last)? = article.blocks.last, last == url { return }
+        article.blocks.append(.image(url))
+    }
+
+    private static func sectionRegion(in html: String, markers: [String], endMarkers: [String]) -> String? {
+        var start: String.Index?
+        for marker in markers {
+            if let r = html.range(of: marker), start == nil || r.lowerBound < start! {
+                start = r.lowerBound
+            }
+        }
+        guard let start else { return nil }
+        var end = html.endIndex
+        for marker in endMarkers {
+            if let r = html.range(of: marker, range: start..<html.endIndex), r.lowerBound < end {
+                end = r.lowerBound
+            }
+        }
+        let capped = html.index(start, offsetBy: 30000, limitedBy: end) ?? end
+        return String(html[start..<min(end, capped)])
+    }
+
+    /// Series index rows: plain text links to /series/<8-char id> (the site
+    /// shows no covers or counts there). The t= tab links and the drawer's
+    /// number-letter / maker links don't match the id pattern.
+    static func seriesItems(in html: String) -> [NamedLink] {
+        var out: [NamedLink] = []
+        var seen = Set<String>()
+        for anchor in anchorBlocks(in: html) {
+            guard firstMatch("/series/[A-Za-z0-9]{8}(?:[?#].*)?$", in: anchor.href) != nil else { continue }
+            let name = stripTags(anchor.inner)
+            guard !name.isEmpty, name.count <= 80, seen.insert(anchor.href).inserted else { continue }
+            out.append(NamedLink(name: name, href: anchor.href, kind: "series"))
+        }
+        return out
+    }
+
     static func isBlocked(_ html: String, status: Int?) -> Bool {
         if let status, status == 403 || status == 429 || status == 503 { return true }
         let lowered = html.lowercased()

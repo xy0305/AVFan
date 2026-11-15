@@ -108,6 +108,37 @@ struct RankingPage {
     var people: [NamedLink]
 }
 
+/// One row of the site's 资讯 (news) list: cover, category label, title,
+/// author, date, comment count (build 6).
+struct NewsItem: Identifiable, Hashable {
+    var pathID: String
+    var href: String
+    var title: String
+    var category: String?
+    var author: String?
+    var date: String?
+    var commentCount: Int?
+    var coverURL: String?
+
+    var id: String { pathID }
+}
+
+enum NewsBlock: Hashable {
+    case text(String)
+    case image(String)
+}
+
+struct NewsArticle {
+    var title: String
+    var category: String?
+    var author: String?
+    var date: String?
+    var blocks: [NewsBlock] = []
+    var relatedMovies: [MovieCard] = []
+    var relatedCasts: [NamedLink] = []
+    var relatedNews: [NewsItem] = []
+}
+
 struct BookmarkItem: Identifiable, Hashable, Codable {
     var pathID: String
     var href: String

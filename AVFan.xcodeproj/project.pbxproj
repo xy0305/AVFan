@@ -58,6 +58,9 @@
 		AF1100000000000000000061 /* DMMCoverResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF1100000000000000000060 /* DMMCoverResolver.swift */; };
 		AF1100000000000000000063 /* DMMLabelSeed.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF1100000000000000000062 /* DMMLabelSeed.swift */; };
 		AF1100000000000000000065 /* HQCoverResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF1100000000000000000064 /* HQCoverResolver.swift */; };
+		AF1100000000000000000067 /* CategoriesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF1100000000000000000066 /* CategoriesView.swift */; };
+		AF1100000000000000000069 /* NewsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF1100000000000000000068 /* NewsView.swift */; };
+		AF1100000000000000000071 /* SeriesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF1100000000000000000070 /* SeriesView.swift */; };
 		AF1100000000000000000059 /* HeroSwipePolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF1100000000000000000058 /* HeroSwipePolicy.swift */; };
 		AF110000000000000000005B /* SiteLoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF110000000000000000005A /* SiteLoginView.swift */; };
 		AF110000000000000000005D /* DetailPlayPill.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF110000000000000000005C /* DetailPlayPill.swift */; };
@@ -116,6 +119,9 @@
 		AF1100000000000000000060 /* DMMCoverResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DMMCoverResolver.swift; sourceTree = "<group>"; };
 		AF1100000000000000000062 /* DMMLabelSeed.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DMMLabelSeed.swift; sourceTree = "<group>"; };
 		AF1100000000000000000064 /* HQCoverResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HQCoverResolver.swift; sourceTree = "<group>"; };
+		AF1100000000000000000066 /* CategoriesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CategoriesView.swift; sourceTree = "<group>"; };
+		AF1100000000000000000068 /* NewsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewsView.swift; sourceTree = "<group>"; };
+		AF1100000000000000000070 /* SeriesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SeriesView.swift; sourceTree = "<group>"; };
 		AF1100000000000000000058 /* HeroSwipePolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HeroSwipePolicy.swift; sourceTree = "<group>"; };
 		AF110000000000000000005A /* SiteLoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SiteLoginView.swift; sourceTree = "<group>"; };
 		AF110000000000000000005C /* DetailPlayPill.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DetailPlayPill.swift; sourceTree = "<group>"; };
@@ -219,6 +225,9 @@
 				5A62611B4DC44F99B6939DE8 /* HomeView.swift */,
 				D7536CF0AAA1498ABC8EEBAA /* InAppWebView.swift */,
 				1067F984E5A444D589D62CDE /* ListsView.swift */,
+				AF1100000000000000000066 /* CategoriesView.swift */,
+				AF1100000000000000000068 /* NewsView.swift */,
+				AF1100000000000000000070 /* SeriesView.swift */,
 				9B2CFC11DA614897A9CF399D /* MovieDetailView.swift */,
 				86BBD282F74D410BBDCEFF02 /* MovieGrid.swift */,
 				AF8B5E394FA94FBAAEEDB74D /* Pan115PlayerView.swift */,
@@ -402,6 +411,9 @@
 				AF1100000000000000000061 /* DMMCoverResolver.swift in Sources */,
 				AF1100000000000000000063 /* DMMLabelSeed.swift in Sources */,
 				AF1100000000000000000065 /* HQCoverResolver.swift in Sources */,
+				AF1100000000000000000067 /* CategoriesView.swift in Sources */,
+				AF1100000000000000000069 /* NewsView.swift in Sources */,
+				AF1100000000000000000071 /* SeriesView.swift in Sources */,
 				AF1100000000000000000059 /* HeroSwipePolicy.swift in Sources */,
 				AF110000000000000000005B /* SiteLoginView.swift in Sources */,
 				AF110000000000000000005D /* DetailPlayPill.swift in Sources */,
@@ -457,7 +469,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 5;
+				CURRENT_PROJECT_VERSION = 6;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -486,7 +498,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 5;
+				CURRENT_PROJECT_VERSION = 6;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;

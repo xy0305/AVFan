@@ -9,7 +9,10 @@ struct RootView: View {
             ZStack {
                 tabRoot(.home) { NavigationStack { HomeView() } }
                 tabRoot(.search) { NavigationStack { SearchView() } }
+                tabRoot(.categories) { NavigationStack { CategoriesView() } }
                 tabRoot(.rankings) { NavigationStack { RankingsView() } }
+                tabRoot(.news) { NavigationStack { NewsView() } }
+                tabRoot(.series) { NavigationStack { SeriesView() } }
                 tabRoot(.library) { NavigationStack { ListsView() } }
                 tabRoot(.settings) { NavigationStack { SettingsView() } }
             }

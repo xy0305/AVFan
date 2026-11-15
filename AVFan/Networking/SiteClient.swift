@@ -50,6 +50,12 @@ actor SiteClient {
     /// Ranking sub-category paths come from the ranking page's own links
     /// (they already carry a locale prefix); re-apply the requested locale.
     nonisolated func rankingURL(path: String, locale: SiteLocale) -> URL {
+        pageURL(path: path, locale: locale)
+    }
+
+    /// Locale-prefixed URL for a site-relative page path (news list /
+    /// article, series index / detail…). Full http(s) paths pass through.
+    nonisolated func pageURL(path: String, locale: SiteLocale) -> URL {
         if path.hasPrefix("http"), let url = URL(string: path) { return url }
         return URL(string: "https://avfan.com/\(locale.rawValue)/\(HTMLParser.stripLocale(path))")!
     }

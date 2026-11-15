@@ -38,18 +38,10 @@ struct ListsView: View {
                     }
                 }
             }
-
-            Section("公开分类") {
-                ForEach(CatalogShortcut.allCases) { item in
-                    NavigationLink(item.title) {
-                        CatalogListView(title: item.title, path: item.path(locale: AppSettings.shared.locale))
-                    }
-                }
-            }
         }
         .scrollContentBackground(.hidden)
         .background(AVFanTheme.pageBackground)
         .liquidGlassList()
-        .navigationTitle("收藏与列表")
+        .navigationTitle("收藏")
     }
 }

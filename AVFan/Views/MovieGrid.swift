@@ -12,6 +12,14 @@ struct MovieGrid: View {
         return Array(repeating: GridItem(.flexible(), spacing: 12), count: count)
     }
 
+    /// Append the next page when the user is still a few cards away from
+    /// the end, so the append lands during scrolling — not in the middle
+    /// of a tap on the last rows (which shifted the grid under the finger
+    /// and sent taps to the wrong cover).
+    private var prefetchID: String? {
+        cards.dropFirst(max(0, cards.count - 6)).first?.pathID
+    }
+
     var body: some View {
         LazyVGrid(columns: grid, spacing: AVFanTheme.gridSpacing) {
             ForEach(cards) { card in
@@ -20,7 +28,7 @@ struct MovieGrid: View {
                 }
                 .buttonStyle(.plain)
                 .onAppear {
-                    if card.pathID == cards.last?.pathID { onReachEnd?() }
+                    if card.pathID == prefetchID { onReachEnd?() }
                 }
             }
         }
@@ -61,15 +69,20 @@ struct MoviePosterCard: View {
                 .font(AVFanTheme.codeFont)
                 .foregroundStyle(.primary)
                 .lineLimit(1)
+            // Every card reserves the same text height (two title lines and
+            // a date line, filled or not). Mixed heights made LazyVGrid's
+            // row estimates wrong, so appending a page — or realizing rows
+            // while tapping — corrected the scroll offset and the grid
+            // visibly jumped under the user's finger.
             Text(card.displayTitle)
                 .font(AVFanTheme.captionFont)
                 .foregroundStyle(.secondary)
-                .lineLimit(2)
-            if let date = card.date {
-                Text(date)
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-            }
+                .lineLimit(2, reservesSpace: true)
+            Text(card.date ?? "")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .lineLimit(1)
+                .frame(height: 14, alignment: .leading)
         }
     }
 }

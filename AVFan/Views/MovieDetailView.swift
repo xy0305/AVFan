@@ -21,6 +21,12 @@ struct MovieDetailView: View {
     @State private var resume115: PlaybackResumeEntry?
     @State private var resumeOnline: PlaybackResumeEntry?
     @State private var sourceOverride: PlaySource?
+    /// Measured height of the hero's text stack (title block + controls).
+    /// A long title with its expand button outgrows the slot the geometry
+    /// planned, pushing the play row past the artwork and the gradient —
+    /// the pills' lower halves landed on the light sheet and looked cut.
+    /// The gradient now stretches to the measured content height.
+    @State private var heroContentHeight: CGFloat = 0
 
     private enum PlaySource { case online, pan115 }
 
@@ -215,7 +221,7 @@ struct MovieDetailView: View {
                 .init(color: Color.black.opacity(0.78), location: 0.86),
                 .init(color: Color.black.opacity(0.92), location: 1),
             ], startPoint: .top, endPoint: .bottom)
-            .frame(height: imageHeight + 30)
+            .frame(height: max(imageHeight + 30, heroContentHeight))
             .allowsHitTesting(false)
 
             VStack(alignment: .leading, spacing: 0) {
@@ -237,6 +243,12 @@ struct MovieDetailView: View {
                     .padding(.horizontal, 18).padding(.top, 18)
             }
             .padding(.top, titleTop)
+            .padding(.bottom, 16)
+            .onGeometryChange(for: CGFloat.self) { proxy in
+                proxy.size.height
+            } action: { newHeight in
+                heroContentHeight = newHeight
+            }
             .foregroundStyle(.white)
         }
         .frame(width: width)

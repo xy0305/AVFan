@@ -163,12 +163,89 @@ enum ParserTests {
         expect(HTMLParser.nextPagePath(in: listHTML, currentPage: 3) == nil, "no page 4 means last page")
         expect(HTMLParser.nextPagePath(in: "<a href=\"/x?page=9\" rel=\"next\">go</a>", currentPage: 1)?.contains("page=9") == true, "rel=next wins")
 
+        // News list + article and the series index (build 6), modeled on
+        // the site's observed structure: news rows link cover + title
+        // anchors to /news/<id> with category/date/comment meta beside
+        // them; series rows are plain text links to /series/<id>.
+        let newsListHTML = """
+        <div class="news-list">
+          <div class="news-item">
+            <a href="/zh-CN/news/OISx5H0P"><img src="https://c1.avfan.com/news/cawb070.jpg"></a>
+            <span>新片情報</span>
+            <a href="/zh-CN/news/OISx5H0P">(CAWB-070)短髮界的最強王牌！菜々野なのは可愛社新招牌？</a>
+            <span>一劍浣春秋</span><span>2026-11-15</span><span>2 评论</span>
+          </div>
+          <div class="news-item">
+            <a href="/zh-CN/news/Kt1689zG"><img data-src="https://c1.avfan.com/news/b.jpg"></a>
+            <span>八卦</span>
+            <a href="/zh-CN/news/Kt1689zG">業界八卦標題在這裡</a>
+            <span>2026-11-14</span>
+          </div>
+        </div>
+        <a href="/zh-CN/news?page=2">Next &gt;</a>
+        """
+        let news = HTMLParser.newsItems(in: newsListHTML)
+        expect(news.count == 2, "news items, got \(news.count)")
+        expect(news[0].pathID == "OISx5H0P", "news id")
+        expect(news[0].title.contains("CAWB-070"), "news title is the longest anchor text, got \(news[0].title)")
+        expect(news[0].category == "新片情報", "news category, got \(String(describing: news[0].category))")
+        expect(news[0].date == "2026-11-15", "news date, got \(String(describing: news[0].date))")
+        expect(news[0].commentCount == 2, "news comments, got \(String(describing: news[0].commentCount))")
+        expect(news[0].coverURL?.contains("cawb070.jpg") == true, "news cover from src")
+        expect(news[1].coverURL?.contains("/b.jpg") == true, "news cover from data-src")
+        expect(HTMLParser.nextPagePath(in: newsListHTML, currentPage: 1)?.contains("page=2") == true, "news pagination")
+
+        let articleHTML = """
+        <html><head><title>x</title></head><body>
+        <nav>AVFan / 资讯 / 新片情報</nav>
+        <h1>(CAWB-070)短髮界的最強王牌！</h1>
+        <div class="meta">一劍浣春秋 2026-11-15 浏览 1 评论 2</div>
+        <div class="content">
+        <p>第一段正文，介紹這部作品的看點。</p>
+        <p><img src="https://c1.avfan.com/news/still1.jpg"></p>
+        <p>第二段正文，繼續介紹劇情與女優。</p>
+        <img data-src="https://c1.avfan.com/news/still2.jpg">
+        <p>作品名：短髮界的最強王牌 品番：CAWB-070 發行日：2026/12/01</p>
+        </div>
+        <h2>相关影片</h2>
+        <div><a href="/zh-CN/movies/P4zyzr1D"><img src="https://c1.avfan.com/x.jpg" alt="CAWB-070 標題"></a></div>
+        <h2>相关女优</h2>
+        <a href="/zh-CN/casts/9v9LAg93">菜々野なの</a>
+        <h2>同分类资讯</h2>
+        <a href="/zh-CN/news/8hKziU9k">另一篇新片情報標題</a>
+        </body></html>
+        """
+        let article = HTMLParser.newsArticle(from: articleHTML, url: URL(string: "https://avfan.com/zh-CN/news/OISx5H0P")!)
+        expect(article.title.contains("CAWB-070"), "article title, got \(article.title)")
+        expect(article.category == "新片情報", "article category, got \(String(describing: article.category))")
+        expect(article.date == "2026-11-15", "article date, got \(String(describing: article.date))")
+        expect(article.blocks.count == 5, "article blocks = 3 text + 2 images, got \(article.blocks.count)")
+        expect(article.relatedMovies.first?.pathID == "P4zyzr1D", "article related movie")
+        expect(article.relatedCasts.first?.name == "菜々野なの", "article related cast")
+        expect(article.relatedNews.first?.pathID == "8hKziU9k", "article related news")
+
+        let seriesHTML = """
+        <div class="tabs">
+          <a href="/zh-CN/series?t=asian">亚洲</a>
+          <a href="/zh-CN/series?t=western">欧美</a>
+        </div>
+        <ul>
+          <li><a href="/zh-CN/series/fOIgPiUO">2人っきりにしてみたら…</a></li>
+          <li><a href="/zh-CN/series/L6TOzhqv">中出し人妻不倫旅行</a></li>
+        </ul>
+        <a href="/zh-CN/series?page=2">Next &gt;</a>
+        """
+        let series = HTMLParser.seriesItems(in: seriesHTML)
+        expect(series.count == 2, "series items (t= tabs excluded), got \(series.count)")
+        expect(series[0].name == "2人っきりにしてみたら…", "series name, got \(series[0].name)")
+        expect(series[1].href.contains("L6TOzhqv"), "series href")
+
         let signedHTML = "<a href=\"/zh-CN/sign_out\">退出登录</a>"
         expect(HTMLParser.isSignedIn(html: signedHTML), "sign_out means signed in")
         expect(HTMLParser.signOutURL(in: signedHTML)?.contains("sign_out") == true, "sign_out url")
         expect(HTMLParser.containsSignInLink("<a href=\"/zh-CN/sign_in\">登录</a>"), "sign_in link")
 
-        print("PASS: home, detail magnets, ranking merge, hot casts, HQ cover sources, empty shell, block detection, cover policy, login signals, ranking tabs, pagination")
+        print("PASS: home, detail magnets, ranking merge, hot casts, HQ cover sources, empty shell, block detection, cover policy, login signals, ranking tabs, pagination, news, series")
     }
 }
 

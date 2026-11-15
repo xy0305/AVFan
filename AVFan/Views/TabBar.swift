@@ -2,14 +2,17 @@ import SwiftUI
 import UIKit
 
 enum AppTab: Int, CaseIterable, Identifiable, Hashable {
-    case home, search, rankings, library, settings
+    case home, search, categories, rankings, news, series, library, settings
     var id: Int { rawValue }
 
     var title: String {
         switch self {
         case .home: return "首页"
         case .search: return "搜索"
+        case .categories: return "类别"
         case .rankings: return "排行"
+        case .news: return "资讯"
+        case .series: return "系列"
         case .library: return "收藏"
         case .settings: return "设置"
         }
@@ -19,7 +22,10 @@ enum AppTab: Int, CaseIterable, Identifiable, Hashable {
         switch self {
         case .home: return "house"
         case .search: return "magnifyingglass"
+        case .categories: return "square.grid.2x2"
         case .rankings: return "trophy"
+        case .news: return "newspaper"
+        case .series: return "rectangle.stack"
         case .library: return "bookmark"
         case .settings: return "gearshape"
         }
