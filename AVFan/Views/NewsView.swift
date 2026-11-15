@@ -296,8 +296,9 @@ struct NewsArticleView: View {
         .background(AVFanTheme.pageBackground)
         .navigationTitle(item.category ?? "资讯")
         .navigationBarTitleDisplayMode(.inline)
-        .navigationDestination(for: NewsItem.self) { NewsArticleView(item: $0) }
-        .navigationDestination(for: MovieCard.self) { MovieDetailView(card: $0) }
+        // NewsItem / MovieCard destinations are registered once, at the
+        // NewsView tab root — registering them again in this pushed view
+        // corrupts the stack's pop bookkeeping (build 7 fix).
         .task { await load() }
         .sheet(isPresented: $showWeb) {
             if let pageURL { InAppWebView(url: pageURL, title: item.title) }

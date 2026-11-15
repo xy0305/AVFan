@@ -16,6 +16,7 @@ struct HomeView: View {
         }
         .toolbar(.hidden, for: .navigationBar)
         .navigationDestination(isPresented: $goSearch) { SearchView() }
+        .navigationDestination(for: MovieCard.self) { MovieDetailView(card: $0) }
         .navigationDestination(item: $openCard) { MovieDetailView(card: $0) }
         .navigationDestination(item: $openCatalog) { dest in
             CatalogListView(title: dest.title, path: dest.path)
@@ -550,7 +551,11 @@ struct CatalogListView: View {
         }
         .background(AVFanTheme.pageBackground)
         .navigationTitle(title)
-        .navigationDestination(for: MovieCard.self) { MovieDetailView(card: $0) }
+        // No navigationDestination(for: MovieCard.self) here on purpose:
+        // every tab root registers it exactly once for its stack. When
+        // this pushed view registered it too, the stack's bookkeeping
+        // broke — popping a detail jumped straight back to the tab root,
+        // skipping this list (build 7 fix).
         .task { await load() }
         .sheet(isPresented: $showWeb) {
             if let pageURL { InAppWebView(url: pageURL, title: title) }
