@@ -677,7 +677,15 @@ enum HTMLParser {
             title = title.replacingOccurrences(of: code, with: "", options: [], range: title.startIndex..<title.index(title.startIndex, offsetBy: min(code.count + 1, title.count))).trimmingCharacters(in: .whitespacesAndNewlines)
         }
 
-        let preferredCover = CoverURLPolicy.preferred(in: html, fallback: cover.flatMap { $0.isEmpty ? nil : $0 })
+        // The page's own declared cover (og:image / JSON-LD thumbnailUrl)
+        // IS this movie's cover — the same URL the list cards embed. It
+        // wins outright. The whole-page candidate scan can surface OTHER
+        // titles' images (FANZA promos, affiliate art, related covers)
+        // whose class scores beat the avfan cover, and then the detail
+        // hero shows a different cover than the card the user tapped.
+        // The scan remains only as a fallback for pages declaring none.
+        let declaredCover = cover.flatMap { $0.isEmpty ? nil : $0 }
+        let preferredCover = declaredCover ?? CoverURLPolicy.preferred(in: html)
         return MovieDetail(
             pathID: pathID,
             pageURL: pageURL,

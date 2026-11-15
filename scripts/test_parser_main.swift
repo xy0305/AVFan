@@ -48,6 +48,11 @@ enum ParserTests {
         expect(detail.title.contains("篠崎"), "detail title")
         expect(detail.coverURL?.contains("c1.avfan.com") == true, "detail cover, got \(detail.coverURL ?? "nil")")
         expect(detail.coverURL?.contains(".mp4") != true, "detail cover must not be a preview video")
+        // A stray high-score image from another title (promo / affiliate
+        // art anywhere in the page) must not override the declared cover.
+        let poisoned = movieHTML + "<img src=\"https://pics.dmm.co.jp/digital/video/zzzz99999/zzzz99999ps.jpg\">"
+        let poisonedDetail = HTMLParser.movieDetail(from: poisoned, url: movieURL)
+        expect(poisonedDetail.coverURL?.contains("4jOrgf") == true, "declared og:image beats stray DMM promo, got \(poisonedDetail.coverURL ?? "nil")")
         expect(detail.makers.contains { $0.name.contains("アイデアポケット") }, "maker")
         expect(detail.casts.contains { $0.name.contains("篠崎沙帆") }, "cast")
         expect(detail.magnets.count >= 8, "magnet count \(detail.magnets.count)")
@@ -245,7 +250,7 @@ enum ParserTests {
         expect(HTMLParser.signOutURL(in: signedHTML)?.contains("sign_out") == true, "sign_out url")
         expect(HTMLParser.containsSignInLink("<a href=\"/zh-CN/sign_in\">登录</a>"), "sign_in link")
 
-        print("PASS: home, detail magnets, ranking merge, hot casts, HQ cover sources, empty shell, block detection, cover policy, login signals, ranking tabs, pagination, news, series")
+        print("PASS: home, detail magnets, ranking merge, hot casts, HQ cover sources, empty shell, block detection, cover policy, login signals, ranking tabs, pagination, news, series, detail cover identity")
     }
 }
 
