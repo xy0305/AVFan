@@ -162,6 +162,225 @@ enum HTMLParser {
         return labelled ?? numbered
     }
 
+    // MARK: - Pagination, casts, prefixes, list filters (build 11)
+
+    /// Every numbered pagination link a list page carries: page number →
+    /// href. The site renders « 1 2 3 … 40 » bars (build 11 replaces
+    /// infinite append with the site's own paging).
+    static func pageMap(in html: String) -> [Int: String] {
+        var map: [Int: String] = [:]
+        if let regex = try? NSRegularExpression(
+            pattern: "<a[^>]+href=\"([^\"]+)\"[^>]*>",
+            options: [.caseInsensitive]
+        ) {
+            let ns = html as NSString
+            for match in regex.matches(in: html, range: NSRange(location: 0, length: ns.length)) {
+                let href = unescape(ns.substring(with: match.range(at: 1)))
+                guard let pageText = firstMatch("[?&]page=(\\d+)", in: href),
+                      let page = Int(pageText), page >= 1 else { continue }
+                if map[page] == nil { map[page] = href }
+            }
+        }
+        return map
+    }
+
+    /// `path` with its page= parameter set to `page` (added when absent).
+    static func withPage(_ path: String, page: Int) -> String {
+        if let regex = try? NSRegularExpression(pattern: "([?&])page=\\d+") {
+            let ns = path as NSString
+            if let match = regex.firstMatch(in: path, range: NSRange(location: 0, length: ns.length)) {
+                let sep = ns.substring(with: match.range(at: 1))
+                return ns.replacingCharacters(in: match.range, with: "\(sep)page=\(page)")
+            }
+        }
+        return path + (path.contains("?") ? "&" : "?") + "page=\(page)"
+    }
+
+    /// Cast entries on the site's cast index pages (/casts?t=asian etc.):
+    /// anchors to /casts/<id> wrapping an avatar image and the name; a
+    /// works-count line, when present in the block, becomes the subtitle.
+    static func castCards(in html: String) -> [CastCard] {
+        var out: [CastCard] = []
+        var seen = Set<String>()
+        if let regex = try? NSRegularExpression(
+            pattern: "<a[^>]+href=\"([^\"]*/casts/([A-Za-z0-9]{8})[^\"]*)\"[^>]*>([\\s\\S]*?)</a>",
+            options: [.caseInsensitive]
+        ) {
+            let ns = html as NSString
+            for match in regex.matches(in: html, range: NSRange(location: 0, length: ns.length)) {
+                guard match.numberOfRanges >= 4 else { continue }
+                let href = ns.substring(with: match.range(at: 1))
+                let id = ns.substring(with: match.range(at: 2))
+                let block = ns.substring(with: match.range(at: 3))
+                guard seen.insert(id).inserted else { continue }
+                let avatar = firstMatch("<img[^>]+(?:src|data-src|data-original)=\"([^\"]+)\"", in: block)
+                    .map { unescape($0) }
+                // Block text as lines: name is the first meaningful line,
+                // a "NNN 部作品" style line is the count.
+                let lines = block
+                    .replacingOccurrences(of: "<[^>]+>", with: "\n", options: .regularExpression)
+                    .split(separator: "\n")
+                    .map { unescape(String($0)).trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty }
+                var name: String?
+                var count: String?
+                for line in lines {
+                    if count == nil,
+                       line.range(of: "\\d+\\s*(部作品|部影片|部|works|Works)", options: .regularExpression) != nil {
+                        count = line
+                    } else if name == nil {
+                        name = line
+                    }
+                }
+                guard let name, !name.isEmpty else { continue }
+                out.append(CastCard(name: name, href: unescape(href), avatarURL: avatar, countText: count))
+            }
+        }
+        return out
+    }
+
+    /// 番号前缀 entries (/number_letters/<PREFIX>) wherever a page links
+    /// them — the series tab reads them off the site's own pages instead
+    /// of hardcoding a list that would rot.
+    static func prefixLinks(in html: String) -> [NamedLink] {
+        var out: [NamedLink] = []
+        var seen = Set<String>()
+        if let regex = try? NSRegularExpression(
+            pattern: "<a[^>]+href=\"([^\"]+)\"[^>]*>([\\s\\S]*?)</a>",
+            options: [.caseInsensitive]
+        ) {
+            let ns = html as NSString
+            for match in regex.matches(in: html, range: NSRange(location: 0, length: ns.length)) {
+                let href = unescape(ns.substring(with: match.range(at: 1)))
+                let stripped = stripLocale(href)
+                guard stripped.hasPrefix("/number_letters/") else { continue }
+                let segment = String(stripped.dropFirst("/number_letters/".count))
+                    .split(separator: "?").first.map(String.init) ?? ""
+                guard !segment.isEmpty, !segment.contains("/") else { continue }
+                guard seen.insert(stripped).inserted else { continue }
+                let label = stripTags(ns.substring(with: match.range(at: 2)))
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                let name = label.isEmpty
+                    ? (segment.removingPercentEncoding ?? segment)
+                    : label
+                out.append(NamedLink(name: name, href: href, kind: "prefix"))
+            }
+        }
+        return out
+    }
+
+    /// The list filter/sort form a catalog page carries (the JUR prefix
+    /// page's 筛选 panel: feature checkboxes + sort radios). Parsed from
+    /// the page's own checkbox/radio inputs and their labels — names,
+    /// values and pre-selected options all come from the site. Returns
+    /// nil when the page has no such form.
+    static func listFilterForm(in html: String) -> ListFilterForm? {
+        struct RawOption { var name: String; var value: String; var label: String; var radio: Bool; var selected: Bool }
+        var raw: [RawOption] = []
+        var capturedIDs = Set<String>()
+        func inputFields(_ tag: String) -> (type: String, name: String, value: String, id: String, checked: Bool)? {
+            guard let type = firstMatch("type=\"(checkbox|radio)\"", in: tag),
+                  let name = firstMatch("name=\"([^\"]+)\"", in: tag) else { return nil }
+            let value = firstMatch("value=\"([^\"]*)\"", in: tag) ?? "on"
+            let id = firstMatch("id=\"([^\"]+)\"", in: tag) ?? ""
+            let checked = tag.range(of: "\\bchecked(\\s|>|=)", options: .regularExpression) != nil
+            return (type, unescape(name), unescape(value), id, checked)
+        }
+        // Pass 1: inputs wrapped in their <label>.
+        if let regex = try? NSRegularExpression(
+            pattern: "<label[^>]*>([\\s\\S]*?)</label>", options: [.caseInsensitive]
+        ) {
+            let ns = html as NSString
+            for match in regex.matches(in: html, range: NSRange(location: 0, length: ns.length)) {
+                let block = ns.substring(with: match.range(at: 1))
+                guard let tag = firstMatch("(<input[^>]*>)", in: block),
+                      let fields = inputFields(tag) else { continue }
+                let label = stripTags(block.replacingOccurrences(of: tag, with: " "))
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !label.isEmpty else { continue }
+                raw.append(RawOption(name: fields.name, value: fields.value, label: label,
+                                     radio: fields.type == "radio", selected: fields.checked))
+                if !fields.id.isEmpty { capturedIDs.insert(fields.id) }
+            }
+        }
+        // Pass 2: inputs associated via <label for="id">.
+        if let regex = try? NSRegularExpression(
+            pattern: "<input[^>]+type=\"(?:checkbox|radio)\"[^>]*>", options: [.caseInsensitive]
+        ) {
+            let ns = html as NSString
+            var labelsByFor: [String: String] = [:]
+            if let labelRegex = try? NSRegularExpression(
+                pattern: "<label[^>]+for=\"([^\"]+)\"[^>]*>([\\s\\S]*?)</label>", options: [.caseInsensitive]
+            ) {
+                for match in labelRegex.matches(in: html, range: NSRange(location: 0, length: ns.length)) {
+                    labelsByFor[ns.substring(with: match.range(at: 1))] =
+                        stripTags(ns.substring(with: match.range(at: 2)))
+                            .trimmingCharacters(in: .whitespacesAndNewlines)
+                }
+            }
+            for match in regex.matches(in: html, range: NSRange(location: 0, length: ns.length)) {
+                let tag = ns.substring(with: match.range)
+                guard let fields = inputFields(tag), !fields.id.isEmpty,
+                      !capturedIDs.contains(fields.id),
+                      let label = labelsByFor[fields.id], !label.isEmpty else { continue }
+                raw.append(RawOption(name: fields.name, value: fields.value, label: label,
+                                     radio: fields.type == "radio", selected: fields.checked))
+                capturedIDs.insert(fields.id)
+            }
+        }
+        // Group by input name, first-seen order; drop degenerate groups.
+        var order: [String] = []
+        var grouped: [String: [RawOption]] = [:]
+        for option in raw {
+            if grouped[option.name] == nil { order.append(option.name) }
+            grouped[option.name, default: []].append(option)
+        }
+        var groups: [ListFilterGroup] = []
+        for name in order.prefix(4) {
+            guard let options = grouped[name], options.count >= 2 else { continue }
+            let isRadio = options.first?.radio ?? false
+            let looksLikeSort = options.contains {
+                $0.label.contains("最新") || $0.label.contains("最高") || $0.label.contains("评分")
+            }
+            groups.append(ListFilterGroup(
+                name: name,
+                isRadio: isRadio,
+                title: looksLikeSort ? "排序" : "筛选",
+                options: options.prefix(12).map {
+                    ListFilterOption(value: $0.value, label: $0.label, selected: $0.selected)
+                }
+            ))
+        }
+        return groups.isEmpty ? nil : ListFilterForm(groups: groups)
+    }
+
+    /// Rebuilds a list path with the chosen filter values applied: the
+    /// form's own parameters are replaced, pagination resets (page=
+    /// dropped), unrelated parameters are kept.
+    static func applyingFilters(_ path: String, form: ListFilterForm, selections: [String: Set<String>]) -> String {
+        let parts = path.split(separator: "?", maxSplits: 1).map(String.init)
+        let base = parts.first ?? path
+        let formNames = Set(form.groups.map(\.name))
+        var pairs: [(String, String)] = []
+        if parts.count == 2 {
+            for pair in parts[1].split(separator: "&") {
+                let kv = pair.split(separator: "=", maxSplits: 1).map(String.init)
+                guard let key = kv.first, !formNames.contains(key), key != "page" else { continue }
+                pairs.append((key, kv.count == 2 ? kv[1] : ""))
+            }
+        }
+        for group in form.groups {
+            let chosen = selections[group.name] ?? []
+            let ordered = group.options.filter { chosen.contains($0.value) }
+            for option in (group.isRadio ? Array(ordered.prefix(1)) : ordered) {
+                pairs.append((group.name, option.value))
+            }
+        }
+        guard !pairs.isEmpty else { return base }
+        let query = pairs.map { "\($0.0)=\($0.1)" }.joined(separator: "&")
+        return base + "?" + query
+    }
+
     // MARK: - News （资讯） and series （系列） (build 6)
 
     /// The news categories the site labels items with (both script variants).

@@ -34,10 +34,16 @@ struct MovieGrid: View {
             ForEach(cards) { card in
                 Group {
                     if let onSelect {
+                        // Same cell construction as the home rails
+                        // (HomePosterGrid), which never misdelivered a tap:
+                        // press style + explicit content shape + full-width
+                        // frame instead of a bare .plain button (build 11).
                         Button { onSelect(card) } label: {
                             MoviePosterCard(card: card)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(HomePressStyle(scale: 0.97, spring: true))
+                        .frame(minWidth: 0, maxWidth: .infinity, alignment: .topLeading)
+                        .contentShape(Rectangle())
                     } else {
                         NavigationLink(value: card) {
                             MoviePosterCard(card: card)
@@ -72,7 +78,7 @@ struct MoviePosterCard: View {
                             .background(.black.opacity(0.62), in: Capsule())
                             .foregroundStyle(.white)
                     }
-                    if card.canPlay {
+                    if card.canPlay && card.badges.first != "可播放" {
                         Text("可播放")
                             .font(.caption2.weight(.semibold))
                             .padding(.horizontal, 6)
@@ -127,6 +133,68 @@ struct FetchStatusBanner: View {
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
+        }
+    }
+}
+
+/// Website-style pagination bar (build 11): prev/next plus a window of
+/// numbered pages (first, current ± 1, last), replacing infinite append.
+struct PagerBar: View {
+    let currentPage: Int
+    let totalPages: Int
+    let isLoading: Bool
+    let onGo: (Int) -> Void
+
+    private var window: [Int?] {
+        guard totalPages > 1 else { return [] }
+        var pages: [Int] = [1, totalPages, currentPage - 1, currentPage, currentPage + 1]
+        pages = Array(Set(pages.filter { $0 >= 1 && $0 <= totalPages })).sorted()
+        var out: [Int?] = []
+        var previous: Int?
+        for page in pages {
+            if let previous, page - previous > 1 { out.append(nil) }
+            out.append(page)
+            previous = page
+        }
+        return out
+    }
+
+    var body: some View {
+        if totalPages > 1 {
+            HStack(spacing: 6) {
+                Button { onGo(currentPage - 1) } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.footnote.weight(.bold))
+                        .frame(width: 36, height: 36)
+                }
+                .disabled(currentPage <= 1 || isLoading)
+                .glassChromeButton()
+                ForEach(Array(window.enumerated()), id: \.offset) { _, item in
+                    if let page = item {
+                        Button { onGo(page) } label: {
+                            Text("\(page)")
+                                .font(.footnote.weight(page == currentPage ? .bold : .regular))
+                                .frame(minWidth: 36, minHeight: 36)
+                        }
+                        .disabled(page == currentPage || isLoading)
+                        .glassChromeButton(prominent: page == currentPage)
+                    } else {
+                        Text("…")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .frame(width: 18)
+                    }
+                }
+                Button { onGo(currentPage + 1) } label: {
+                    Image(systemName: "chevron.right")
+                        .font(.footnote.weight(.bold))
+                        .frame(width: 36, height: 36)
+                }
+                .disabled(currentPage >= totalPages || isLoading)
+                .glassChromeButton()
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 10)
         }
     }
 }

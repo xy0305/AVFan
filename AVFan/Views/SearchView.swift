@@ -5,12 +5,13 @@ struct SearchView: View {
     @State private var query = ""
     @State private var cards: [MovieCard] = []
     @State private var loading = false
-    @State private var loadingMore = false
     @State private var errorMessage: String?
     @State private var source: FetchSource?
     @State private var showWeb = false
     @State private var pageURL: URL?
-    @State private var nextPath: String?
+    @State private var pagePaths: [Int: String] = [:]
+    @State private var totalPages = 1
+    @State private var lastQuery = ""
     @State private var currentPage = 1
 
     var body: some View {
@@ -42,9 +43,9 @@ struct SearchView: View {
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
-                    MovieGrid(cards: cards) { Task { await loadMore() } }
-                    if loadingMore {
-                        ProgressView().frame(maxWidth: .infinity).padding(.vertical, 8)
+                    MovieGrid(cards: cards)
+                    PagerBar(currentPage: currentPage, totalPages: totalPages, isLoading: loading) { page in
+                        Task { await goPage(page) }
                     }
                 }
                 .padding(.horizontal, AdaptiveLayout.horizontalPadding)
@@ -65,8 +66,10 @@ struct SearchView: View {
         loading = true
         errorMessage = nil
         cards = []
-        nextPath = nil
+        pagePaths = [:]
+        totalPages = 1
         currentPage = 1
+        lastQuery = trimmed
         defer { loading = false }
         let url = SiteClient.shared.searchURL(query: trimmed)
         pageURL = url
@@ -81,10 +84,11 @@ struct SearchView: View {
             let html = result.html
             let parsed = await HTMLParser.detached {
                 (cards: HTMLParser.movieCards(in: html),
-                 next: HTMLParser.nextPagePath(in: html, currentPage: 1))
+                 pages: HTMLParser.pageMap(in: html))
             }
             cards = parsed.cards
-            nextPath = parsed.next
+            pagePaths = parsed.pages
+            totalPages = max(1, parsed.pages.keys.max() ?? 1)
             source = result.source
             if cards.isEmpty {
                 errorMessage = "搜索页没有可解析的影片，可改用应用内网页。"
@@ -94,13 +98,20 @@ struct SearchView: View {
         }
     }
 
-    /// Search results paginate on the site; scrolling appends the next page.
-    private func loadMore() async {
-        guard let nextPath, !loading, !loadingMore else { return }
-        loadingMore = true
-        defer { loadingMore = false }
-        let url = SiteClient.shared.catalogURL(path: nextPath)
-        let targetPage = Int(HTMLParser.firstMatch("[?&]page=(\\d+)", in: nextPath) ?? "") ?? (currentPage + 1)
+    /// Website-style paging (build 11): jump to a numbered page of the
+    /// current search instead of appending endlessly.
+    private func goPage(_ page: Int) async {
+        guard page != currentPage, page >= 1, !loading, !lastQuery.isEmpty else { return }
+        loading = true
+        defer { loading = false }
+        let url: URL
+        if let path = pagePaths[page] {
+            url = SiteClient.shared.catalogURL(path: path)
+        } else if let built = URL(string: HTMLParser.withPage(
+            SiteClient.shared.searchURL(query: lastQuery).absoluteString, page: page)) {
+            url = built
+        } else { return }
+        pageURL = url
         do {
             let result = try await SiteClient.shared.html(
                 for: url,
@@ -112,20 +123,15 @@ struct SearchView: View {
             let html = result.html
             let parsed = await HTMLParser.detached {
                 (cards: HTMLParser.movieCards(in: html),
-                 next: HTMLParser.nextPagePath(in: html, currentPage: targetPage))
+                 pages: HTMLParser.pageMap(in: html))
             }
-            let known = Set(cards.map(\.pathID))
-            let fresh = parsed.cards.filter { !known.contains($0.pathID) }
-            if fresh.isEmpty {
-                self.nextPath = nil
-                return
-            }
-            cards.append(contentsOf: fresh)
-            currentPage = targetPage
-            self.nextPath = parsed.next
+            cards = parsed.cards
+            currentPage = page
+            for (number, href) in parsed.pages { pagePaths[number] = href }
+            totalPages = max(totalPages, pagePaths.keys.max() ?? page, page)
             source = result.source
         } catch {
-            // Keep nextPath for a later retry.
+            errorMessage = error.localizedDescription
         }
     }
 }

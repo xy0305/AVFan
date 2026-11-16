@@ -525,15 +525,21 @@ struct CatalogListView: View {
     @EnvironmentObject private var settings: AppSettings
     @State private var cards: [MovieCard] = []
     @State private var loading = false
-    @State private var loadingMore = false
     @State private var errorMessage: String?
     @State private var source: FetchSource?
     @State private var showWeb = false
     @State private var pageURL: URL?
-    /// The site paginates with page= links; scrolling to the end follows
-    /// them and appends (build 5), instead of stopping at page 1.
-    @State private var nextPath: String?
+    /// Website-style paging (build 11): the page's own numbered links,
+    /// one page shown at a time — no more infinite append.
     @State private var currentPage = 1
+    @State private var pagePaths: [Int: String] = [:]
+    @State private var totalPages = 1
+    /// The path with any applied filters; starts as the given path.
+    @State private var activePath = ""
+    /// The site's own filter/sort form, parsed from the page (build 11).
+    @State private var filterForm: ListFilterForm?
+    @State private var selections: [String: Set<String>] = [:]
+    @State private var showFilters = false
     /// This list is always a PUSHED view, so it hosts its own detail
     /// navigation as item-based state (the pattern HomeView uses for its
     /// hero, which pops correctly). Value links resolved by a tab-root
@@ -541,33 +547,75 @@ struct CatalogListView: View {
     @State private var openCard: MovieCard?
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
-                FetchStatusBanner(source: source, error: errorMessage, webURL: pageURL) { showWeb = true }
-                if loading && cards.isEmpty { ProgressView().frame(maxWidth: .infinity, minHeight: 180) }
-                MovieGrid(cards: cards, onSelect: { openCard = $0 }) { Task { await loadMore() } }
-                if loadingMore {
-                    ProgressView().frame(maxWidth: .infinity).padding(.vertical, 8)
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    FetchStatusBanner(source: source, error: errorMessage, webURL: pageURL) { showWeb = true }
+                        .id("catalogTop")
+                    if loading && cards.isEmpty { ProgressView().frame(maxWidth: .infinity, minHeight: 180) }
+                    MovieGrid(cards: cards, onSelect: { openCard = $0 })
+                    if loading && !cards.isEmpty {
+                        ProgressView().frame(maxWidth: .infinity).padding(.vertical, 8)
+                    }
+                    PagerBar(currentPage: currentPage, totalPages: totalPages, isLoading: loading) { page in
+                        Task { await goPage(page) }
+                    }
                 }
+                .padding(.horizontal, AdaptiveLayout.horizontalPadding)
+                .padding(.vertical, 12)
             }
-            .padding(.horizontal, AdaptiveLayout.horizontalPadding)
-            .padding(.vertical, 12)
+            .onChange(of: currentPage) { _, _ in
+                withAnimation(.none) { proxy.scrollTo("catalogTop", anchor: .top) }
+            }
         }
         .background(AVFanTheme.pageBackground)
         .navigationTitle(title)
         .navigationDestination(item: $openCard) { MovieDetailView(card: $0) }
+        .toolbar {
+            if filterForm != nil {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { showFilters = true } label: {
+                        Image(systemName: "line.3.horizontal.decrease.circle")
+                    }
+                    .accessibilityLabel("筛选")
+                }
+            }
+        }
         .task { await load() }
         .sheet(isPresented: $showWeb) {
             if let pageURL { InAppWebView(url: pageURL, title: title) }
         }
+        .sheet(isPresented: $showFilters) {
+            if let filterForm {
+                FilterSheet(form: filterForm, selections: selections) { newSelections in
+                    selections = newSelections
+                    let filtered = HTMLParser.applyingFilters(
+                        activePath.isEmpty ? path : activePath,
+                        form: filterForm, selections: newSelections)
+                    activePath = filtered
+                    Task { await loadPage(filtered, page: 1) }
+                }
+            }
+        }
     }
 
     private func load() async {
+        let start = activePath.isEmpty ? path : activePath
+        let page = Int(HTMLParser.firstMatch("[?&]page=(\\d+)", in: start) ?? "") ?? 1
+        await loadPage(start, page: page)
+    }
+
+    private func goPage(_ page: Int) async {
+        guard page != currentPage, page >= 1, !loading else { return }
+        let target = pagePaths[page] ?? HTMLParser.withPage(activePath.isEmpty ? path : activePath, page: page)
+        await loadPage(target, page: page)
+    }
+
+    private func loadPage(_ fetchPath: String, page: Int) async {
         loading = true
         defer { loading = false }
-        let url = SiteClient.shared.catalogURL(path: path)
+        let url = SiteClient.shared.catalogURL(path: fetchPath)
         pageURL = url
-        currentPage = Int(HTMLParser.firstMatch("[?&]page=(\\d+)", in: path) ?? "") ?? 1
         do {
             let result = try await SiteClient.shared.html(
                 for: url,
@@ -577,53 +625,105 @@ struct CatalogListView: View {
                 expectCatalog: true
             )
             let html = result.html
-            let page = currentPage
             let parsed = await HTMLParser.detached {
                 (cards: HTMLParser.movieCards(in: html),
-                 next: HTMLParser.nextPagePath(in: html, currentPage: page))
+                 pages: HTMLParser.pageMap(in: html),
+                 form: HTMLParser.listFilterForm(in: html))
             }
             cards = parsed.cards
-            nextPath = parsed.next
+            currentPage = page
+            for (number, href) in parsed.pages { pagePaths[number] = href }
+            totalPages = max(totalPages, pagePaths.keys.max() ?? page, page)
+            if filterForm == nil, let form = parsed.form {
+                filterForm = form
+                selections = Dictionary(uniqueKeysWithValues: form.groups.map { group in
+                    (group.name, Set(group.options.filter(\.selected).map(\.value)))
+                })
+            }
             source = result.source
+            errorMessage = nil
             if cards.isEmpty { showWeb = true }
         } catch {
             errorMessage = error.localizedDescription
-            showWeb = true
+            if cards.isEmpty { showWeb = true }
+        }
+    }
+}
+
+/// The site's filter/sort panel as a sheet (build 11): checkbox groups
+/// toggle freely (the group's 全部 option is mutually exclusive with the
+/// rest, as on the site), radio groups pick one. Edits a draft; 应用
+/// hands the committed selections back.
+private struct FilterSheet: View {
+    let form: ListFilterForm
+    let onApply: ([String: Set<String>]) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var draft: [String: Set<String>]
+
+    init(form: ListFilterForm, selections: [String: Set<String>], onApply: @escaping ([String: Set<String>]) -> Void) {
+        self.form = form
+        self.onApply = onApply
+        _draft = State(initialValue: selections)
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                ForEach(form.groups) { group in
+                    Section(group.title) {
+                        ForEach(group.options) { option in
+                            Button {
+                                toggle(group: group, option: option)
+                            } label: {
+                                HStack {
+                                    Text(option.label)
+                                        .foregroundStyle(.primary)
+                                    Spacer()
+                                    if (draft[group.name] ?? []).contains(option.value) {
+                                        Image(systemName: "checkmark")
+                                            .foregroundStyle(AVFanTheme.accent)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle("筛选 · 排序")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("应用") {
+                        onApply(draft)
+                        dismiss()
+                    }
+                    .fontWeight(.semibold)
+                }
+            }
         }
     }
 
-    private func loadMore() async {
-        guard let nextPath, !loading, !loadingMore else { return }
-        loadingMore = true
-        defer { loadingMore = false }
-        let url = SiteClient.shared.catalogURL(path: nextPath)
-        let targetPage = Int(HTMLParser.firstMatch("[?&]page=(\\d+)", in: nextPath) ?? "") ?? (currentPage + 1)
-        do {
-            let result = try await SiteClient.shared.html(
-                for: url,
-                locale: settings.locale,
-                ageCookie: settings.legalAgeCookie,
-                allowWebViewFallback: true,
-                expectCatalog: true
-            )
-            let html = result.html
-            let parsed = await HTMLParser.detached {
-                (cards: HTMLParser.movieCards(in: html),
-                 next: HTMLParser.nextPagePath(in: html, currentPage: targetPage))
+    private func toggle(group: ListFilterGroup, option: ListFilterOption) {
+        var set = draft[group.name] ?? []
+        if group.isRadio {
+            set = [option.value]
+        } else if set.contains(option.value) {
+            set.remove(option.value)
+        } else {
+            let isAll = option.value.isEmpty || option.label.hasPrefix("全部")
+            if isAll {
+                set = [option.value]
+            } else {
+                set = set.filter { value in
+                    guard let other = group.options.first(where: { $0.value == value }) else { return true }
+                    return !(other.value.isEmpty || other.label.hasPrefix("全部"))
+                }
+                set.insert(option.value)
             }
-            let known = Set(cards.map(\.pathID))
-            let fresh = parsed.cards.filter { !known.contains($0.pathID) }
-            if fresh.isEmpty {
-                self.nextPath = nil
-                return
-            }
-            cards.append(contentsOf: fresh)
-            currentPage = targetPage
-            self.nextPath = parsed.next
-            source = result.source
-        } catch {
-            // Keep nextPath so a later scroll can retry; don't spam errors
-            // for an append the user didn't explicitly request.
         }
+        draft[group.name] = set
     }
 }

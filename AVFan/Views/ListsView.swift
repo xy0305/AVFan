@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ListsView: View {
     @EnvironmentObject private var bookmarks: BookmarkStore
+    @State private var goSearch = false
 
     var body: some View {
         List {
@@ -43,5 +44,12 @@ struct ListsView: View {
         .background(AVFanTheme.pageBackground)
         .liquidGlassList()
         .navigationTitle("收藏")
+        .navigationDestination(isPresented: $goSearch) { SearchView() }
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button { goSearch = true } label: { Image(systemName: "magnifyingglass") }
+                    .accessibilityLabel("搜索")
+            }
+        }
     }
 }

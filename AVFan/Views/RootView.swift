@@ -8,11 +8,11 @@ struct RootView: View {
         FloatingTabContainer(selection: $tab) {
             ZStack {
                 tabRoot(.home) { NavigationStack { HomeView() } }
-                tabRoot(.search) { NavigationStack { SearchView() } }
                 tabRoot(.categories) { NavigationStack { CategoriesView() } }
                 tabRoot(.rankings) { NavigationStack { RankingsView() } }
                 tabRoot(.news) { NavigationStack { NewsView() } }
                 tabRoot(.series) { NavigationStack { SeriesView() } }
+                tabRoot(.casts) { NavigationStack { CastsView() } }
                 tabRoot(.library) { NavigationStack { ListsView() } }
                 tabRoot(.settings) { NavigationStack { SettingsView() } }
             }

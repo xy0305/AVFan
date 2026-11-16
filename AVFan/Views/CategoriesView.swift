@@ -6,6 +6,7 @@ import SwiftUI
 /// categories are public browsing and get their own tab (build 6).
 struct CategoriesView: View {
     @EnvironmentObject private var settings: AppSettings
+    @State private var goSearch = false
 
     var body: some View {
         List {
@@ -31,6 +32,13 @@ struct CategoriesView: View {
         .background(AVFanTheme.pageBackground)
         .liquidGlassList()
         .navigationTitle("类别")
+        .navigationDestination(isPresented: $goSearch) { SearchView() }
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button { goSearch = true } label: { Image(systemName: "magnifyingglass") }
+                    .accessibilityLabel("搜索")
+            }
+        }
     }
 }
 

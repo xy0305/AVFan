@@ -245,12 +245,71 @@ enum ParserTests {
         expect(series[0].name == "2人っきりにしてみたら…", "series name, got \(series[0].name)")
         expect(series[1].href.contains("L6TOzhqv"), "series href")
 
+        // Build 11: pagination map + page construction.
+        let pagerHTML = """
+        <div class="pagination"><a href="/zh-CN/tags?t=censored&amp;page=1">1</a>
+        <a href="/zh-CN/tags?t=censored&amp;page=2">2</a>
+        <a href="/zh-CN/tags?t=censored&amp;page=40">40</a></div>
+        """
+        let pageMap = HTMLParser.pageMap(in: pagerHTML)
+        expect(pageMap.count == 3 && pageMap[2]?.contains("page=2") == true && pageMap[40] != nil,
+               "pageMap extracts numbered pages, got \(pageMap)")
+        expect(HTMLParser.withPage("/zh-CN/tags?t=censored", page: 3).contains("page=3"),
+               "withPage appends page=")
+        expect(HTMLParser.withPage("/zh-CN/tags?t=censored&page=2", page: 5).contains("page=5"),
+               "withPage replaces page=")
+        expect(!HTMLParser.withPage("/zh-CN/tags?t=censored&page=2", page: 5).contains("page=2"),
+               "withPage drops the old page")
+
+        // Build 11: cast index cards (avatar + name + works count).
+        let castsHTML = """
+        <a href="/zh-CN/casts/AbCdEfGh"><img src="https://c1.avfan.com/avatars/a.jpg"><div>テスト女優</div><span>128 部作品</span></a>
+        <a href="/zh-CN/casts/ZzYyXxWw"><img data-src="https://c1.avfan.com/avatars/b.jpg"><div>第二女優</div></a>
+        """
+        let castCards = HTMLParser.castCards(in: castsHTML)
+        expect(castCards.count == 2, "cast cards count, got \(castCards.count)")
+        expect(castCards.first?.name == "テスト女優", "cast name, got \(castCards.first?.name ?? "nil")")
+        expect(castCards.first?.countText?.contains("128") == true, "cast count line")
+        expect(castCards.first?.avatarURL?.contains("a.jpg") == true, "cast avatar")
+        expect(castCards.last?.avatarURL?.contains("b.jpg") == true, "cast avatar data-src")
+
+        // Build 11: 番号前缀 links from a page's own anchors.
+        let prefixHTML = """
+        <a href="/zh-CN/number_letters">番号前缀</a>
+        <a href="/zh-CN/number_letters/JUR">JUR</a>
+        <a href="/zh-CN/number_letters/SNOS">SNOS</a>
+        <a href="/zh-CN/number_letters/JUR">JUR</a>
+        """
+        let prefixes = HTMLParser.prefixLinks(in: prefixHTML)
+        expect(prefixes.count == 2 && prefixes.first?.name == "JUR",
+               "prefix links deduped, index excluded, got \(prefixes.map(\.name))")
+
+        // Build 11: the site's filter/sort form, parsed from its inputs.
+        let filterHTML = """
+        <form><label><input type="checkbox" name="f" value="all" checked>全部综合</label>
+        <label><input type="checkbox" name="f" value="magnet">有磁链</label>
+        <label><input type="checkbox" name="f" value="subtitle">有字幕</label>
+        <label><input type="radio" name="sort" value="release" checked>最新发行</label>
+        <label><input type="radio" name="sort" value="score">最高评分</label></form>
+        """
+        let form = HTMLParser.listFilterForm(in: filterHTML)
+        expect(form != nil && form!.groups.count == 2, "filter form groups, got \(String(describing: form))")
+        expect(form!.groups.first?.options.count == 3, "filter options count")
+        expect(form!.groups.first?.options.first?.selected == true, "filter preselected option")
+        expect(form!.groups.last?.isRadio == true && form!.groups.last?.title == "排序", "sort group detected")
+        let applied = HTMLParser.applyingFilters("/zh-CN/number_letters/JUR?f=all&page=4",
+                                                  form: form!,
+                                                  selections: ["f": ["magnet"], "sort": ["score"]])
+        expect(applied.contains("f=magnet") && applied.contains("sort=score") && !applied.contains("page="),
+               "applying filters replaces params and resets paging, got \(applied)")
+        expect(HTMLParser.listFilterForm(in: "<p>no form here</p>") == nil, "no form, no filter UI")
+
         let signedHTML = "<a href=\"/zh-CN/sign_out\">退出登录</a>"
         expect(HTMLParser.isSignedIn(html: signedHTML), "sign_out means signed in")
         expect(HTMLParser.signOutURL(in: signedHTML)?.contains("sign_out") == true, "sign_out url")
         expect(HTMLParser.containsSignInLink("<a href=\"/zh-CN/sign_in\">登录</a>"), "sign_in link")
 
-        print("PASS: home, detail magnets, ranking merge, hot casts, HQ cover sources, empty shell, block detection, cover policy, login signals, ranking tabs, pagination, news, series, detail cover identity")
+        print("PASS: home, detail magnets, ranking merge, hot casts, HQ cover sources, empty shell, block detection, cover policy, login signals, ranking tabs, pagination, news, series, detail cover identity, page map, cast cards, prefix links, filter form")
     }
 }
 

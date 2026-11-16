@@ -11,12 +11,14 @@ struct SeriesView: View {
     @State private var tabs: [NamedLink] = []
     @State private var currentPath = "series"
     @State private var loading = false
-    @State private var loadingMore = false
     @State private var errorMessage: String?
     @State private var source: FetchSource?
     @State private var showWeb = false
     @State private var pageURL: URL?
-    @State private var nextPath: String?
+    @State private var pagePaths: [Int: String] = [:]
+    @State private var totalPages = 1
+    @State private var prefixes: [NamedLink] = []
+    @State private var goSearch = false
     @State private var currentPage = 1
 
     var body: some View {
@@ -28,7 +30,8 @@ struct SeriesView: View {
                             ForEach(tabs) { tab in
                                 Button {
                                     currentPath = tab.href
-                                    nextPath = nil
+                                    pagePaths = [:]
+                                    totalPages = 1
                                     Task { await load() }
                                 } label: {
                                     Text(tab.name)
@@ -46,6 +49,30 @@ struct SeriesView: View {
                 }
                 FetchStatusBanner(source: source, error: errorMessage, webURL: pageURL) { showWeb = true }
                     .padding(.horizontal, AdaptiveLayout.horizontalPadding)
+                if !prefixes.isEmpty {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("番号前缀")
+                            .font(.subheadline.weight(.bold))
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 76), spacing: 8)], alignment: .leading, spacing: 8) {
+                            ForEach(prefixes) { prefix in
+                                NavigationLink {
+                                    CatalogListView(title: prefix.name, path: prefix.href)
+                                } label: {
+                                    Text(prefix.name)
+                                        .font(.caption.weight(.semibold))
+                                        .lineLimit(1)
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 8)
+                                        .frame(maxWidth: .infinity)
+                                }
+                                .buttonStyle(.plain)
+                                .liquidGlass(interactive: true)
+                            }
+                        }
+                    }
+                    .padding(.horizontal, AdaptiveLayout.horizontalPadding)
+                    .padding(.vertical, 10)
+                }
                 if loading && items.isEmpty {
                     ProgressView().frame(maxWidth: .infinity, minHeight: 180)
                 }
@@ -68,19 +95,25 @@ struct SeriesView: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .onAppear {
-                        if link.href == prefetchHref { Task { await loadMore() } }
-                    }
                     Divider().padding(.leading, AdaptiveLayout.horizontalPadding)
                 }
-                if loadingMore {
-                    ProgressView().frame(maxWidth: .infinity).padding(.vertical, 10)
+                PagerBar(currentPage: currentPage, totalPages: totalPages, isLoading: loading) { page in
+                    Task { await goPage(page) }
                 }
+                .padding(.horizontal, AdaptiveLayout.horizontalPadding)
             }
             .padding(.vertical, 6)
         }
+        .id(currentPage)
         .background(AVFanTheme.pageBackground)
         .navigationTitle("系列")
+        .navigationDestination(isPresented: $goSearch) { SearchView() }
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button { goSearch = true } label: { Image(systemName: "magnifyingglass") }
+                    .accessibilityLabel("搜索")
+            }
+        }
         .task { if items.isEmpty { await load() } }
         .refreshable { await load() }
         .sheet(isPresented: $showWeb) {
@@ -91,10 +124,6 @@ struct SeriesView: View {
         }
     }
 
-    private var prefetchHref: String? {
-        items.dropFirst(max(0, items.count - 6)).first?.href
-    }
-
     private func isSelected(_ tab: NamedLink) -> Bool {
         let current = HTMLParser.stripLocale(currentPath)
         if HTMLParser.stripLocale(tab.href) == current { return true }
@@ -103,12 +132,24 @@ struct SeriesView: View {
     }
 
     private func load() async {
+        pagePaths = [:]
+        totalPages = 1
+        await load(path: currentPath)
+    }
+
+    private func goPage(_ page: Int) async {
+        guard page != currentPage, page >= 1, !loading else { return }
+        let target = pagePaths[page] ?? HTMLParser.withPage(currentPath, page: page)
+        await load(path: target)
+    }
+
+    private func load(path fetchPath: String) async {
         loading = true
         errorMessage = nil
         defer { loading = false }
-        let url = SiteClient.shared.pageURL(path: currentPath, locale: settings.locale)
+        let url = SiteClient.shared.pageURL(path: fetchPath, locale: settings.locale)
         pageURL = url
-        currentPage = Int(HTMLParser.firstMatch("[?&]page=(\\d+)", in: currentPath) ?? "") ?? 1
+        currentPage = Int(HTMLParser.firstMatch("[?&]page=(\\d+)", in: fetchPath) ?? "") ?? 1
         do {
             let result = try await SiteClient.shared.html(
                 for: url,
@@ -118,15 +159,17 @@ struct SeriesView: View {
                 expectCatalog: false
             )
             let html = result.html
-            let page = currentPage
             let parsed = await HTMLParser.detached {
                 (items: HTMLParser.seriesItems(in: html),
                  tabs: HTMLParser.rankingTabs(in: html, basePath: "series", currentPath: "series?__none"),
-                 next: HTMLParser.nextPagePath(in: html, currentPage: page))
+                 pages: HTMLParser.pageMap(in: html),
+                 prefixes: HTMLParser.prefixLinks(in: html))
             }
             items = parsed.items
             tabs = parsed.tabs
-            nextPath = parsed.next
+            for (number, href) in parsed.pages { pagePaths[number] = href }
+            totalPages = max(totalPages, pagePaths.keys.max() ?? currentPage, currentPage)
+            if prefixes.isEmpty { prefixes = parsed.prefixes }
             source = result.source
             if items.isEmpty {
                 errorMessage = "没有解析到系列条目，可改用应用内网页。"
@@ -137,37 +180,4 @@ struct SeriesView: View {
         }
     }
 
-    private func loadMore() async {
-        guard let nextPath, !loading, !loadingMore else { return }
-        loadingMore = true
-        defer { loadingMore = false }
-        let url = SiteClient.shared.pageURL(path: nextPath, locale: settings.locale)
-        let targetPage = Int(HTMLParser.firstMatch("[?&]page=(\\d+)", in: nextPath) ?? "") ?? (currentPage + 1)
-        do {
-            let result = try await SiteClient.shared.html(
-                for: url,
-                locale: settings.locale,
-                ageCookie: settings.legalAgeCookie,
-                allowWebViewFallback: true,
-                expectCatalog: true
-            )
-            let html = result.html
-            let parsed = await HTMLParser.detached {
-                (items: HTMLParser.seriesItems(in: html),
-                 next: HTMLParser.nextPagePath(in: html, currentPage: targetPage))
-            }
-            let known = Set(items.map(\.href))
-            let fresh = parsed.items.filter { !known.contains($0.href) }
-            if fresh.isEmpty {
-                self.nextPath = nil
-                return
-            }
-            items.append(contentsOf: fresh)
-            currentPage = targetPage
-            self.nextPath = parsed.next
-            source = result.source
-        } catch {
-            // Keep nextPath for a later retry.
-        }
-    }
 }

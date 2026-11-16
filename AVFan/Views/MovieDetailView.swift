@@ -843,6 +843,18 @@ final class MovieDetailViewModel: ObservableObject {
             let html = result.html
             var parsed = await HTMLParser.detached { HTMLParser.movieDetail(from: html, url: url) }
             if parsed.pathID.isEmpty { parsed.pathID = card.pathID }
+            // Identity guard (build 11): the fetched page's own 番号 must
+            // be the tapped card's. A mismatch means the page that came
+            // back is a DIFFERENT movie — never display it as if it were
+            // the tapped one; fall back to the card's own data and say so.
+            if let cardCode = card.code, let parsedCode = parsed.code {
+                let normalize: (String) -> String = {
+                    $0.uppercased().filter { $0.isLetter || $0.isNumber }
+                }
+                if normalize(cardCode) != normalize(parsedCode) {
+                    throw SiteClientError.transport("打开的影片与所点封面不一致，已停止打开错误影片")
+                }
+            }
             if parsed.code == nil { parsed.code = card.code }
             if parsed.title.isEmpty { parsed.title = card.title }
             if parsed.coverURL == nil { parsed.coverURL = card.coverURL }

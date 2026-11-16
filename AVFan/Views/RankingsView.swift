@@ -10,12 +10,13 @@ struct RankingsView: View {
     @State private var page: RankingPage?
     @State private var tabs: [NamedLink] = []
     @State private var loading = false
-    @State private var loadingMore = false
     @State private var errorMessage: String?
     @State private var source: FetchSource?
     @State private var showWeb = false
     @State private var pageURL: URL?
-    @State private var nextPath: String?
+    @State private var pagePaths: [Int: String] = [:]
+    @State private var totalPages = 1
+    @State private var goSearch = false
     @State private var currentPage = 1
 
     var body: some View {
@@ -28,7 +29,8 @@ struct RankingsView: View {
                                 kind = item
                                 currentPath = item.path
                                 tabs = []
-                                nextPath = nil
+                                pagePaths = [:]
+                                totalPages = 1
                                 Task { await load() }
                             } label: {
                                 Text(item.title)
@@ -47,7 +49,8 @@ struct RankingsView: View {
                             ForEach(tabs) { tab in
                                 Button {
                                     currentPath = tab.href
-                                    nextPath = nil
+                                    pagePaths = [:]
+                                    totalPages = 1
                                     Task { await load() }
                                 } label: {
                                     Text(tab.name)
@@ -87,17 +90,25 @@ struct RankingsView: View {
                     }
                 }
                 if let page {
-                    MovieGrid(cards: page.cards) { Task { await loadMore() } }
+                    MovieGrid(cards: page.cards)
                 }
-                if loadingMore {
-                    ProgressView().frame(maxWidth: .infinity).padding(.vertical, 8)
+                PagerBar(currentPage: currentPage, totalPages: totalPages, isLoading: loading) { page in
+                    Task { await goPage(page) }
                 }
             }
             .padding(.horizontal, AdaptiveLayout.horizontalPadding)
             .padding(.vertical, 12)
         }
+        .id(currentPage)
         .background(AVFanTheme.pageBackground)
         .navigationTitle("排行榜")
+        .navigationDestination(isPresented: $goSearch) { SearchView() }
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button { goSearch = true } label: { Image(systemName: "magnifyingglass") }
+                    .accessibilityLabel("搜索")
+            }
+        }
         .navigationDestination(for: MovieCard.self) { MovieDetailView(card: $0) }
         .task { await load() }
         .refreshable { await load() }
@@ -114,12 +125,24 @@ struct RankingsView: View {
     }
 
     private func load() async {
+        pagePaths = [:]
+        totalPages = 1
+        await load(path: currentPath)
+    }
+
+    private func goPage(_ page: Int) async {
+        guard page != currentPage, page >= 1, !loading else { return }
+        let target = pagePaths[page] ?? HTMLParser.withPage(currentPath, page: page)
+        await load(path: target)
+    }
+
+    private func load(path fetchPath: String) async {
         loading = true
         errorMessage = nil
         defer { loading = false }
-        let url = SiteClient.shared.rankingURL(path: currentPath, locale: settings.locale)
+        let url = SiteClient.shared.rankingURL(path: fetchPath, locale: settings.locale)
         pageURL = url
-        currentPage = Int(HTMLParser.firstMatch("[?&]page=(\\d+)", in: currentPath) ?? "") ?? 1
+        currentPage = Int(HTMLParser.firstMatch("[?&]page=(\\d+)", in: fetchPath) ?? "") ?? 1
         do {
             let result = try await SiteClient.shared.html(
                 for: url,
@@ -131,15 +154,15 @@ struct RankingsView: View {
             let html = result.html
             let base = String(currentPath.split(separator: "?").first ?? "")
             let shown = currentPath
-            let pageNumber = currentPage
             let parsed = await HTMLParser.detached {
                 (page: HTMLParser.ranking(from: html),
                  tabs: HTMLParser.rankingTabs(in: html, basePath: base, currentPath: shown),
-                 next: HTMLParser.nextPagePath(in: html, currentPage: pageNumber))
+                 pages: HTMLParser.pageMap(in: html))
             }
             page = parsed.page
             tabs = parsed.tabs
-            nextPath = parsed.next
+            for (number, href) in parsed.pages { pagePaths[number] = href }
+            totalPages = max(totalPages, pagePaths.keys.max() ?? currentPage, currentPage)
             source = result.source
             if parsed.page.cards.isEmpty && parsed.page.people.isEmpty {
                 errorMessage = "没有解析到排行条目，可改用应用内网页。"
@@ -151,39 +174,4 @@ struct RankingsView: View {
 
     /// Ranking lists paginate on the site too; scrolling appends the next
     /// page of cards (people rankings are single lists and never paginate).
-    private func loadMore() async {
-        guard let nextPath, !loading, !loadingMore else { return }
-        loadingMore = true
-        defer { loadingMore = false }
-        let url = SiteClient.shared.rankingURL(path: nextPath, locale: settings.locale)
-        let targetPage = Int(HTMLParser.firstMatch("[?&]page=(\\d+)", in: nextPath) ?? "") ?? (currentPage + 1)
-        do {
-            let result = try await SiteClient.shared.html(
-                for: url,
-                locale: settings.locale,
-                ageCookie: settings.legalAgeCookie,
-                allowWebViewFallback: true,
-                expectCatalog: true
-            )
-            let html = result.html
-            let parsed = await HTMLParser.detached {
-                (cards: HTMLParser.movieCards(in: html),
-                 next: HTMLParser.nextPagePath(in: html, currentPage: targetPage))
-            }
-            guard var current = page else { return }
-            let known = Set(current.cards.map(\.pathID))
-            let fresh = parsed.cards.filter { !known.contains($0.pathID) }
-            if fresh.isEmpty {
-                self.nextPath = nil
-                return
-            }
-            current.cards.append(contentsOf: fresh)
-            page = current
-            currentPage = targetPage
-            self.nextPath = parsed.next
-            source = result.source
-        } catch {
-            // Keep nextPath for a later retry.
-        }
-    }
 }

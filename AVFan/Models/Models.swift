@@ -254,6 +254,44 @@ enum CatalogShortcut: String, CaseIterable, Identifiable {
     }
 }
 
+/// One entry on the site's cast index pages (build 11): avatar + name +
+/// an optional works-count line, linking to that cast's movie list.
+struct CastCard: Identifiable, Hashable {
+    var name: String
+    var href: String
+    var avatarURL: String?
+    var countText: String?
+
+    var id: String { href }
+    /// The 8-char cast id inside the href, used as the catalog path key.
+    var pathID: String {
+        href.split(separator: "/").last.map(String.init) ?? href
+    }
+}
+
+/// The site's own list filter/sort panel, parsed from the page's form
+/// (build 11). Groups are keyed by the input `name`; options carry the
+/// input `value`, its visible label and whether the page shipped it
+/// selected. Nothing here is guessed: no form in the HTML, no filter UI.
+struct ListFilterOption: Identifiable, Hashable {
+    var value: String
+    var label: String
+    var selected: Bool
+    var id: String { value + "|" + label }
+}
+
+struct ListFilterGroup: Identifiable, Hashable {
+    var name: String
+    var isRadio: Bool
+    var title: String
+    var options: [ListFilterOption]
+    var id: String { name }
+}
+
+struct ListFilterForm: Hashable {
+    var groups: [ListFilterGroup]
+}
+
 enum FetchSource: String {
     case urlSession
     case wkWebView

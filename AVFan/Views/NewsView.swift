@@ -11,12 +11,13 @@ struct NewsView: View {
     @State private var tabs: [NamedLink] = []
     @State private var currentPath = "news"
     @State private var loading = false
-    @State private var loadingMore = false
     @State private var errorMessage: String?
     @State private var source: FetchSource?
     @State private var showWeb = false
     @State private var pageURL: URL?
-    @State private var nextPath: String?
+    @State private var pagePaths: [Int: String] = [:]
+    @State private var totalPages = 1
+    @State private var goSearch = false
     @State private var currentPage = 1
 
     var body: some View {
@@ -28,7 +29,8 @@ struct NewsView: View {
                             ForEach(tabs) { tab in
                                 Button {
                                     currentPath = tab.href
-                                    nextPath = nil
+                                    pagePaths = [:]
+                                    totalPages = 1
                                     Task { await load() }
                                 } label: {
                                     Text(tab.name)
@@ -51,19 +53,24 @@ struct NewsView: View {
                         NewsRow(item: item)
                     }
                     .buttonStyle(.plain)
-                    .onAppear {
-                        if item.pathID == prefetchID { Task { await loadMore() } }
-                    }
                 }
-                if loadingMore {
-                    ProgressView().frame(maxWidth: .infinity).padding(.vertical, 8)
+                PagerBar(currentPage: currentPage, totalPages: totalPages, isLoading: loading) { page in
+                    Task { await goPage(page) }
                 }
             }
             .padding(.horizontal, AdaptiveLayout.horizontalPadding)
             .padding(.vertical, 12)
         }
+        .id(currentPage)
         .background(AVFanTheme.pageBackground)
         .navigationTitle("资讯")
+        .navigationDestination(isPresented: $goSearch) { SearchView() }
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button { goSearch = true } label: { Image(systemName: "magnifyingglass") }
+                    .accessibilityLabel("搜索")
+            }
+        }
         .navigationDestination(for: NewsItem.self) { NewsArticleView(item: $0) }
         .task { if items.isEmpty { await load() } }
         .refreshable { await load() }
@@ -75,21 +82,29 @@ struct NewsView: View {
         }
     }
 
-    private var prefetchID: String? {
-        items.dropFirst(max(0, items.count - 6)).first?.pathID
-    }
-
     private func isSelected(_ tab: NamedLink) -> Bool {
         HTMLParser.stripLocale(tab.href) == HTMLParser.stripLocale(currentPath)
     }
 
     private func load() async {
+        pagePaths = [:]
+        totalPages = 1
+        await load(path: currentPath)
+    }
+
+    private func goPage(_ page: Int) async {
+        guard page != currentPage, page >= 1, !loading else { return }
+        let target = pagePaths[page] ?? HTMLParser.withPage(currentPath, page: page)
+        await load(path: target)
+    }
+
+    private func load(path fetchPath: String) async {
         loading = true
         errorMessage = nil
         defer { loading = false }
-        let url = SiteClient.shared.pageURL(path: currentPath, locale: settings.locale)
+        let url = SiteClient.shared.pageURL(path: fetchPath, locale: settings.locale)
         pageURL = url
-        currentPage = Int(HTMLParser.firstMatch("[?&]page=(\\d+)", in: currentPath) ?? "") ?? 1
+        currentPage = Int(HTMLParser.firstMatch("[?&]page=(\\d+)", in: fetchPath) ?? "") ?? 1
         do {
             let result = try await SiteClient.shared.html(
                 for: url,
@@ -99,17 +114,17 @@ struct NewsView: View {
                 expectCatalog: false
             )
             let html = result.html
-            let page = currentPage
             // The sentinel currentPath keeps the currently shown category
             // in the chip row too, so the selection can be highlighted.
             let parsed = await HTMLParser.detached {
                 (items: HTMLParser.newsItems(in: html),
                  tabs: HTMLParser.rankingTabs(in: html, basePath: "news", currentPath: "news?__none"),
-                 next: HTMLParser.nextPagePath(in: html, currentPage: page))
+                 pages: HTMLParser.pageMap(in: html))
             }
             items = parsed.items
             tabs = parsed.tabs
-            nextPath = parsed.next
+            for (number, href) in parsed.pages { pagePaths[number] = href }
+            totalPages = max(totalPages, pagePaths.keys.max() ?? currentPage, currentPage)
             source = result.source
             if items.isEmpty {
                 errorMessage = "没有解析到资讯条目，可改用应用内网页。"
@@ -117,40 +132,6 @@ struct NewsView: View {
             }
         } catch {
             errorMessage = error.localizedDescription
-        }
-    }
-
-    private func loadMore() async {
-        guard let nextPath, !loading, !loadingMore else { return }
-        loadingMore = true
-        defer { loadingMore = false }
-        let url = SiteClient.shared.pageURL(path: nextPath, locale: settings.locale)
-        let targetPage = Int(HTMLParser.firstMatch("[?&]page=(\\d+)", in: nextPath) ?? "") ?? (currentPage + 1)
-        do {
-            let result = try await SiteClient.shared.html(
-                for: url,
-                locale: settings.locale,
-                ageCookie: settings.legalAgeCookie,
-                allowWebViewFallback: true,
-                expectCatalog: false
-            )
-            let html = result.html
-            let parsed = await HTMLParser.detached {
-                (items: HTMLParser.newsItems(in: html),
-                 next: HTMLParser.nextPagePath(in: html, currentPage: targetPage))
-            }
-            let known = Set(items.map(\.pathID))
-            let fresh = parsed.items.filter { !known.contains($0.pathID) }
-            if fresh.isEmpty {
-                self.nextPath = nil
-                return
-            }
-            items.append(contentsOf: fresh)
-            currentPage = targetPage
-            self.nextPath = parsed.next
-            source = result.source
-        } catch {
-            // Keep nextPath for a later retry.
         }
     }
 }
