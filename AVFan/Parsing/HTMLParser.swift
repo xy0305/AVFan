@@ -1111,7 +1111,11 @@ enum HTMLParser {
             ?? ""
         var cover = firstMatch("property=\"og:image\"\\s+content=\"([^\"]+)\"", in: html)
             ?? firstMatch("thumbnailUrl\"\\s*:\\s*\"([^\"]+)\"", in: html)
-        var summary = firstMatch("property=\"og:description\"\\s+content=\"([^\"]+)\"", in: html).map(unescape)
+        // The full synopsis lives in the page's #description block
+        // (the 简介 tab); og:description is only a truncated teaser,
+        // so the block wins when present (build 24).
+        var summary = descriptionText(in: html)
+            ?? firstMatch("property=\"og:description\"\\s+content=\"([^\"]+)\"", in: html).map(unescape)
         var releaseDate = definition(named: "发行日期", in: html) ?? firstMatch("uploadDate\"\\s*:\\s*\"([0-9T:+-]+)\"", in: html).map { String($0.prefix(10)) }
         var duration = definition(named: "片长", in: html)
         var rating: Double?
@@ -1170,8 +1174,164 @@ enum HTMLParser {
             watchStreams: watchStreams(in: html, pageURL: pageURL),
             trailerURL: trailerURL(in: html),
             previewImages: previewImages(in: html, cover: preferredCover),
-            library: libraryState(in: html)
+            library: libraryState(in: html),
+            commentsURL: firstMatch("data-comments-url=\"([^\"]+)\"", in: html).map(unescape),
+            relatedListsURL: firstMatch("<div[^>]*id=\"related-lists\"[^>]*data-url=\"([^\"]+)\"", in: html).map(unescape)
+                ?? firstMatch("data-url=\"([^\"]+)\"[^>]*id=\"related-lists\"", in: html).map(unescape),
+            commentsCount: firstMatch("tabComments\"[^>]*>[\\s\\S]*?评论[\\s\\S]*?>(\\d+)<", in: html).flatMap { Int($0) },
+            alsoStarred: sectionCards(in: html, heading: "还出演过"),
+            relatedWorks: sectionCards(in: html, heading: "相关作品")
         )
+    }
+
+    /// The full synopsis from the detail page's #description block.
+    static func descriptionText(in html: String) -> String? {
+        guard let inner = firstMatch("<div[^>]*id=\"description\"[^>]*>([\\s\\S]*?)</div>", in: html) else { return nil }
+        var text = stripTags(inner)
+        text = text.replacingOccurrences(of: "<br>", with: "\n")
+        text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return text.isEmpty ? nil : text
+    }
+
+    /// Movie cards under one of the detail page's own section
+    /// headings （她/他还出演过 / 相关作品）: the slice from the heading
+    /// to the next section heading (or a sane cap), parsed with the
+    /// standard card parser.
+    static func sectionCards(in html: String, heading: String) -> [MovieCard] {
+        guard let range = html.range(of: heading) else { return [] }
+        var slice = String(html[range.upperBound...])
+        for other in ["还出演过", "相关作品", "相关清单"] where other != heading {
+            if let end = slice.range(of: other) {
+                slice = String(slice[..<end.lowerBound])
+            }
+        }
+        if slice.count > 60000 { slice = String(slice.prefix(60000)) }
+        var seen = Set<String>()
+        return movieCards(in: slice).filter { seen.insert($0.pathID).inserted }.prefix(12).map { $0 }
+    }
+
+    /// Movie comments from the comments fragment. Blocks are
+    /// delimited by the per-comment markers when present (comment
+    /// ids / like controllers); each block's first user anchor is
+    /// the author, its longest text the body, and an MM-DD or full
+    /// date the date. Returns [] when nothing is recognizable —
+    /// the view then falls back to the fragment's plain text.
+    static func movieComments(in fragment: String) -> [MovieComment] {
+        let markerPattern = "(?:id=\"comment_\\d+\"|data-comment-id=\"\\d+\"|data-controller=\"comment-like\")"
+        guard let regex = try? NSRegularExpression(pattern: markerPattern) else { return [] }
+        let ns = fragment as NSString
+        let matches = regex.matches(in: fragment, range: NSRange(location: 0, length: ns.length))
+        guard !matches.isEmpty else { return [] }
+        var items: [MovieComment] = []
+        for (index, match) in matches.enumerated() {
+            // A block runs from a bit before its marker (the item's
+            // root element) to the next marker.
+            var start = match.range.location
+            let backLimit = max(0, start - 400)
+            if let lt = fragment.range(of: "<", options: .backwards, range: fragment.index(fragment.startIndex, offsetBy: backLimit)..<fragment.index(fragment.startIndex, offsetBy: start)) {
+                start = fragment.distance(from: fragment.startIndex, to: lt.lowerBound)
+            }
+            let end = index + 1 < matches.count ? matches[index + 1].range.location : ns.length
+            let block = ns.substring(with: NSRange(location: start, length: max(0, end - start)))
+            var author = "匿名"
+            if let anchorRegex = try? NSRegularExpression(pattern: "<a[^>]+href=\"[^\"]*(?:users?/)[^\"]*\"[^>]*>([\\s\\S]*?)</a>", options: [.caseInsensitive]),
+               let anchor = anchorRegex.firstMatch(in: block, range: NSRange(location: 0, length: (block as NSString).length)) {
+                let name = stripTags((block as NSString).substring(with: anchor.range(at: 1)))
+                if !name.isEmpty { author = name }
+            }
+            let text = stripTags(block)
+            let date = firstMatch(#"(\d{4}-\d{2}-\d{2}|\d{1,2}-\d{1,2}(?=\s|$))"#, in: text)
+            var body = text
+            if author != "匿名", let r = body.range(of: author) { body.removeSubrange(r) }
+            if let date, let r = body.range(of: date) { body.removeSubrange(r) }
+            if let r = body.range(of: "回复") { body = String(body[..<r.lowerBound]) }
+            body = body.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !body.isEmpty else { continue }
+            items.append(MovieComment(author: author, body: body, dateText: date))
+        }
+        return items
+    }
+
+    /// The next comments/lists page declared inside a fragment:
+    /// a data-next-page attribute, or a 加载更多 anchor's page param.
+    static func fragmentNextPage(in fragment: String) -> Int? {
+        if let value = firstMatch("data-next-page=\"(\\d+)\"", in: fragment) {
+            return Int(value)
+        }
+        if let href = firstMatch("<a[^>]+href=\"([^\"]*[?&]page=\\d+[^\"]*)\"[^>]*>\\s*加载更多", in: fragment),
+           let page = firstMatch("[?&]page=(\\d+)", in: href) {
+            return Int(page)
+        }
+        return nil
+    }
+
+    /// Related-list rows from the related-lists fragment: each
+    /// /lists/<id> anchor's name plus the counts that follow it.
+    static func relatedListRows(in fragment: String) -> [RelatedListRow] {
+        guard let regex = try? NSRegularExpression(
+            pattern: "<a[^>]+href=\"([^\"]*/lists/[A-Za-z0-9]+)\"[^>]*>([\\s\\S]*?)</a>",
+            options: [.caseInsensitive]
+        ) else { return [] }
+        let ns = fragment as NSString
+        let matches = regex.matches(in: fragment, range: NSRange(location: 0, length: ns.length))
+        var rows: [RelatedListRow] = []
+        var seen = Set<String>()
+        for (index, match) in matches.enumerated() {
+            let href = unescape(ns.substring(with: match.range(at: 1)))
+            let name = stripTags(ns.substring(with: match.range(at: 2)))
+            guard !name.isEmpty, seen.insert(href).inserted else { continue }
+            let end = index + 1 < matches.count ? matches[index + 1].range.location : ns.length
+            let tail = stripTags(ns.substring(with: NSRange(location: match.range.location, length: end - match.range.location)))
+            rows.append(RelatedListRow(
+                name: name,
+                href: href,
+                moviesCount: firstMatch(#"(\d+)\s*部作品"#, in: tail).flatMap { Int($0) },
+                viewsCount: firstMatch(#"被查看\s*(\d+)\s*次"#, in: tail).flatMap { Int($0) }
+            ))
+        }
+        return rows
+    }
+
+    /// Link rows for non-movie search results (series / makers /
+    /// directors): anchors into /<section>/<id> with a real name,
+    /// deduped, section-index links excluded.
+    static func searchLinkRows(in html: String, section: String) -> [NamedLink] {
+        guard let regex = try? NSRegularExpression(
+            pattern: "<a[^>]+href=\"([^\"]*/\(section)/[A-Za-z0-9]{4,}[^\"#]*)\"[^>]*>([\\s\\S]*?)</a>",
+            options: [.caseInsensitive]
+        ) else { return [] }
+        let ns = html as NSString
+        var out: [NamedLink] = []
+        var seen = Set<String>()
+        for match in regex.matches(in: html, range: NSRange(location: 0, length: ns.length)) {
+            let href = unescape(ns.substring(with: match.range(at: 1)))
+            let name = stripTags(ns.substring(with: match.range(at: 2)))
+            guard name.count >= 2, seen.insert(href).inserted else { continue }
+            out.append(NamedLink(name: name, href: href, kind: section))
+            if out.count >= 60 { break }
+        }
+        return out
+    }
+
+    /// The search page's type dropdown （影片/演员/系列/制作商/导演）:
+    /// anchors into /search carrying an st parameter, labelled by
+    /// their own text. Returned in page order.
+    static func searchTypes(in html: String) -> [NamedLink] {
+        guard let regex = try? NSRegularExpression(
+            pattern: "<a[^>]+href=\"([^\"]*/search\\?[^\"#]*st=[a-z]+[^\"#]*)\"[^>]*>([\\s\\S]*?)</a>",
+            options: [.caseInsensitive]
+        ) else { return [] }
+        let ns = html as NSString
+        var out: [NamedLink] = []
+        var seen = Set<String>()
+        for match in regex.matches(in: html, range: NSRange(location: 0, length: ns.length)) {
+            let href = unescape(ns.substring(with: match.range(at: 1)))
+            let label = stripTags(ns.substring(with: match.range(at: 2)))
+            guard ["全部", "影片", "演员", "系列", "制作商", "导演"].contains(label) else { continue }
+            guard seen.insert(label).inserted else { continue }
+            out.append(NamedLink(name: label, href: href, kind: "search-type"))
+        }
+        return out
     }
 
     /// The account library block （想看 / 看过 / 保存至清单） as the detail
@@ -1266,6 +1426,7 @@ enum HTMLParser {
     /// absent pieces stay nil.
     static func castProfile(in html: String) -> CastProfile {
         var profile = CastProfile()
+        profile.signedIn = isSignedIn(html: html)
         profile.csrfToken = firstMatch("<meta[^>]*name=\"csrf-token\"[^>]*content=\"([^\"]+)\"", in: html)
             ?? firstMatch("<meta[^>]*content=\"([^\"]+)\"[^>]*name=\"csrf-token\"", in: html)
 

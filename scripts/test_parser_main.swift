@@ -67,6 +67,43 @@ enum ParserTests {
         expect(detail.magnets.contains { $0.tags.contains("中文字幕") }, "cn sub tag")
         expect(HTMLParser.hasCatalogItems(movieHTML), "detail has catalog items")
 
+        // Build 24: the detail page's own extras. The summary comes
+        // from the #description block (full synopsis), the tab
+        // fragments' endpoints are declared in the page, and the
+        // comments / related-lists fragment parsers read the shapes
+        // the site's controllers consume.
+        expect(detail.summary?.hasPrefix("デートして、温泉入って") == true, "summary from #description, got \(detail.summary?.prefix(20) ?? "nil")")
+        expect(detail.commentsURL == "/zh-CN/movies/s6bNHCTN/comments", "comments url, got \(detail.commentsURL ?? "nil")")
+        expect(detail.relatedListsURL == "/zh-CN/lists/related?movie_id=s6bNHCTN", "related lists url, got \(detail.relatedListsURL ?? "nil")")
+        let commentsFragment = """
+        <div class="flex gap-3" id="comment_101"><a href="/zh-CN/users/alice">alice</a><p>拍得真好，值得收藏</p><span>11-15</span><a href="#">回复</a></div>
+        <div class="flex gap-3" id="comment_102"><a href="/zh-CN/users/bob">bob</a><p>烧的一逼</p><span>10-22</span><a href="#">回复</a></div>
+        """
+        let parsedComments = HTMLParser.movieComments(in: commentsFragment)
+        expect(parsedComments.count == 2, "comments count, got \(parsedComments.count)")
+        expect(parsedComments.first?.author == "alice", "comment author, got \(parsedComments.first?.author ?? "nil")")
+        expect(parsedComments.first?.body.contains("拍得真好") == true, "comment body, got \(parsedComments.first?.body ?? "nil")")
+        expect(parsedComments.first?.dateText == "11-15", "comment date, got \(parsedComments.first?.dateText ?? "nil")")
+        let listsFragment = """
+        <div class="row"><a href="/zh-CN/lists/9rX8uDnr">碧那精选</a><span>558部作品</span><span>被查看60次</span></div>
+        <div class="row"><a href="/zh-CN/lists/AbCdEfGh">家庭伦理</a><span>22部作品</span><span>被查看0次</span></div>
+        <button data-next-page="2">下一页</button>
+        """
+        let parsedRows = HTMLParser.relatedListRows(in: listsFragment)
+        expect(parsedRows.count == 2, "related rows, got \(parsedRows.count)")
+        expect(parsedRows.first?.name == "碧那精选" && parsedRows.first?.moviesCount == 558 && parsedRows.first?.viewsCount == 60, "related row fields")
+        expect(HTMLParser.fragmentNextPage(in: listsFragment) == 2, "lists next page")
+        let typeFragment = """
+        <a href="/zh-CN/search?q=JUR&st=movie">影片</a><a href="/zh-CN/search?q=JUR&st=cast">演员</a><a href="/zh-CN/search?q=JUR&st=series">系列</a>
+        """
+        let parsedTypes = HTMLParser.searchTypes(in: typeFragment)
+        expect(parsedTypes.map(\.name) == ["影片", "演员", "系列"], "search types, got \(parsedTypes.map(\.name))")
+        let linkFragment = """
+        <a href="/zh-CN/series/AbCd1234">某系列全集</a><a href="/zh-CN/series">系列</a>
+        """
+        let parsedLinks = HTMLParser.searchLinkRows(in: linkFragment, section: "series")
+        expect(parsedLinks.count == 1 && parsedLinks.first?.name == "某系列全集", "search link rows, got \(parsedLinks.map(\.name))")
+
         let rankHTML = try fixture("ranking-24h.html")
         let rank = HTMLParser.ranking(from: rankHTML)
         expect(rank.cards.count >= 15, "ranking cards \(rank.cards.count)")

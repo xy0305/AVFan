@@ -78,7 +78,11 @@ struct CastProfileView: View {
         .sheet(isPresented: $showWeb) {
             if let pageURL { InAppWebView(url: pageURL, title: name) }
         }
-        .sheet(isPresented: $showLogin) { SiteLoginView() }
+        .sheet(isPresented: $showLogin, onDismiss: {
+            // Login cleared the page cache; reload so the header is
+            // re-parsed from the signed-in page (with model wiring).
+            Task { await load() }
+        }) { SiteLoginView() }
         .sheet(isPresented: $showReviews) {
             if let profile {
                 CastReviewsSheet(profile: profile)
@@ -157,22 +161,30 @@ struct CastProfileView: View {
             }
 
             HStack(spacing: 10) {
+                // Follow / collect stay tappable even when the page
+                // carried no model wiring: guest pages render those
+                // buttons as login triggers, so a tap opens the login
+                // sheet instead of doing nothing (build 24).
                 actionButton(
                     title: (following ?? profile.isFollowing) ? "已关注" : "关注",
                     active: following ?? profile.isFollowing,
-                    enabled: profile.followURL != nil || profile.unfollowURL != nil
+                    enabled: true
                 ) {
                     Task { await toggleFollow(profile) }
                 }
                 actionButton(
                     title: (collected ?? profile.isCollected) ? "已收藏" : "收藏",
                     active: collected ?? profile.isCollected,
-                    enabled: profile.collectURL != nil || profile.uncollectURL != nil
+                    enabled: true
                 ) {
                     Task { await toggleCollect(profile) }
                 }
-                actionButton(title: "短评", active: false, enabled: profile.reviewListURL != nil || profile.reviewCreateURL != nil) {
-                    showReviews = true
+                actionButton(title: "短评", active: false, enabled: true) {
+                    if profile.reviewListURL == nil && profile.reviewCreateURL == nil && !profile.signedIn {
+                        showLogin = true
+                    } else {
+                        showReviews = true
+                    }
                 }
                 actionButton(title: detailsOpen ? "收起资料" : "详细资料", active: detailsOpen, enabled: profile.detailsURL != nil) {
                     Task { await toggleDetails(profile) }
@@ -227,16 +239,27 @@ struct CastProfileView: View {
 
     // MARK: Account actions
 
+    /// When the page carried no model wiring for an action, mirror
+    /// the site: guests get the login sheet (and a reload after),
+    /// a signed-in page without the wiring just reports it.
+    private func missingWiring(_ profile: CastProfile) {
+        if profile.signedIn {
+            showToast("页面未提供该入口")
+        } else {
+            showLogin = true
+        }
+    }
+
     private func toggleFollow(_ profile: CastProfile) async {
         let isOn = following ?? profile.isFollowing
         actionBusy = true
         defer { actionBusy = false }
         let outcome: LibrarySync.Outcome
         if isOn {
-            guard let url = profile.unfollowURL else { return }
+            guard let url = profile.unfollowURL else { missingWiring(profile); return }
             outcome = await LibrarySync.modelUndo(url: url, csrf: profile.csrfToken)
         } else {
-            guard let url = profile.followURL else { return }
+            guard let url = profile.followURL else { missingWiring(profile); return }
             outcome = await LibrarySync.modelAction(url: url, model: profile.modelName, modelID: profile.modelID, csrf: profile.csrfToken)
         }
         if outcome.success {
@@ -253,10 +276,10 @@ struct CastProfileView: View {
         defer { actionBusy = false }
         let outcome: LibrarySync.Outcome
         if isOn {
-            guard let url = profile.uncollectURL else { return }
+            guard let url = profile.uncollectURL else { missingWiring(profile); return }
             outcome = await LibrarySync.modelUndo(url: url, csrf: profile.csrfToken)
         } else {
-            guard let url = profile.collectURL else { return }
+            guard let url = profile.collectURL else { missingWiring(profile); return }
             outcome = await LibrarySync.modelAction(url: url, model: profile.modelName, modelID: profile.modelID, csrf: profile.csrfToken)
         }
         if outcome.success {
@@ -346,6 +369,8 @@ struct CastProfileView: View {
             }
             if !append {
                 profile = parsed.profile
+                following = nil
+                collected = nil
                 if filterForm == nil {
                     filterForm = parsed.form
                     if let form = parsed.form { selections = form.defaultSelections }

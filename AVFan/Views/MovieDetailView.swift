@@ -30,6 +30,21 @@ struct MovieDetailView: View {
     @State private var stillBox: IndexBox?
     @State private var mediaExpanded = false
     @State private var sourceOverride: PlaySource?
+    /// Detail extras (build 24): the page's comments and related
+    /// lists, lazy-loaded from the fragments the page itself declares,
+    /// auto-appending as the user scrolls — plus card navigation for
+    /// the also-starred / related-works grids.
+    @State private var openCard: MovieCard?
+    @State private var comments: [MovieComment] = []
+    @State private var commentsFallback: String?
+    @State private var commentsNext: Int?
+    @State private var commentsBusy = false
+    @State private var commentsLoaded = false
+    @State private var commentsLoginNote = false
+    @State private var relatedRows: [RelatedListRow] = []
+    @State private var listsNext: Int?
+    @State private var listsBusy = false
+    @State private var listsLoaded = false
     /// Measured height of the hero's text stack (title block + controls).
     /// A long title with its expand button outgrows the slot the geometry
     /// planned, pushing the play row past the artwork and the gradient —
@@ -90,6 +105,7 @@ struct MovieDetailView: View {
             await model.load(card: card, settings: settings)
             refreshResume()
         }
+        .navigationDestination(item: $openCard) { MovieDetailView(card: $0) }
         .sheet(isPresented: $showWeb) {
             if let url = model.pageURL { InAppWebView(url: url, title: card.displayCode) }
         }
@@ -225,6 +241,10 @@ struct MovieDetailView: View {
                 if !detail.casts.isEmpty { linkSection("演员", detail.casts) }
                 if let summary = detail.summary, !summary.isEmpty { summarySection(summary) }
                 magnetsSection(detail)
+                if detail.commentsURL != nil { commentsSection(detail) }
+                if detail.relatedListsURL != nil { relatedListsSection(detail) }
+                if !detail.alsoStarred.isEmpty { cardStripSection("她/他还出演过", detail.alsoStarred) }
+                if !detail.relatedWorks.isEmpty { cardStripSection("相关作品", detail.relatedWorks) }
             }
             .padding(.top, 26)
             .padding(.bottom, 40)
@@ -785,6 +805,168 @@ struct MovieDetailView: View {
     }
 
     @ViewBuilder
+    // MARK: Detail extras （评论 / 相关清单 / 还出演过 / 相关作品）
+
+    private func commentsSection(_ detail: MovieDetail) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            GlassSectionHeader(title: "评论", icon: "text.bubble", badge: detail.commentsCount.map { "\($0)" }, trailingTitle: nil)
+            if commentsBusy && comments.isEmpty {
+                ProgressView().frame(maxWidth: .infinity)
+            } else if comments.isEmpty {
+                Text(commentsFallback ?? "暂无评论。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(comments) { comment in
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack {
+                        Text(comment.author).font(.subheadline.weight(.semibold))
+                        Spacer()
+                        if let date = comment.dateText {
+                            Text(date).font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                    Text(comment.body).font(.subheadline)
+                }
+                .padding(.vertical, 4)
+                .onAppear {
+                    if comment.id == comments.last?.id && commentsNext != nil {
+                        Task { await loadComments(detail, page: commentsNext) }
+                    }
+                }
+            }
+            if commentsLoginNote {
+                Text("登录后可查看更多评论。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            if commentsBusy && !comments.isEmpty {
+                ProgressView().frame(maxWidth: .infinity)
+            }
+        }
+        .task(id: detail.commentsURL) {
+            if !commentsLoaded { await loadComments(detail, page: nil) }
+        }
+    }
+
+    private func relatedListsSection(_ detail: MovieDetail) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            GlassSectionHeader(title: "相关清单", icon: "list.bullet.rectangle", trailingTitle: nil)
+            if listsBusy && relatedRows.isEmpty {
+                ProgressView().frame(maxWidth: .infinity)
+            } else if relatedRows.isEmpty && listsLoaded {
+                Text("暂无相关清单。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(relatedRows) { row in
+                NavigationLink {
+                    CatalogListView(title: row.name, path: row.href)
+                } label: {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(row.name)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(AVFanTheme.accent)
+                            .multilineTextAlignment(.leading)
+                        Text(listRowMeta(row))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(10)
+                    .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .onAppear {
+                    if row.id == relatedRows.last?.id && listsNext != nil {
+                        Task { await loadRelatedLists(detail, page: listsNext) }
+                    }
+                }
+            }
+            if listsBusy && !relatedRows.isEmpty {
+                ProgressView().frame(maxWidth: .infinity)
+            }
+        }
+        .task(id: detail.relatedListsURL) {
+            if !listsLoaded { await loadRelatedLists(detail, page: nil) }
+        }
+    }
+
+    private func listRowMeta(_ row: RelatedListRow) -> String {
+        var parts: [String] = []
+        if let movies = row.moviesCount { parts.append("\(movies)部作品") }
+        if let views = row.viewsCount { parts.append("被查看\(views)次") }
+        return parts.joined(separator: "，")
+    }
+
+    private func cardStripSection(_ title: String, _ cards: [MovieCard]) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            GlassSectionHeader(title: title, icon: "film.stack", trailingTitle: nil)
+            MovieGrid(cards: cards, onSelect: { openCard = $0 })
+        }
+    }
+
+    private func loadComments(_ detail: MovieDetail, page: Int?) async {
+        guard let base = detail.commentsURL, !commentsBusy else { return }
+        commentsBusy = true
+        defer { commentsBusy = false }
+        var path = base
+        if let page {
+            path += (base.contains("?") ? "&" : "?") + "page=\(page)"
+        }
+        do {
+            let fragment = try await SiteClient.shared.fragment(
+                for: SiteClient.shared.catalogURL(path: path),
+                csrf: detail.library?.csrfToken
+            )
+            let parsed = await HTMLParser.detached { HTMLParser.movieComments(in: fragment) }
+            if page == nil {
+                comments = parsed
+                if parsed.isEmpty {
+                    let text = HTMLParser.stripTags(fragment)
+                    commentsFallback = text.isEmpty ? nil : text
+                }
+                commentsLoginNote = fragment.contains("请登录")
+            } else {
+                let known = Set(comments.map(\.id))
+                comments += parsed.filter { !known.contains($0.id) }
+            }
+            commentsNext = await HTMLParser.detached { HTMLParser.fragmentNextPage(in: fragment) }
+            commentsLoaded = true
+        } catch {
+            commentsNext = nil
+            commentsLoaded = true
+        }
+    }
+
+    private func loadRelatedLists(_ detail: MovieDetail, page: Int?) async {
+        guard let base = detail.relatedListsURL, !listsBusy else { return }
+        listsBusy = true
+        defer { listsBusy = false }
+        var path = base
+        if let page {
+            path += (base.contains("?") ? "&" : "?") + "page=\(page)"
+        }
+        do {
+            let fragment = try await SiteClient.shared.fragment(
+                for: SiteClient.shared.catalogURL(path: path),
+                csrf: detail.library?.csrfToken
+            )
+            let parsed = await HTMLParser.detached { HTMLParser.relatedListRows(in: fragment) }
+            if page == nil {
+                relatedRows = parsed
+            } else {
+                let known = Set(relatedRows.map(\.id))
+                relatedRows += parsed.filter { !known.contains($0.id) }
+            }
+            listsNext = await HTMLParser.detached { HTMLParser.fragmentNextPage(in: fragment) }
+            listsLoaded = true
+        } catch {
+            listsNext = nil
+            listsLoaded = true
+        }
+    }
+
     private func magnetsSection(_ detail: MovieDetail) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             GlassSectionHeader(title: "磁力链接", icon: "link", badge: "\(detail.magnets.count)", trailingTitle: nil)
@@ -1260,12 +1442,41 @@ struct TrailerPlayerView: View {
     let pageURL: URL?
     let title: String
     let poster: String?
+    @State private var failed = false
+    @State private var reloadTick = 0
+    @State private var showLogin = false
 
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
-            TrailerVideoWebView(url: url, poster: poster, baseURL: pageURL)
+            TrailerVideoWebView(url: url, poster: poster, baseURL: pageURL, onPlaybackError: { failed = true })
+                .id(reloadTick)
                 .ignoresSafeArea()
+            if failed {
+                VStack(spacing: 14) {
+                    Image(systemName: "exclamationmark.triangle")
+                        .font(.system(size: 34))
+                        .foregroundStyle(.orange)
+                    Text("预告片加载失败")
+                        .font(.headline)
+                        .foregroundStyle(.white)
+                    Text("可能需要登录后才能播放，或这部片在网站上本身没有可播的预告。")
+                        .font(.footnote)
+                        .foregroundStyle(.white.opacity(0.75))
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 40)
+                    HStack(spacing: 12) {
+                        Button("登录") { showLogin = true }
+                            .buttonStyle(.borderedProminent)
+                        Button("重试") {
+                            failed = false
+                            reloadTick += 1
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(.white)
+                    }
+                }
+            }
             VStack {
                 HStack(spacing: 14) {
                     Button { dismiss() } label: {
@@ -1286,6 +1497,11 @@ struct TrailerPlayerView: View {
                 Spacer()
             }
         }
+        .sheet(isPresented: $showLogin, onDismiss: {
+            // A fresh login may be exactly what the CDN needed.
+            failed = false
+            reloadTick += 1
+        }) { SiteLoginView() }
     }
 }
 

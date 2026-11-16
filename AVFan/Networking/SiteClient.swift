@@ -61,10 +61,16 @@ actor SiteClient {
     }
 
     nonisolated func searchURL(query: String) -> URL {
+        searchURL(query: query, st: "all")
+    }
+
+    /// Search URL for one result type (build 24): the site's own
+    /// st values — all / movie / cast / series / maker / director.
+    nonisolated func searchURL(query: String, st: String) -> URL {
         var components = URLComponents(string: "https://avfan.com/search")!
         components.queryItems = [
             URLQueryItem(name: "q", value: query),
-            URLQueryItem(name: "st", value: "all"),
+            URLQueryItem(name: "st", value: st),
         ]
         return components.url!
     }

@@ -47,12 +47,21 @@ struct TrailerVideoWebView: UIViewRepresentable {
     let url: URL
     let poster: String?
     let baseURL: URL?
+    /// Called when the media element reports an error or never
+    /// becomes playable (build 24: the owner hit the bare WebKit
+    /// error glyph with no explanation).
+    var onPlaybackError: (() -> Void)? = nil
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onPlaybackError: onPlaybackError)
+    }
 
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .default()
         config.allowsInlineMediaPlayback = true
         config.mediaTypesRequiringUserActionForPlayback = []
+        config.userContentController.add(context.coordinator, name: "trailer")
         let view = WKWebView(frame: .zero, configuration: config)
         view.customUserAgent = SiteClient.mobileSafariUA
         view.isOpaque = false
@@ -63,7 +72,14 @@ struct TrailerVideoWebView: UIViewRepresentable {
         <!DOCTYPE html><html><head><meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
         <style>html,body{margin:0;padding:0;height:100%;background:#000}video{width:100%;height:100%;object-fit:contain;display:block}</style>
-        </head><body><video src="\(escape(url.absoluteString))"\(posterAttr) controls autoplay playsinline></video></body></html>
+        </head><body><video src="\(escape(url.absoluteString))"\(posterAttr) controls autoplay playsinline></video>
+        <script>
+        var v = document.querySelector('video');
+        function fail(){ try { window.webkit.messageHandlers.trailer.postMessage('error'); } catch(e) {} }
+        v.addEventListener('error', fail, true);
+        setTimeout(function(){ if (v.readyState < 2) fail(); }, 15000);
+        </script>
+        </body></html>
         """
         view.loadHTMLString(html, baseURL: baseURL)
         return view
@@ -75,5 +91,20 @@ struct TrailerVideoWebView: UIViewRepresentable {
         value
             .replacingOccurrences(of: "&", with: "&amp;")
             .replacingOccurrences(of: "\"", with: "&quot;")
+    }
+
+    final class Coordinator: NSObject, WKScriptMessageHandler {
+        let onPlaybackError: (() -> Void)?
+        private var reported = false
+
+        init(onPlaybackError: (() -> Void)?) {
+            self.onPlaybackError = onPlaybackError
+        }
+
+        func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+            guard !reported else { return }
+            reported = true
+            DispatchQueue.main.async { [weak self] in self?.onPlaybackError?() }
+        }
     }
 }

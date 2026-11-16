@@ -112,6 +112,16 @@ struct MovieDetail: Hashable {
     /// Account-library wiring parsed from the detail page's own markup
     /// （想看/看过/保存至清单）; nil when the page carries no such block.
     var library: LibraryPageState? = nil
+    /// Lazy fragment endpoints declared by the detail page's tabs
+    /// (build 24): the comments tab loads data-comments-url, the
+    /// related-lists tab loads #related-lists' data-url.
+    var commentsURL: String? = nil
+    var relatedListsURL: String? = nil
+    var commentsCount: Int? = nil
+    /// Cards under the page's 她/他还出演过 and 相关作品 headings
+    /// (six each on the site, no "more" link).
+    var alsoStarred: [MovieCard] = []
+    var relatedWorks: [MovieCard] = []
 
     var displayCode: String { code ?? pathID }
     var displayTitle: String { title.isEmpty ? displayCode : title }
@@ -447,6 +457,30 @@ struct CastProfile: Hashable {
     var reviewListURL: String?
     var ownReviewID: String?
     var ownReviewDestroyURL: String?
+    /// Whether this page was served in the signed-in state. Guest
+    /// pages render the follow/collect buttons as login triggers
+    /// without the model wiring, so the view needs to know.
+    var signedIn: Bool = false
+}
+
+/// One movie comment from the detail page's comments fragment:
+/// author, body, and the site's short date (MM-DD, no year).
+struct MovieComment: Identifiable, Hashable {
+    var author: String
+    var body: String
+    var dateText: String?
+
+    var id: String { author + "|" + body + "|" + (dateText ?? "") }
+}
+
+/// One row of the detail page's related-lists fragment.
+struct RelatedListRow: Identifiable, Hashable {
+    var name: String
+    var href: String
+    var moviesCount: Int?
+    var viewsCount: Int?
+
+    var id: String { href }
 }
 
 /// One short review of a cast, parsed from the list fragment.
