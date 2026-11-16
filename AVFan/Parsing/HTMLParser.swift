@@ -1312,35 +1312,20 @@ enum HTMLParser {
         return cards
     }
 
-    /// Hot-search terms from the search landing page's 热门搜索
-    /// section (build 30): the chips are anchors to the search URL
-    /// with q=<term>; the term is the anchor's visible text (the
-    /// decoded q value when the text is empty). Page order is
-    /// preserved — the site ranks them, and the first three get
-    /// the coloured treatment in the UI.
-    static func hotSearchTerms(in html: String) -> [String] {
-        // Comments are not content: the marker word can appear in
-        // one long before the section itself.
-        let cleaned = html.replacingOccurrences(
-            of: "<!--[\\s\\S]*?-->", with: "", options: .regularExpression)
-        guard let start = cleaned.range(of: "热门搜索") else { return [] }
-        let slice = String(cleaned[start.lowerBound...].prefix(24000))
+    /// Hot-search keywords from the site's /hot_searches JSON
+    /// (build 31): the search panel renders its 热门搜索 chips
+    /// client-side from {keywords: [...]}, in ranking order —
+    /// the terms never appear in any page's HTML. Cleaned the
+    /// same way the panel treats them: trimmed, de-duplicated,
+    /// capped.
+    static func hotSearchKeywords(_ json: [String: Any]?) -> [String] {
+        guard let raw = json?["keywords"] as? [Any] else { return [] }
         var out: [String] = []
         var seen = Set<String>()
-        guard let regex = try? NSRegularExpression(
-            pattern: "<a[^>]+href=\"([^\"]*[?&]q=[^\"]*)\"[^>]*>([\\s\\S]*?)</a>",
-            options: [.caseInsensitive]
-        ) else { return [] }
-        let ns = slice as NSString
-        for match in regex.matches(in: slice, range: NSRange(location: 0, length: ns.length)) {
-            let href = unescape(ns.substring(with: match.range(at: 1)))
-            var term = stripTags(ns.substring(with: match.range(at: 2)))
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            if term.isEmpty, let comps = URLComponents(string: href),
-               let q = comps.queryItems?.first(where: { $0.name == "q" })?.value {
-                term = q.trimmingCharacters(in: .whitespacesAndNewlines)
-            }
-            guard !term.isEmpty, term.count <= 16 else { continue }
+        for item in raw {
+            guard let term = (item as? String)?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+                  !term.isEmpty, term.count <= 16 else { continue }
             guard seen.insert(term.lowercased()).inserted else { continue }
             out.append(term)
             if out.count >= 48 { break }
@@ -1348,9 +1333,6 @@ enum HTMLParser {
         return out
     }
 
-    /// Whether the page carries a trailer player trigger at all
-    /// (the trailer-player Stimulus component or its src value),
-    /// regardless of whether a direct media URL parsed out.
     static func hasTrailerAffordance(in html: String) -> Bool {
         html.contains("trailer-player")
             || html.contains("data-trailer")

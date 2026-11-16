@@ -41,9 +41,10 @@ struct SearchView: View {
     ]
     @State private var castResults: [CastCard] = []
     @State private var linkResults: [NamedLink] = []
-    /// Hot searches (build 30): the site's own 热门搜索 ranking,
-    /// parsed from the search landing page and shown as chips in
-    /// the idle state, mirroring the website's search home.
+    /// Hot searches (build 30, source corrected in 31): the
+    /// site's own 热门搜索 ranking from its /hot_searches JSON,
+    /// shown as chips in the idle state like the website's
+    /// search panel.
     @State private var hotTerms: [String] = []
     @State private var hotLoaded = false
 
@@ -258,21 +259,21 @@ struct SearchView: View {
         }
     }
 
-    /// Fetch the search landing page once and read its 热门搜索
-    /// ranking. A failure just leaves the section hidden — the
-    /// search box itself is unaffected.
+    /// Fetch the site's hot-search keywords once. The website's
+    /// search panel loads them from /hot_searches as JSON and
+    /// renders the chips client-side — an empty-query search
+    /// URL just redirects to the homepage, whose HTML contains
+    /// no trace of the terms (build 30 shipped that dead end:
+    /// the section stayed blank). A failure leaves the section
+    /// hidden; the search box itself is unaffected.
     private func loadHotSearches() async {
         guard !hotLoaded else { return }
         hotLoaded = true
-        let url = SiteClient.shared.searchURL(query: "")
-        guard let result = try? await SiteClient.shared.html(
-            for: url,
-            locale: settings.locale,
-            ageCookie: settings.legalAgeCookie,
-            allowWebViewFallback: true,
-            expectCatalog: false
-        ) else { return }
-        hotTerms = await HTMLParser.detached { HTMLParser.hotSearchTerms(in: result.html) }
+        guard let url = URL(string: "https://avfan.com/hot_searches"),
+              let result = try? await SiteClient.shared.jsonRequest(
+                method: "GET", url: url, csrf: nil
+              ), result.status == 200 else { return }
+        hotTerms = HTMLParser.hotSearchKeywords(result.json)
     }
 
     private func search() async {
