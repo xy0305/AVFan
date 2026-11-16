@@ -221,6 +221,34 @@ final class PosterImageModel: ObservableObject {
     }
 }
 
+/// Whole-image presentation for covers with no HQ source (build 18):
+/// the original bitmap at its native aspect over a blurred, darkened
+/// fill of itself. Never stretched, never slice-zoomed — a landscape
+/// page cover in a tall hero otherwise gets magnified several times
+/// and cropped to a narrow band, which looks terrible.
+struct NativeFitImage: View {
+    let image: UIImage
+    let size: CGSize
+
+    var body: some View {
+        ZStack {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFill()
+                .frame(width: size.width, height: size.height)
+                .scaleEffect(1.3)
+                .blur(radius: 24)
+                .brightness(-0.2)
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFit()
+                .frame(width: size.width, height: size.height)
+        }
+        .frame(width: size.width, height: size.height)
+        .clipped()
+    }
+}
+
 /// Front-cropped cover that paints the original bitmap with a 332 crop window.
 struct CoverImage: View {
     let url: String?
@@ -229,6 +257,11 @@ struct CoverImage: View {
     var anchorY: CGFloat = 0.22
     var allowUpscale: Bool = false
     var validatedJacket: Bool = false
+    /// Heroes only (build 18): when the loaded cover is a plain
+    /// landscape original with no HQ jacket/portrait behind it, show
+    /// the whole image at its native aspect instead of force-filling
+    /// the tall hero frame.
+    var fitWholeImage: Bool = false
 
     @StateObject private var model = PosterImageModel()
     @State private var lastURL: String?
@@ -238,8 +271,12 @@ struct CoverImage: View {
             ZStack {
                 placeholder
                 if let image = model.image {
-                    HomeAnchoredFill(image: image, size: proxy.size, source: model.resolvedURL ?? url,
-                                     anchorY: anchorY, allowUpscale: allowUpscale)
+                    if fitWholeImage, Self.shouldShowWhole(image: image, source: model.resolvedURL ?? url) {
+                        NativeFitImage(image: image, size: proxy.size)
+                    } else {
+                        HomeAnchoredFill(image: image, size: proxy.size, source: model.resolvedURL ?? url,
+                                         anchorY: anchorY, allowUpscale: allowUpscale)
+                    }
                 } else if !model.failed {
                     ProgressView().tint(.secondary)
                 }
@@ -247,6 +284,15 @@ struct CoverImage: View {
             .onAppear { reload(size: proxy.size) }
             .onChange(of: url) { _, _ in reload(size: proxy.size) }
         }
+    }
+
+    private static func shouldShowWhole(image: UIImage, source: String?) -> Bool {
+        guard let cg = image.cgImage, cg.width > cg.height else { return false }
+        if let source {
+            if CoverURLPolicy.isOfficialFrontPortrait(source) { return false }
+            if HeroFrontWindow.cropRect(image: image, source: source) != nil { return false }
+        }
+        return true
     }
 
     private func reload(size: CGSize) {

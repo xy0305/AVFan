@@ -210,7 +210,7 @@ struct MovieDetailView: View {
         let imageHeight = geometry.imageHeight
         let titleTop = geometry.titleTop
         return ZStack(alignment: .top) {
-            CoverImage(url: detail.coverURL ?? card.coverURL, code: detail.code ?? card.code, anchorY: 0.18, allowUpscale: true)
+            CoverImage(url: detail.coverURL ?? card.coverURL, code: detail.code ?? card.code, anchorY: 0.18, allowUpscale: true, fitWholeImage: true)
                 .frame(width: width, height: imageHeight, alignment: .top)
                 .clipped()
                 .accessibilityHidden(true)
