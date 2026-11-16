@@ -463,14 +463,28 @@ struct CastProfile: Hashable {
     var signedIn: Bool = false
 }
 
+/// The 收藏 (collect) wiring a list page carries for the list
+/// itself — the same `model` controller contract as cast pages
+/// (build 25).
+struct ListCollectState {
+    var collectURL: String?
+    var uncollectURL: String?
+    var modelName: String?
+    var modelID: String?
+    var isCollected: Bool = false
+    var csrfToken: String?
+    var signedIn: Bool = false
+}
+
 /// One movie comment from the detail page's comments fragment:
 /// author, body, and the site's short date (MM-DD, no year).
 struct MovieComment: Identifiable, Hashable {
     var author: String
     var body: String
     var dateText: String?
+    var commentID: String?
 
-    var id: String { author + "|" + body + "|" + (dateText ?? "") }
+    var id: String { commentID ?? (author + "|" + body + "|" + (dateText ?? "")) }
 }
 
 /// One row of the detail page's related-lists fragment.

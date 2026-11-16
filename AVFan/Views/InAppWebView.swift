@@ -47,13 +47,16 @@ struct TrailerVideoWebView: UIViewRepresentable {
     let url: URL
     let poster: String?
     let baseURL: URL?
-    /// Called when the media element reports an error or never
-    /// becomes playable (build 24: the owner hit the bare WebKit
-    /// error glyph with no explanation).
+    /// Called ONLY on a real media error (build 25: build 24's
+    /// 15-second readyState timeout false-fired on slow loads and
+    /// the overlay then claimed login was the problem while the
+    /// owner was already logged in).
     var onPlaybackError: (() -> Void)? = nil
+    /// Called when the media can actually play; clears a failure.
+    var onPlaybackReady: (() -> Void)? = nil
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(onPlaybackError: onPlaybackError)
+        Coordinator(onPlaybackError: onPlaybackError, onPlaybackReady: onPlaybackReady)
     }
 
     func makeUIView(context: Context) -> WKWebView {
@@ -75,9 +78,13 @@ struct TrailerVideoWebView: UIViewRepresentable {
         </head><body><video src="\(escape(url.absoluteString))"\(posterAttr) controls autoplay playsinline></video>
         <script>
         var v = document.querySelector('video');
-        function fail(){ try { window.webkit.messageHandlers.trailer.postMessage('error'); } catch(e) {} }
+        function post(m){ try { window.webkit.messageHandlers.trailer.postMessage(m); } catch(e) {} }
+        function fail(){ post('error'); }
+        function ok(){ post('ok'); }
         v.addEventListener('error', fail, true);
-        setTimeout(function(){ if (v.readyState < 2) fail(); }, 15000);
+        v.addEventListener('canplay', ok);
+        v.addEventListener('playing', ok);
+        setTimeout(function(){ if (v.error || (v.readyState === 0 && v.networkState === 3)) fail(); }, 30000);
         </script>
         </body></html>
         """
@@ -95,16 +102,26 @@ struct TrailerVideoWebView: UIViewRepresentable {
 
     final class Coordinator: NSObject, WKScriptMessageHandler {
         let onPlaybackError: (() -> Void)?
-        private var reported = false
+        let onPlaybackReady: (() -> Void)?
+        private var errorReported = false
 
-        init(onPlaybackError: (() -> Void)?) {
+        init(onPlaybackError: (() -> Void)?, onPlaybackReady: (() -> Void)?) {
             self.onPlaybackError = onPlaybackError
+            self.onPlaybackReady = onPlaybackReady
         }
 
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-            guard !reported else { return }
-            reported = true
-            DispatchQueue.main.async { [weak self] in self?.onPlaybackError?() }
+            let body = message.body as? String
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                if body == "ok" {
+                    self.errorReported = false
+                    self.onPlaybackReady?()
+                } else if !self.errorReported {
+                    self.errorReported = true
+                    self.onPlaybackError?()
+                }
+            }
         }
     }
 }

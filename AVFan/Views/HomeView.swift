@@ -715,6 +715,15 @@ struct CatalogListView: View {
     /// Bumped after a filter reload so the list scrolls back to its top
     /// (the ScrollViewReader's proxy is not in scope inside the sheet).
     @State private var topScrollTick = 0
+    /// List pages: the 收藏 wiring for the list itself, parsed from
+    /// the page (build 25 — the site shows a 收藏 button on list
+    /// pages; collecting syncs to the account like cast collects).
+    @State private var collectState: ListCollectState?
+    @State private var collectedOverride: Bool?
+    @State private var collectBusy = false
+    @State private var showLogin = false
+    @State private var toast: String?
+    private var isListPage: Bool { path.contains("/lists/") }
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -722,6 +731,25 @@ struct CatalogListView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     FetchStatusBanner(source: source, error: errorMessage, webURL: pageURL) { showWeb = true }
                         .id("catalogTop")
+                    if isListPage, let collectState {
+                        let isOn = collectedOverride ?? collectState.isCollected
+                        Button {
+                            Task { await toggleCollect(collectState) }
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: isOn ? "bookmark.fill" : "bookmark")
+                                Text(isOn ? "已收藏" : "收藏清单")
+                            }
+                            .font(.subheadline.weight(.semibold))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .background(isOn ? Color(.secondarySystemBackground) : AVFanTheme.accent,
+                                        in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                            .foregroundStyle(isOn ? .primary : .white)
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(collectBusy)
+                    }
                     if loading && cards.isEmpty { ProgressView().frame(maxWidth: .infinity, minHeight: 180) }
                     MovieGrid(cards: cards, columns: layoutColumns, onSelect: { openCard = $0 }, onReachEnd: { Task { await loadNext() } })
                     if loading && !cards.isEmpty {
@@ -752,6 +780,20 @@ struct CatalogListView: View {
         .sheet(isPresented: $showWeb) {
             if let pageURL { InAppWebView(url: pageURL, title: title) }
         }
+        .sheet(isPresented: $showLogin, onDismiss: {
+            Task { await loadPage(activePath.isEmpty ? path : activePath, page: 1) }
+        }) { SiteLoginView() }
+        .overlay(alignment: .bottom) {
+            if let toast {
+                Text(toast)
+                    .font(.subheadline.weight(.semibold))
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .background(.black.opacity(0.82), in: Capsule())
+                    .foregroundStyle(.white)
+                    .padding(.bottom, 26)
+            }
+        }
         .sheet(isPresented: $showFilters) {
             if let filterForm {
                 FilterSheet(form: filterForm, selections: selections) { newSelections in
@@ -780,6 +822,44 @@ struct CatalogListView: View {
         await loadPage(target, page: currentPage + 1, append: true)
     }
 
+    /// Collect / uncollect this list on the account (the site list
+    /// page's own 收藏 button contract). Guest pages carry no
+    /// wiring — like the site, tapping asks for login first.
+    private func toggleCollect(_ state: ListCollectState) async {
+        let isOn = collectedOverride ?? state.isCollected
+        if !state.signedIn {
+            showLogin = true
+            return
+        }
+        guard !collectBusy else { return }
+        collectBusy = true
+        defer { collectBusy = false }
+        let outcome: LibrarySync.Outcome
+        if isOn {
+            guard let url = state.uncollectURL else { showToast("页面没有给出取消收藏的接线"); return }
+            outcome = await LibrarySync.modelUndo(url: url, csrf: state.csrfToken)
+        } else {
+            guard let url = state.collectURL else { showToast("页面没有给出收藏的接线"); return }
+            outcome = await LibrarySync.modelAction(url: url, model: state.modelName, modelID: state.modelID, csrf: state.csrfToken)
+        }
+        if outcome.success {
+            collectedOverride = !isOn
+            showToast(isOn ? "已取消收藏" : "已收藏到账号")
+        } else if outcome.needsLogin {
+            showLogin = true
+        } else {
+            showToast(outcome.message ?? "操作失败，请稍后再试")
+        }
+    }
+
+    private func showToast(_ message: String) {
+        toast = message
+        Task {
+            try? await Task.sleep(nanoseconds: 2_200_000_000)
+            if toast == message { toast = nil }
+        }
+    }
+
     private func loadPage(_ fetchPath: String, page: Int, append: Bool = false) async {
         loading = true
         defer { loading = false }
@@ -797,7 +877,8 @@ struct CatalogListView: View {
             let parsed = await HTMLParser.detached {
                 (cards: HTMLParser.movieCards(in: html),
                  form: HTMLParser.listFilterForm(in: html),
-                 next: HTMLParser.autoNextPath(in: html, page: page, path: fetchPath))
+                 next: HTMLParser.autoNextPath(in: html, page: page, path: fetchPath),
+                 collect: HTMLParser.listCollectState(in: html))
             }
             if append {
                 let known = Set(cards.map(\.pathID))
@@ -807,6 +888,10 @@ struct CatalogListView: View {
             } else {
                 cards = parsed.cards
                 nextPage = parsed.next
+                if isListPage {
+                    collectState = parsed.collect
+                    collectedOverride = nil
+                }
             }
             currentPage = page
             if filterForm == nil, let form = parsed.form {

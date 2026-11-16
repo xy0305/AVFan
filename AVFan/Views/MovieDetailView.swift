@@ -37,7 +37,9 @@ struct MovieDetailView: View {
     @State private var openCard: MovieCard?
     @State private var comments: [MovieComment] = []
     @State private var commentsFallback: String?
-    @State private var commentsNext: Int?
+    /// Cursor for the comments load-more (sort_by/last_value/last_id),
+    /// the site's own scheme — not page numbers (build 25).
+    @State private var commentsCursor: (sortBy: String, lastValue: String, lastId: String)?
     @State private var commentsBusy = false
     @State private var commentsLoaded = false
     @State private var commentsLoginNote = false
@@ -830,8 +832,8 @@ struct MovieDetailView: View {
                 }
                 .padding(.vertical, 4)
                 .onAppear {
-                    if comment.id == comments.last?.id && commentsNext != nil {
-                        Task { await loadComments(detail, page: commentsNext) }
+                    if comment.id == comments.last?.id && commentsCursor != nil {
+                        Task { await loadComments(detail, cursor: commentsCursor) }
                     }
                 }
             }
@@ -840,12 +842,20 @@ struct MovieDetailView: View {
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
+            if commentsCursor != nil && !comments.isEmpty {
+                Button("加载更多") {
+                    Task { await loadComments(detail, cursor: commentsCursor) }
+                }
+                .font(.subheadline.weight(.semibold))
+                .frame(maxWidth: .infinity)
+                .disabled(commentsBusy)
+            }
             if commentsBusy && !comments.isEmpty {
                 ProgressView().frame(maxWidth: .infinity)
             }
         }
         .task(id: detail.commentsURL) {
-            if !commentsLoaded { await loadComments(detail, page: nil) }
+            if !commentsLoaded { await loadComments(detail, cursor: nil) }
         }
     }
 
@@ -883,6 +893,14 @@ struct MovieDetailView: View {
                     }
                 }
             }
+            if listsNext != nil && !relatedRows.isEmpty {
+                Button("加载更多") {
+                    Task { await loadRelatedLists(detail, page: listsNext) }
+                }
+                .font(.subheadline.weight(.semibold))
+                .frame(maxWidth: .infinity)
+                .disabled(listsBusy)
+            }
             if listsBusy && !relatedRows.isEmpty {
                 ProgressView().frame(maxWidth: .infinity)
             }
@@ -906,13 +924,19 @@ struct MovieDetailView: View {
         }
     }
 
-    private func loadComments(_ detail: MovieDetail, page: Int?) async {
+    /// Comments: first fetch uses the fragment URL the page itself
+    /// declared; further batches follow the fragment's own cursor
+    /// (sort_by/last_value/last_id — the comment controller's
+    /// loadMore, build 25; build 24 wrongly used page numbers).
+    private func loadComments(_ detail: MovieDetail, cursor: (sortBy: String, lastValue: String, lastId: String)?) async {
         guard let base = detail.commentsURL, !commentsBusy else { return }
         commentsBusy = true
         defer { commentsBusy = false }
         var path = base
-        if let page {
-            path += (base.contains("?") ? "&" : "?") + "page=\(page)"
+        if let cursor {
+            let enc = { (s: String) in s.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? s }
+            path += (base.contains("?") ? "&" : "?")
+                + "sort_by=\(enc(cursor.sortBy))&last_value=\(enc(cursor.lastValue))&last_id=\(enc(cursor.lastId))"
         }
         do {
             let fragment = try await SiteClient.shared.fragment(
@@ -920,7 +944,7 @@ struct MovieDetailView: View {
                 csrf: detail.library?.csrfToken
             )
             let parsed = await HTMLParser.detached { HTMLParser.movieComments(in: fragment) }
-            if page == nil {
+            if cursor == nil {
                 comments = parsed
                 if parsed.isEmpty {
                     let text = HTMLParser.stripTags(fragment)
@@ -931,10 +955,10 @@ struct MovieDetailView: View {
                 let known = Set(comments.map(\.id))
                 comments += parsed.filter { !known.contains($0.id) }
             }
-            commentsNext = await HTMLParser.detached { HTMLParser.fragmentNextPage(in: fragment) }
+            commentsCursor = await HTMLParser.detached { HTMLParser.commentsCursor(in: fragment) }
             commentsLoaded = true
         } catch {
-            commentsNext = nil
+            commentsCursor = nil
             commentsLoaded = true
         }
     }
@@ -1449,7 +1473,9 @@ struct TrailerPlayerView: View {
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
-            TrailerVideoWebView(url: url, poster: poster, baseURL: pageURL, onPlaybackError: { failed = true })
+            TrailerVideoWebView(url: url, poster: poster, baseURL: pageURL,
+                                onPlaybackError: { failed = true },
+                                onPlaybackReady: { failed = false })
                 .id(reloadTick)
                 .ignoresSafeArea()
             if failed {
@@ -1460,7 +1486,7 @@ struct TrailerPlayerView: View {
                     Text("预告片加载失败")
                         .font(.headline)
                         .foregroundStyle(.white)
-                    Text("可能需要登录后才能播放，或这部片在网站上本身没有可播的预告。")
+                    Text("这部片在网站上可能本身没有可播的预告，或视频源暂时不可用。已登录仍失败时，先在网站上确认这部片有预告。")
                         .font(.footnote)
                         .foregroundStyle(.white.opacity(0.75))
                         .multilineTextAlignment(.center)

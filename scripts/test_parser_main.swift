@@ -75,24 +75,43 @@ enum ParserTests {
         expect(detail.summary?.hasPrefix("デートして、温泉入って") == true, "summary from #description, got \(detail.summary?.prefix(20) ?? "nil")")
         expect(detail.commentsURL == "/zh-CN/movies/s6bNHCTN/comments", "comments url, got \(detail.commentsURL ?? "nil")")
         expect(detail.relatedListsURL == "/zh-CN/lists/related?movie_id=s6bNHCTN", "related lists url, got \(detail.relatedListsURL ?? "nil")")
+        // Build 25: real comment markup (div.comment-list-item +
+        // .username + cursor load-more), per the owner's screenshots
+        // and the site's comment controller.
         let commentsFragment = """
-        <div class="flex gap-3" id="comment_101"><a href="/zh-CN/users/alice">alice</a><p>拍得真好，值得收藏</p><span>11-15</span><a href="#">回复</a></div>
-        <div class="flex gap-3" id="comment_102"><a href="/zh-CN/users/bob">bob</a><p>烧的一逼</p><span>10-22</span><a href="#">回复</a></div>
+        <div class="comment-list-item flex gap-3" data-comment-comment-id-value="641745" data-controller="comment" data-url="/zh-CN/comments/641745/react"><span class="username">wangbibby</span><p>有点儿神似波多</p><span>09-28</span><a href="javascript:;" data-action="comment#openCommentModal" data-comment-id="641745" data-placeholder="回复 wangbibby">回复</a></div>
+        <div class="comment-list-item flex gap-3" data-comment-comment-id-value="641590" data-controller="comment" data-url="/zh-CN/comments/641590/react"><span class="username">superbprize821</span><p>牙口有点硬伤，肤色不算白但身材挺匀称</p><span>10-05</span><a href="javascript:;" data-action="comment#openCommentModal" data-comment-id="641590" data-placeholder="回复 superbprize821">回复</a></div>
+        <div class="load-more-comments"><a href="javascript:;" data-action="comment#loadMore" data-sort-by="likes_count" data-last-value="0" data-last-id="641590">加载更多</a></div>
         """
         let parsedComments = HTMLParser.movieComments(in: commentsFragment)
         expect(parsedComments.count == 2, "comments count, got \(parsedComments.count)")
-        expect(parsedComments.first?.author == "alice", "comment author, got \(parsedComments.first?.author ?? "nil")")
-        expect(parsedComments.first?.body.contains("拍得真好") == true, "comment body, got \(parsedComments.first?.body ?? "nil")")
-        expect(parsedComments.first?.dateText == "11-15", "comment date, got \(parsedComments.first?.dateText ?? "nil")")
+        expect(parsedComments.first?.author == "wangbibby", "comment author, got \(parsedComments.first?.author ?? "nil")")
+        expect(parsedComments.first?.body.contains("神似波多") == true, "comment body, got \(parsedComments.first?.body ?? "nil")")
+        expect(parsedComments.first?.body.contains("data-placeholder") == false, "comment body clean, got \(parsedComments.first?.body ?? "nil")")
+        expect(parsedComments.first?.dateText == "09-28", "comment date, got \(parsedComments.first?.dateText ?? "nil")")
+        expect(parsedComments.first?.commentID == "641745", "comment id, got \(parsedComments.first?.commentID ?? "nil")")
+        let cursor = HTMLParser.commentsCursor(in: commentsFragment)
+        expect(cursor?.sortBy == "likes_count" && cursor?.lastValue == "0" && cursor?.lastId == "641590", "comments cursor, got \(String(describing: cursor))")
         let listsFragment = """
         <div class="row"><a href="/zh-CN/lists/9rX8uDnr">碧那精选</a><span>558部作品</span><span>被查看60次</span></div>
         <div class="row"><a href="/zh-CN/lists/AbCdEfGh">家庭伦理</a><span>22部作品</span><span>被查看0次</span></div>
+        <div class="row"><a href="/zh-CN/lists/xYz-123_">带符号清单</a><span>7部作品</span><span>被查看3次</span></div>
         <button data-next-page="2">下一页</button>
         """
         let parsedRows = HTMLParser.relatedListRows(in: listsFragment)
-        expect(parsedRows.count == 2, "related rows, got \(parsedRows.count)")
+        expect(parsedRows.count == 3, "related rows, got \(parsedRows.count)")
         expect(parsedRows.first?.name == "碧那精选" && parsedRows.first?.moviesCount == 558 && parsedRows.first?.viewsCount == 60, "related row fields")
+        expect(parsedRows.last?.name == "带符号清单", "related row loose id, got \(parsedRows.last?.name ?? "nil")")
         expect(HTMLParser.fragmentNextPage(in: listsFragment) == 2, "lists next page")
+        // Build 25: a list page's own collect wiring.
+        let listPageFragment = """
+        <meta name="csrf-token" content="tok123">
+        <button data-model-target="btnCollect" data-url="/zh-CN/lists/xYz-123_/collect" data-model="List" data-model-id="42">收藏</button>
+        <button class="hidden" data-model-target="btnUncollect" data-url="/zh-CN/lists/xYz-123_/collect">已收藏</button>
+        """
+        let collectState = HTMLParser.listCollectState(in: listPageFragment)
+        expect(collectState.collectURL == "/zh-CN/lists/xYz-123_/collect" && collectState.modelName == "List" && collectState.modelID == "42", "list collect wiring, got \(String(describing: collectState.collectURL))")
+        expect(collectState.isCollected == false && collectState.csrfToken == "tok123", "list collect state")
         let typeFragment = """
         <a href="/zh-CN/search?q=JUR&st=movie">影片</a><a href="/zh-CN/search?q=JUR&st=cast">演员</a><a href="/zh-CN/search?q=JUR&st=series">系列</a>
         """

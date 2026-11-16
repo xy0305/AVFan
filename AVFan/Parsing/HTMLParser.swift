@@ -1210,46 +1210,59 @@ enum HTMLParser {
         return movieCards(in: slice).filter { seen.insert($0.pathID).inserted }.prefix(12).map { $0 }
     }
 
-    /// Movie comments from the comments fragment. Blocks are
-    /// delimited by the per-comment markers when present (comment
-    /// ids / like controllers); each block's first user anchor is
-    /// the author, its longest text the body, and an MM-DD or full
-    /// date the date. Returns [] when nothing is recognizable —
-    /// the view then falls back to the fragment's plain text.
+    /// Movie comments from the comments fragment (build 25,
+    /// rewritten against the real markup the owner's screenshots
+    /// exposed): each top-level comment is a
+    /// div.comment-list-item carrying
+    /// data-comment-comment-id-value; the author is its .username
+    /// element; the site's own load-more is cursor-based, see
+    /// commentsCursor(in:). All slicing is NSString-based — mixing
+    /// UTF-16 match offsets with String indices garbled the blocks
+    /// on CJK text in build 24.
     static func movieComments(in fragment: String) -> [MovieComment] {
-        let markerPattern = "(?:id=\"comment_\\d+\"|data-comment-id=\"\\d+\"|data-controller=\"comment-like\")"
-        guard let regex = try? NSRegularExpression(pattern: markerPattern) else { return [] }
+        guard let regex = try? NSRegularExpression(
+            pattern: "<div[^>]*class=\"[^\"]*comment-list-item[^\"]*\"[^>]*>",
+            options: [.caseInsensitive]
+        ) else { return [] }
         let ns = fragment as NSString
         let matches = regex.matches(in: fragment, range: NSRange(location: 0, length: ns.length))
         guard !matches.isEmpty else { return [] }
         var items: [MovieComment] = []
         for (index, match) in matches.enumerated() {
-            // A block runs from a bit before its marker (the item's
-            // root element) to the next marker.
-            var start = match.range.location
-            let backLimit = max(0, start - 400)
-            if let lt = fragment.range(of: "<", options: .backwards, range: fragment.index(fragment.startIndex, offsetBy: backLimit)..<fragment.index(fragment.startIndex, offsetBy: start)) {
-                start = fragment.distance(from: fragment.startIndex, to: lt.lowerBound)
-            }
+            let start = match.range.location
             let end = index + 1 < matches.count ? matches[index + 1].range.location : ns.length
             let block = ns.substring(with: NSRange(location: start, length: max(0, end - start)))
             var author = "匿名"
-            if let anchorRegex = try? NSRegularExpression(pattern: "<a[^>]+href=\"[^\"]*(?:users?/)[^\"]*\"[^>]*>([\\s\\S]*?)</a>", options: [.caseInsensitive]),
-               let anchor = anchorRegex.firstMatch(in: block, range: NSRange(location: 0, length: (block as NSString).length)) {
-                let name = stripTags((block as NSString).substring(with: anchor.range(at: 1)))
+            if let raw = firstMatch("class=\"[^\"]*username[^\"]*\"[^>]*>([\\s\\S]*?)<", in: block) {
+                let name = stripTags(raw)
                 if !name.isEmpty { author = name }
             }
+            let commentID = firstMatch("data-comment-comment-id-value=\"(\\d+)\"", in: block)
             let text = stripTags(block)
             let date = firstMatch(#"(?<!\d)(\d{4}-\d{2}-\d{2}|\d{1,2}-\d{1,2})(?!\d)"#, in: text)
             var body = text
             if author != "匿名", let r = body.range(of: author) { body.removeSubrange(r) }
             if let date, let r = body.range(of: date) { body.removeSubrange(r) }
-            if let r = body.range(of: "回复") { body = String(body[..<r.lowerBound]) }
+            for cut in ["回复", "加载更多", "查看回复", "收起回复", "举报"] {
+                if let r = body.range(of: cut) { body = String(body[..<r.lowerBound]) }
+            }
             body = body.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !body.isEmpty else { continue }
-            items.append(MovieComment(author: author, body: body, dateText: date))
+            items.append(MovieComment(author: author, body: body, dateText: date, commentID: commentID))
         }
         return items
+    }
+
+    /// The comments load-more cursor declared by the fragment's own
+    /// .load-more-comments anchor (the comment controller's
+    /// loadMore): the next fetch is
+    /// commentsURL?sort_by=<sortBy>&last_value=<lastValue>&last_id=<lastId>.
+    static func commentsCursor(in fragment: String) -> (sortBy: String, lastValue: String, lastId: String)? {
+        guard let tag = firstMatch("<a[^>]*data-action=\"comment#loadMore\"[^>]*>", in: fragment),
+              let sortBy = firstMatch("data-sort-by=\"([^\"]*)\"", in: tag),
+              let lastValue = firstMatch("data-last-value=\"([^\"]*)\"", in: tag),
+              let lastId = firstMatch("data-last-id=\"([^\"]*)\"", in: tag) else { return nil }
+        return (sortBy, lastValue, lastId)
     }
 
     /// The next comments/lists page declared inside a fragment:
@@ -1269,7 +1282,7 @@ enum HTMLParser {
     /// /lists/<id> anchor's name plus the counts that follow it.
     static func relatedListRows(in fragment: String) -> [RelatedListRow] {
         guard let regex = try? NSRegularExpression(
-            pattern: "<a[^>]+href=\"([^\"]*/lists/[A-Za-z0-9]+)\"[^>]*>([\\s\\S]*?)</a>",
+            pattern: "<a[^>]+href=\"([^\"]*/lists/[^\"/]+)\"[^>]*>([\\s\\S]*?)</a>",
             options: [.caseInsensitive]
         ) else { return [] }
         let ns = fragment as NSString
@@ -1278,10 +1291,21 @@ enum HTMLParser {
         var seen = Set<String>()
         for (index, match) in matches.enumerated() {
             let href = unescape(ns.substring(with: match.range(at: 1)))
-            let name = stripTags(ns.substring(with: match.range(at: 2)))
-            guard !name.isEmpty, seen.insert(href).inserted else { continue }
+            var name = stripTags(ns.substring(with: match.range(at: 2)))
             let end = index + 1 < matches.count ? matches[index + 1].range.location : ns.length
             let tail = stripTags(ns.substring(with: NSRange(location: match.range.location, length: end - match.range.location)))
+            if name.count < 2 {
+                // The name may sit outside the anchor (block-style
+                // rows): stripTags flattens the row to one line, so
+                // take the tail with the counts segments removed.
+                var candidate = tail
+                for pattern in [#"\d+\s*部作品"#, #"被查看\s*\d+\s*次"#] {
+                    candidate = candidate.replacingOccurrences(of: pattern, with: "", options: .regularExpression)
+                }
+                candidate = candidate.trimmingCharacters(in: CharacterSet(charactersIn: " ，,·・"))
+                if candidate.count >= 2 { name = candidate }
+            }
+            guard !name.isEmpty, seen.insert(href).inserted else { continue }
             rows.append(RelatedListRow(
                 name: name,
                 href: href,
@@ -1505,6 +1529,32 @@ enum HTMLParser {
             profile.ownReviewDestroyURL = attribute("data-destroy-url", in: tag)
         }
         return profile
+    }
+
+    /// The collect wiring for the page's own subject (a list page's
+    /// 收藏 button for the list itself): the `model` controller's
+    /// btnCollect/btnUncollect tags, same contract as castProfile.
+    static func listCollectState(in html: String) -> ListCollectState {
+        var state = ListCollectState()
+        state.csrfToken = firstMatch("<meta[^>]*name=\"csrf-token\"[^>]*content=\"([^\"]+)\"", in: html)
+        state.signedIn = isSignedIn(html)
+        func modelTag(_ target: String) -> String? {
+            firstMatch("(<[^>]*data-model-target=\"\(target)\"[^>]*>)", in: html)
+        }
+        func visible(_ tag: String?) -> Bool {
+            guard let tag else { return false }
+            return !(attribute("class", in: tag) ?? "").split(separator: " ").contains("hidden")
+        }
+        let collect = modelTag("btnCollect")
+        let uncollect = modelTag("btnUncollect")
+        if let collect {
+            state.collectURL = attribute("data-url", in: collect)
+            state.modelName = attribute("data-model", in: collect)
+            state.modelID = attribute("data-model-id", in: collect)
+        }
+        if let uncollect { state.uncollectURL = attribute("data-url", in: uncollect) }
+        state.isCollected = visible(uncollect)
+        return state
     }
 
     /// Label/value rows from an HTML fragment (the cast details
