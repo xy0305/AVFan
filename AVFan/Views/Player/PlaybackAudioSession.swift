@@ -156,7 +156,9 @@ final class TrailerPlayback: ObservableObject {
         if headers.isEmpty {
             player = AVPlayer(url: url)
         } else {
-            let asset = AVURLAsset(url: url, options: [AVURLAssetHTTPHeaderFieldsKey: headers])
+            // The literal option key: the SDK's renamed constant is
+            // not visible in this build configuration.
+            let asset = AVURLAsset(url: url, options: ["AVURLAssetHTTPHeaderFieldsKey": headers])
             player = AVPlayer(playerItem: AVPlayerItem(asset: asset))
         }
         observation = player.observe(\.timeControlStatus, options: [.new]) { [weak self] player, _ in
