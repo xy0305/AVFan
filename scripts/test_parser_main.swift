@@ -818,8 +818,19 @@ enum ParserTests {
         expect(filoRelated.allSatisfy { ($0.coverURL ?? "").contains("/covers/") },
                "related-works covers present, got \(filoRelated.map { $0.coverURL ?? "nil" })")
 
+        // Build 30: hot-search terms come from the landing page's
+        // 热门搜索 section only (search-history links above it are
+        // not included), in the site's own ranking order.
+        let landing30 = try fixture("search-landing-hot.html")
+        let hot30 = HTMLParser.hotSearchTerms(in: landing30)
+        expect(hot30.count == 18, "hot terms count, got \(hot30.count) \(hot30)")
+        expect(Array(hot30.prefix(3)) == ["snos", "jur", "mida"], "hot terms top 3 in site order, got \(Array(hot30.prefix(3)))")
+        expect(hot30.contains("神木丽") && hot30.contains("巨乳"), "CJK hot terms kept, got \(hot30)")
+        expect(!hot30.contains("WAAA-681") && !hot30.contains("DLDSS-575"), "search history is not hot search, got \(hot30)")
+        expect(HTMLParser.hotSearchTerms(in: "<html>no section</html>").isEmpty, "no 热门搜索 section, no terms")
 
-        print("PASS: home, detail magnets, ranking merge, hot casts, HQ cover sources, empty shell, block detection, cover policy, login signals, ranking tabs, pagination, news, series, detail cover identity, page map, cast cards, prefix links, filter form, homepage panel, auto-next, home main list, movie toolbar, tab hygiene, tab locale guard, drawer shortcuts, poster quality, javbus, tenhow, amazon, avbase catalogue, trailer and stills, library sync parsing, cast profile, comments sanitize, related lists, preview whitelist, filmography, real list fragments, number prefix, avfan trailer preference")
+
+        print("PASS: home, detail magnets, ranking merge, hot casts, HQ cover sources, empty shell, block detection, cover policy, login signals, ranking tabs, pagination, news, series, detail cover identity, page map, cast cards, prefix links, filter form, homepage panel, auto-next, home main list, movie toolbar, tab hygiene, tab locale guard, drawer shortcuts, poster quality, javbus, tenhow, amazon, avbase catalogue, trailer and stills, library sync parsing, cast profile, comments sanitize, related lists, preview whitelist, filmography, real list fragments, number prefix, avfan trailer preference, hot searches")
     }
 }
 

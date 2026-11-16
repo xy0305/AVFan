@@ -1312,6 +1312,38 @@ enum HTMLParser {
         return cards
     }
 
+    /// Hot-search terms from the search landing page's 热门搜索
+    /// section (build 30): the chips are anchors to the search URL
+    /// with q=<term>; the term is the anchor's visible text (the
+    /// decoded q value when the text is empty). Page order is
+    /// preserved — the site ranks them, and the first three get
+    /// the coloured treatment in the UI.
+    static func hotSearchTerms(in html: String) -> [String] {
+        guard let start = html.range(of: "热门搜索") else { return [] }
+        let slice = String(html[start.lowerBound...].prefix(24000))
+        var out: [String] = []
+        var seen = Set<String>()
+        guard let regex = try? NSRegularExpression(
+            pattern: "<a[^>]+href=\"([^\"]*[?&]q=[^\"]*)\"[^>]*>([\\s\\S]*?)</a>",
+            options: [.caseInsensitive]
+        ) else { return [] }
+        let ns = slice as NSString
+        for match in regex.matches(in: slice, range: NSRange(location: 0, length: ns.length)) {
+            let href = unescape(ns.substring(with: match.range(at: 1)))
+            var term = stripTags(ns.substring(with: match.range(at: 2)))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if term.isEmpty, let comps = URLComponents(string: href),
+               let q = comps.queryItems?.first(where: { $0.name == "q" })?.value {
+                term = q.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            guard !term.isEmpty, term.count <= 16 else { continue }
+            guard seen.insert(term.lowercased()).inserted else { continue }
+            out.append(term)
+            if out.count >= 48 { break }
+        }
+        return out
+    }
+
     /// Whether the page carries a trailer player trigger at all
     /// (the trailer-player Stimulus component or its src value),
     /// regardless of whether a direct media URL parsed out.

@@ -41,6 +41,11 @@ struct SearchView: View {
     ]
     @State private var castResults: [CastCard] = []
     @State private var linkResults: [NamedLink] = []
+    /// Hot searches (build 30): the site's own 热门搜索 ranking,
+    /// parsed from the search landing page and shown as chips in
+    /// the idle state, mirroring the website's search home.
+    @State private var hotTerms: [String] = []
+    @State private var hotLoaded = false
 
     private enum ResultKind { case movies, casts, links }
     private var resultKind: ResultKind {
@@ -104,6 +109,9 @@ struct SearchView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
                     FetchStatusBanner(source: source, error: errorMessage, webURL: pageURL) { showWeb = true }
+                    if lastQuery.isEmpty && cards.isEmpty && castResults.isEmpty && linkResults.isEmpty {
+                        hotSearchSection
+                    }
                     if !loading && cards.isEmpty && castResults.isEmpty && linkResults.isEmpty && errorMessage == nil && pageURL != nil {
                         Text("没有解析到结果。")
                             .font(.footnote)
@@ -174,6 +182,7 @@ struct SearchView: View {
         }
         .background(AVFanTheme.pageBackground)
         .navigationTitle("搜索")
+        .task { await loadHotSearches() }
         .navigationDestination(item: $openCard) { MovieDetailView(card: $0) }
         .toolbar {
             if filterForm != nil && resultKind == .movies {
@@ -200,6 +209,70 @@ struct SearchView: View {
                 }
             }
         }
+    }
+
+    /// Hot-search chips, mirroring the website's search home:
+    /// the site's ranking order, the top three tinted (red /
+    /// orange / amber), the rest neutral. Tapping a chip runs
+    /// that search.
+    @ViewBuilder
+    private var hotSearchSection: some View {
+        if !hotTerms.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                GlassSectionHeader(title: "热门搜索", icon: "flame.fill", trailingTitle: nil)
+                FlowLayout(spacing: 8) {
+                    ForEach(Array(hotTerms.enumerated()), id: \.offset) { index, term in
+                        Button {
+                            query = term
+                            Task { await search() }
+                        } label: {
+                            Text(term)
+                                .font(.subheadline.weight(index < 3 ? .semibold : .regular))
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 7)
+                                .background(hotChipBackground(index), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                .foregroundStyle(hotChipForeground(index))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+    }
+
+    private func hotChipBackground(_ index: Int) -> Color {
+        switch index {
+        case 0: return Color.red.opacity(0.10)
+        case 1: return Color.orange.opacity(0.12)
+        case 2: return Color.yellow.opacity(0.16)
+        default: return Color(.secondarySystemBackground)
+        }
+    }
+
+    private func hotChipForeground(_ index: Int) -> Color {
+        switch index {
+        case 0: return .red
+        case 1: return .orange
+        case 2: return Color(red: 0.62, green: 0.42, blue: 0.0)
+        default: return .primary
+        }
+    }
+
+    /// Fetch the search landing page once and read its 热门搜索
+    /// ranking. A failure just leaves the section hidden — the
+    /// search box itself is unaffected.
+    private func loadHotSearches() async {
+        guard !hotLoaded else { return }
+        hotLoaded = true
+        let url = SiteClient.shared.searchURL(query: "")
+        guard let result = try? await SiteClient.shared.html(
+            for: url,
+            locale: settings.locale,
+            ageCookie: settings.legalAgeCookie,
+            allowWebViewFallback: true,
+            expectCatalog: false
+        ) else { return }
+        hotTerms = await HTMLParser.detached { HTMLParser.hotSearchTerms(in: result.html) }
     }
 
     private func search() async {
