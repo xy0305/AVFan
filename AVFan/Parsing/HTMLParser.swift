@@ -1365,12 +1365,11 @@ enum HTMLParser {
             let movies = firstMatch(#"(\d+)\s*部作品"#, in: tail).flatMap { Int($0) }
             let views = firstMatch(#"被查看\s*(\d+)\s*次"#, in: tail).flatMap { Int($0) }
             if name.count < 2 {
-                // The name may sit outside the anchor (block-style
-                // rows): stripTags flattens the row to one line, so
-                // take the tail with the counts segments removed.
+                // Name is the text immediately before the first
+                // count phrase, so a later row cannot leak in.
                 var candidate = tail
-                for pattern in [#"\d+\s*部作品"#, #"被查看\s*\d+\s*次"#] {
-                    candidate = candidate.replacingOccurrences(of: pattern, with: "", options: .regularExpression)
+                if let r = candidate.range(of: #"\d+\s*部作品"#, options: .regularExpression) {
+                    candidate = String(candidate[..<r.lowerBound])
                 }
                 candidate = candidate.trimmingCharacters(in: CharacterSet(charactersIn: " ，,·・"))
                 if candidate.count >= 2 { name = candidate }
@@ -1381,7 +1380,7 @@ enum HTMLParser {
             }
             if let existing = indexByKey[idPart] {
                 var row = rows[existing]
-                if name.count >= 2, (row.name.count < 2 || (row.name.count > 40 && name.count < row.name.count)) {
+                if name.count >= 2, (row.name.count < 2 || name.count < row.name.count) {
                     row.name = name
                 }
                 if row.moviesCount == nil { row.moviesCount = movies }
