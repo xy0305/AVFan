@@ -262,11 +262,11 @@ enum ParserTests {
                "withPage drops the old page")
 
         // Build 11: cast index cards (avatar + name + works count).
-        let castsHTML = """
+        let castIndexHTML = """
         <a href="/zh-CN/casts/AbCdEfGh"><img src="https://c1.avfan.com/avatars/a.jpg"><div>テスト女優</div><span>128 部作品</span></a>
         <a href="/zh-CN/casts/ZzYyXxWw"><img data-src="https://c1.avfan.com/avatars/b.jpg"><div>第二女優</div></a>
         """
-        let castCards = HTMLParser.castCards(in: castsHTML)
+        let castCards = HTMLParser.castCards(in: castIndexHTML)
         expect(castCards.count == 2, "cast cards count, got \(castCards.count)")
         expect(castCards.first?.name == "テスト女優", "cast name, got \(castCards.first?.name ?? "nil")")
         expect(castCards.first?.countText?.contains("128") == true, "cast count line")
