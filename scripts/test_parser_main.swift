@@ -39,6 +39,12 @@ enum ParserTests {
         expect(home.allCards.contains { $0.code == "IPZZ-936" }, "home includes IPZZ-936")
         expect(home.allCards.contains { $0.coverURL?.contains("c1.avfan.com") == true }, "covers on c1.avfan.com")
         expect(home.sections.contains { $0.title.contains("在线观看") || !$0.cards.isEmpty }, "watch or catalog section")
+        // Build 13: the homepage's main list is marked and exposed
+        // separately from the rails (it auto-loads and filters).
+        expect(home.sections.contains { $0.isMainList }, "home marks the main list section")
+        expect(!home.listCards.isEmpty, "home listCards populated, got \(home.listCards.count)")
+        expect(home.listCards.allSatisfy { lc in home.allCards.contains { $0.pathID == lc.pathID } },
+               "listCards are a subset of allCards")
 
         let movieHTML = try fixture("movie-ipzz-936.html")
         let movieURL = URL(string: "https://avfan.com/zh-CN/movies/s6bNHCTN")
@@ -304,12 +310,49 @@ enum ParserTests {
                "applying filters replaces params and resets paging, got \(applied)")
         expect(HTMLParser.listFilterForm(in: "<p>no form here</p>") == nil, "no form, no filter UI")
 
+        // Build 13: the homepage filter panel — four groups carrying
+        // the site's own headings （影片类型 / 筛选 / 排序 / 布局）.
+        let homeFilterHTML = """
+        <form><label><input type="checkbox" name="t" value="all" checked>全部类型</label>
+        <label><input type="checkbox" name="t" value="censored">有码</label>
+        <label><input type="checkbox" name="t" value="uncensored">无码</label>
+        <label><input type="checkbox" name="t" value="western">欧美</label>
+        <label><input type="checkbox" name="t" value="fc2">FC2</label>
+        <label><input type="checkbox" name="t" value="anime">动漫</label>
+        <label><input type="checkbox" name="t" value="chinese">华语</label>
+        <label><input type="checkbox" name="f" value="all">全部综合</label>
+        <label><input type="checkbox" name="f" value="magnet" checked>有磁链</label>
+        <label><input type="checkbox" name="f" value="subtitle">有字幕</label>
+        <label><input type="radio" name="s" value="magnet" checked>最新磁链</label>
+        <label><input type="radio" name="s" value="release">最新发行</label>
+        <label><input type="radio" name="s" value="playable">最新可播</label>
+        <label><input type="radio" name="layout" value="1">1列</label>
+        <label><input type="radio" name="layout" value="2" checked>2列</label></form>
+        """
+        let homeForm = HTMLParser.listFilterForm(in: homeFilterHTML)
+        expect(homeForm != nil && homeForm!.groups.count == 4,
+               "homepage panel groups, got \(String(describing: homeForm?.groups.count))")
+        expect(homeForm!.groups.map(\.title) == ["影片类型", "筛选", "排序", "布局"],
+               "homepage panel headings, got \(homeForm!.groups.map(\.title))")
+        expect(homeForm!.groups.last?.isLayoutGroup == true, "layout group detected")
+        expect(homeForm!.layoutColumns(selections: homeForm!.defaultSelections) == 2,
+               "layout default is 2 columns")
+        expect(homeForm!.defaultSelections["f"] == ["magnet"], "preselected filter kept")
+
+        // Build 13: auto-load next-page derivation.
+        expect(HTMLParser.autoNextPath(in: pagerHTML, page: 1, path: "/zh-CN/tags?t=censored")?.contains("page=2") == true,
+               "autoNext uses the numbered next link")
+        expect(HTMLParser.autoNextPath(in: pagerHTML, page: 40, path: "/zh-CN/tags?t=censored")?.contains("page=41") == true,
+               "autoNext bumps page= when a pagination bar exists")
+        expect(HTMLParser.autoNextPath(in: "<p>no paging</p>", page: 1, path: "/x") == nil,
+               "autoNext is nil without pagination")
+
         let signedHTML = "<a href=\"/zh-CN/sign_out\">退出登录</a>"
         expect(HTMLParser.isSignedIn(html: signedHTML), "sign_out means signed in")
         expect(HTMLParser.signOutURL(in: signedHTML)?.contains("sign_out") == true, "sign_out url")
         expect(HTMLParser.containsSignInLink("<a href=\"/zh-CN/sign_in\">登录</a>"), "sign_in link")
 
-        print("PASS: home, detail magnets, ranking merge, hot casts, HQ cover sources, empty shell, block detection, cover policy, login signals, ranking tabs, pagination, news, series, detail cover identity, page map, cast cards, prefix links, filter form")
+        print("PASS: home, detail magnets, ranking merge, hot casts, HQ cover sources, empty shell, block detection, cover policy, login signals, ranking tabs, pagination, news, series, detail cover identity, page map, cast cards, prefix links, filter form, homepage panel, auto-next, home main list")
     }
 }
 

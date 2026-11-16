@@ -14,10 +14,25 @@ struct RankingsView: View {
     @State private var source: FetchSource?
     @State private var showWeb = false
     @State private var pageURL: URL?
-    @State private var pagePaths: [Int: String] = [:]
-    @State private var totalPages = 1
     @State private var goSearch = false
-    @State private var currentPage = 1
+    /// Auto-loading (build 13): pages append on scroll instead of the
+    /// manual pager. currentPath stays the variant path (tab selection
+    /// state); activePath is what actually gets fetched and carries any
+    /// applied filter parameters. When a ranking page carries the
+    /// site's filter form, it is offered behind the 筛选 button.
+    @State private var loadedPage = 1
+    @State private var nextPage: String?
+    @State private var activePath: String = RankingKind.last24h.path
+    @State private var filterForm: ListFilterForm?
+    @State private var selections: [String: Set<String>] = [:]
+    @State private var showFilters = false
+
+    private var layoutColumns: Int? { filterForm?.layoutColumns(selections: selections) }
+
+    private var peoplePrefetchID: String? {
+        guard let people = page?.people, !people.isEmpty else { return nil }
+        return people.dropFirst(max(0, people.count - 6)).first?.id
+    }
 
     var body: some View {
         ScrollView {
@@ -28,9 +43,10 @@ struct RankingsView: View {
                             Button {
                                 kind = item
                                 currentPath = item.path
+                                activePath = item.path
                                 tabs = []
-                                pagePaths = [:]
-                                totalPages = 1
+                                filterForm = nil
+                                selections = [:]
                                 Task { await load() }
                             } label: {
                                 Text(item.title)
@@ -49,8 +65,9 @@ struct RankingsView: View {
                             ForEach(tabs) { tab in
                                 Button {
                                     currentPath = tab.href
-                                    pagePaths = [:]
-                                    totalPages = 1
+                                    activePath = tab.href
+                                    filterForm = nil
+                                    selections = [:]
                                     Task { await load() }
                                 } label: {
                                     Text(tab.name)
@@ -86,24 +103,33 @@ struct RankingsView: View {
                                 }
                             }
                             .buttonStyle(.plain)
+                            .onAppear {
+                                if person.id == peoplePrefetchID {
+                                    Task { await loadNext() }
+                                }
+                            }
                         }
                     }
                 }
                 if let page {
-                    MovieGrid(cards: page.cards)
-                }
-                PagerBar(currentPage: currentPage, totalPages: totalPages, isLoading: loading) { page in
-                    Task { await goPage(page) }
+                    MovieGrid(cards: page.cards, columns: layoutColumns, onReachEnd: { Task { await loadNext() } })
                 }
             }
             .padding(.horizontal, AdaptiveLayout.horizontalPadding)
             .padding(.vertical, 12)
         }
-        .id(currentPage)
         .background(AVFanTheme.pageBackground)
         .navigationTitle("排行榜")
         .navigationDestination(isPresented: $goSearch) { SearchView() }
         .toolbar {
+            if filterForm != nil {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { showFilters = true } label: {
+                        Image(systemName: "line.3.horizontal.decrease.circle")
+                    }
+                    .accessibilityLabel("筛选")
+                }
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 Button { goSearch = true } label: { Image(systemName: "magnifyingglass") }
                     .accessibilityLabel("搜索")
@@ -115,6 +141,16 @@ struct RankingsView: View {
         .sheet(isPresented: $showWeb) {
             if let pageURL { InAppWebView(url: pageURL, title: kind.title) }
         }
+        .sheet(isPresented: $showFilters) {
+            if let filterForm {
+                FilterSheet(form: filterForm, selections: selections) { newSelections in
+                    selections = newSelections
+                    activePath = HTMLParser.applyingFilters(
+                        activePath, form: filterForm, selections: newSelections)
+                    Task { await load() }
+                }
+            }
+        }
         .onChange(of: settings.locale) { _, _ in
             Task { await load() }
         }
@@ -125,24 +161,22 @@ struct RankingsView: View {
     }
 
     private func load() async {
-        pagePaths = [:]
-        totalPages = 1
-        await load(path: currentPath)
+        await load(path: activePath, append: false)
     }
 
-    private func goPage(_ page: Int) async {
-        guard page != currentPage, page >= 1, !loading else { return }
-        let target = pagePaths[page] ?? HTMLParser.withPage(currentPath, page: page)
-        await load(path: target)
+    private func loadNext() async {
+        guard !loading, let target = nextPage else { return }
+        await load(path: target, append: true)
     }
 
-    private func load(path fetchPath: String) async {
+    private func load(path fetchPath: String, append: Bool) async {
         loading = true
-        errorMessage = nil
+        if !append { errorMessage = nil }
         defer { loading = false }
         let url = SiteClient.shared.rankingURL(path: fetchPath, locale: settings.locale)
         pageURL = url
-        currentPage = Int(HTMLParser.firstMatch("[?&]page=(\\d+)", in: fetchPath) ?? "") ?? 1
+        let pageNo = append ? loadedPage + 1
+            : (Int(HTMLParser.firstMatch("[?&]page=(\\d+)", in: fetchPath) ?? "") ?? 1)
         do {
             let result = try await SiteClient.shared.html(
                 for: url,
@@ -157,21 +191,38 @@ struct RankingsView: View {
             let parsed = await HTMLParser.detached {
                 (page: HTMLParser.ranking(from: html),
                  tabs: HTMLParser.rankingTabs(in: html, basePath: base, currentPath: shown),
-                 pages: HTMLParser.pageMap(in: html))
+                 form: HTMLParser.listFilterForm(in: html),
+                 next: HTMLParser.autoNextPath(in: html, page: pageNo, path: fetchPath))
             }
-            page = parsed.page
-            tabs = parsed.tabs
-            for (number, href) in parsed.pages { pagePaths[number] = href }
-            totalPages = max(totalPages, pagePaths.keys.max() ?? currentPage, currentPage)
+            if append, let existing = page {
+                let knownCards = Set(existing.cards.map(\.pathID))
+                let freshCards = parsed.page.cards.filter { !knownCards.contains($0.pathID) }
+                let knownPeople = Set(existing.people.map(\.id))
+                let freshPeople = parsed.page.people.filter { !knownPeople.contains($0.id) }
+                page = RankingPage(title: existing.title,
+                                   cards: existing.cards + freshCards,
+                                   people: existing.people + freshPeople)
+                nextPage = (freshCards.isEmpty && freshPeople.isEmpty) ? nil : parsed.next
+            } else {
+                page = parsed.page
+                tabs = parsed.tabs
+                nextPage = parsed.next
+                if filterForm == nil, let form = parsed.form {
+                    filterForm = form
+                    selections = form.defaultSelections
+                }
+                if parsed.page.cards.isEmpty && parsed.page.people.isEmpty {
+                    errorMessage = "没有解析到排行条目，可改用应用内网页。"
+                }
+            }
+            loadedPage = pageNo
             source = result.source
-            if parsed.page.cards.isEmpty && parsed.page.people.isEmpty {
-                errorMessage = "没有解析到排行条目，可改用应用内网页。"
-            }
         } catch {
-            errorMessage = error.localizedDescription
+            if append {
+                nextPage = nil
+            } else {
+                errorMessage = error.localizedDescription
+            }
         }
     }
-
-    /// Ranking lists paginate on the site too; scrolling appends the next
-    /// page of cards (people rankings are single lists and never paginate).
 }

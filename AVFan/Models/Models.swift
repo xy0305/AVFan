@@ -35,11 +35,16 @@ struct HomeSection: Identifiable, Hashable {
     var title: String
     var cards: [MovieCard]
     var moreHref: String?
+    /// The homepage's main movie list (最新磁链): rendered as the full
+    /// auto-loading, filterable grid instead of a capped rail (build 13).
+    var isMainList: Bool = false
     var id: String { title }
 }
 
 struct HomePage {
     var sections: [HomeSection]
+    /// The main list's cards (the non-featured remainder of the page).
+    var listCards: [MovieCard] = []
     var allCards: [MovieCard] {
         var seen = Set<String>()
         var out: [MovieCard] = []
@@ -286,10 +291,37 @@ struct ListFilterGroup: Identifiable, Hashable {
     var title: String
     var options: [ListFilterOption]
     var id: String { name }
+
+    /// The site's 布局 group (1列 / 2列 …): a display option, applied
+    /// locally to the grid as well as sent with the form.
+    var isLayoutGroup: Bool {
+        !options.isEmpty && options.allSatisfy {
+            $0.label.range(of: "^\\d+列$", options: .regularExpression) != nil
+        }
+    }
 }
 
 struct ListFilterForm: Hashable {
     var groups: [ListFilterGroup]
+
+    /// The selections the page itself shipped (its checked inputs).
+    var defaultSelections: [String: Set<String>] {
+        Dictionary(uniqueKeysWithValues: groups.map { group in
+            (group.name, Set(group.options.filter(\.selected).map(\.value)))
+        })
+    }
+
+    /// Column count chosen in the 布局 group, when the form has one and
+    /// an option is selected; nil keeps the grid's adaptive default.
+    func layoutColumns(selections: [String: Set<String>]) -> Int? {
+        for group in groups where group.isLayoutGroup {
+            guard let value = selections[group.name]?.first,
+                  let option = group.options.first(where: { $0.value == value }) else { continue }
+            let digits = option.label.filter(\.isNumber)
+            if let count = Int(digits), count >= 1 { return count }
+        }
+        return nil
+    }
 }
 
 enum FetchSource: String {

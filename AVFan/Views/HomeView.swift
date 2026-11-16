@@ -8,6 +8,7 @@ struct HomeView: View {
     @State private var goSearch = false
     @State private var openCard: MovieCard?
     @State private var openCatalog: CatalogDestination?
+    @State private var showFilters = false
 
     var body: some View {
         GeometryReader { proxy in
@@ -27,6 +28,14 @@ struct HomeView: View {
         .sheet(isPresented: $model.showWeb) {
             if let url = model.pageURL { InAppWebView(url: url, title: "首页") }
         }
+        .sheet(isPresented: $showFilters) {
+            if let form = model.filterForm {
+                FilterSheet(form: form, selections: model.selections) { newSelections in
+                    model.selections = newSelections
+                    Task { await model.applyFilters(settings: settings) }
+                }
+            }
+        }
     }
 
     private func homeRoot(_ m: HomeMetrics) -> some View {
@@ -44,10 +53,11 @@ struct HomeView: View {
                         }
                         .padding(.horizontal, m.padding)
                         .padding(.top, 16)
-                        ForEach(model.page.sections) { section in
+                        ForEach(model.railSections) { section in
                             homeSection(section, metrics: m)
                                 .padding(.top, 22)
                         }
+                        homeListSection(m)
                     }
                     .background(Color(.systemBackground))
                     .frame(maxWidth: m.contentWidth, alignment: .leading)
@@ -147,6 +157,62 @@ struct HomeView: View {
                 }
             })
             HomePosterGrid(cards: section.cards, metrics: m) { openCard = $0 }
+        }
+    }
+
+    /// The homepage's main list （最新磁链）: the full grid under the
+    /// rails — auto-loads the next page on scroll, and the site
+    /// homepage's own filter panel （影片类型 / 筛选 / 排序 / 布局）
+    /// sits behind its 筛选 button (build 13).
+    @ViewBuilder
+    private func homeListSection(_ m: HomeMetrics) -> some View {
+        if model.filterForm != nil || !model.listCards.isEmpty {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 6) {
+                    Text(model.listTitle)
+                        .font(.system(size: 17, weight: .bold))
+                        .accessibilityAddTraits(.isHeader)
+                    Spacer(minLength: 8)
+                    if model.filterForm != nil {
+                        Button {
+                            GlassHaptic.tap()
+                            showFilters = true
+                        } label: {
+                            HStack(spacing: 5) {
+                                Image(systemName: "line.3.horizontal.decrease.circle")
+                                    .font(.system(size: 13, weight: .semibold))
+                                Text(model.activeFilterCount > 0 ? "筛选 \(model.activeFilterCount)" : "筛选")
+                                    .font(.system(size: 12, weight: .semibold))
+                            }
+                            .foregroundStyle(Color.primary)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(Color.primary.opacity(0.06), in: Capsule())
+                            .contentShape(Rectangle().inset(by: -6))
+                        }
+                        .buttonStyle(HomePressStyle(scale: 0.94))
+                        .accessibilityLabel("筛选")
+                    }
+                }
+                .padding(.horizontal, m.padding)
+                if model.listCards.isEmpty {
+                    Text("没有符合条件的影片，换个筛选试试。")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, m.padding)
+                } else {
+                    MovieGrid(cards: model.listCards, columns: model.layoutColumns,
+                              onSelect: { openCard = $0 },
+                              onReachEnd: { Task { await model.loadNext(settings: settings) } })
+                        .padding(.horizontal, m.padding)
+                }
+                if model.listLoading {
+                    ProgressView()
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 6)
+                }
+            }
+            .padding(.top, 22)
         }
     }
 }
@@ -484,6 +550,26 @@ final class HomeViewModel: ObservableObject {
     @Published var showWeb = false
     var pageURL: URL?
 
+    /// The homepage main list and its filter state (build 13): the
+    /// list auto-loads on scroll and is filtered by the homepage's own
+    /// form; hero and rails always come from the unfiltered load.
+    @Published var listCards: [MovieCard] = []
+    @Published var listLoading = false
+    @Published var filterForm: ListFilterForm?
+    @Published var selections: [String: Set<String>] = [:]
+    private var nextListPage: String?
+    private var loadedListPage = 1
+    private var activeListPath: String?
+
+    var railSections: [HomeSection] { page.sections.filter { !$0.isMainList } }
+    var listTitle: String { page.sections.first(where: \.isMainList)?.title ?? "最新磁链" }
+    var layoutColumns: Int? { filterForm?.layoutColumns(selections: selections) }
+    var activeFilterCount: Int {
+        guard let form = filterForm else { return 0 }
+        let defaults = form.defaultSelections
+        return form.groups.filter { (selections[$0.name] ?? []) != (defaults[$0.name] ?? []) }.count
+    }
+
     var heroCards: [MovieCard] {
         let all = page.allCards
         if all.isEmpty { return [] }
@@ -507,11 +593,85 @@ final class HomeViewModel: ObservableObject {
                 expectCatalog: true
             )
             let html = result.html
-            page = await HTMLParser.detached { HTMLParser.home(from: html) }
+            let homePath = url.absoluteString
+            let parsed = await HTMLParser.detached {
+                (page: HTMLParser.home(from: html),
+                 form: HTMLParser.listFilterForm(in: html),
+                 next: HTMLParser.autoNextPath(in: html, page: 1, path: homePath))
+            }
+            page = parsed.page
+            listCards = parsed.page.listCards
+            filterForm = parsed.form
+            selections = parsed.form?.defaultSelections ?? [:]
+            activeListPath = nil
+            loadedListPage = 1
+            nextListPage = parsed.next
             source = result.source
             if page.sections.isEmpty {
                 errorMessage = "首页没有解析到影片，可以改用应用内网页查看。"
             }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    /// Auto-load the homepage list's next page (scrolling append). A
+    /// failed fetch just ends paging; the loaded pages stay on screen.
+    func loadNext(settings: AppSettings) async {
+        guard !listLoading, !loading, let target = nextListPage else { return }
+        listLoading = true
+        defer { listLoading = false }
+        let url = SiteClient.shared.catalogURL(path: target)
+        let pageNo = loadedListPage + 1
+        do {
+            let result = try await SiteClient.shared.html(
+                for: url,
+                locale: settings.locale,
+                ageCookie: settings.legalAgeCookie,
+                allowWebViewFallback: true,
+                expectCatalog: true
+            )
+            let html = result.html
+            let parsed = await HTMLParser.detached {
+                (cards: HTMLParser.home(from: html).listCards,
+                 next: HTMLParser.autoNextPath(in: html, page: pageNo, path: target))
+            }
+            let known = Set(listCards.map(\.pathID))
+            let fresh = parsed.cards.filter { !known.contains($0.pathID) }
+            listCards += fresh
+            loadedListPage = pageNo
+            nextListPage = fresh.isEmpty ? nil : parsed.next
+        } catch {
+            nextListPage = nil
+        }
+    }
+
+    /// Apply the homepage filter panel: rebuild the homepage URL with
+    /// the chosen values and reload the main list from page 1.
+    func applyFilters(settings: AppSettings) async {
+        guard let form = filterForm, !listLoading else { return }
+        listLoading = true
+        defer { listLoading = false }
+        let base = SiteClient.shared.homeURL(locale: settings.locale).absoluteString
+        let filtered = HTMLParser.applyingFilters(activeListPath ?? base, form: form, selections: selections)
+        activeListPath = filtered
+        let url = SiteClient.shared.catalogURL(path: filtered)
+        do {
+            let result = try await SiteClient.shared.html(
+                for: url,
+                locale: settings.locale,
+                ageCookie: settings.legalAgeCookie,
+                allowWebViewFallback: true,
+                expectCatalog: true
+            )
+            let html = result.html
+            let parsed = await HTMLParser.detached {
+                (cards: HTMLParser.home(from: html).listCards,
+                 next: HTMLParser.autoNextPath(in: html, page: 1, path: filtered))
+            }
+            listCards = parsed.cards
+            loadedListPage = 1
+            nextListPage = parsed.next
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -529,16 +689,14 @@ struct CatalogListView: View {
     @State private var source: FetchSource?
     @State private var showWeb = false
     @State private var pageURL: URL?
-    /// Website-style paging (build 11): the page's own numbered links,
-    /// one page shown at a time — no more infinite append.
+    /// Auto-loading pages (build 13): scrolling appends the next page,
+    /// currentPage counts the pages loaded so far. (Build 11's manual
+    /// pager and build 12's watch-only auto-paging are both superseded:
+    /// the owner asked for auto-loading everywhere.)
     @State private var currentPage = 1
-    @State private var pagePaths: [Int: String] = [:]
-    @State private var totalPages = 1
-    /// 在线观看 (/watch) auto-pages on scroll instead of the manual
-    /// pager (build 12, owner's call); every other list keeps the
-    /// website-style PagerBar from build 11.
-    private var autoPaging: Bool { HTMLParser.stripLocale(path) == "watch" }
     @State private var nextPage: String?
+    /// Column count from the filter form's 布局 group, when chosen.
+    private var layoutColumns: Int? { filterForm?.layoutColumns(selections: selections) }
     /// The path with any applied filters; starts as the given path.
     @State private var activePath = ""
     /// The site's own filter/sort form, parsed from the page (build 11).
@@ -558,23 +716,13 @@ struct CatalogListView: View {
                     FetchStatusBanner(source: source, error: errorMessage, webURL: pageURL) { showWeb = true }
                         .id("catalogTop")
                     if loading && cards.isEmpty { ProgressView().frame(maxWidth: .infinity, minHeight: 180) }
-                    MovieGrid(cards: cards, onSelect: { openCard = $0 }, onReachEnd: autoPaging ? { Task { await loadNext() } } : nil)
+                    MovieGrid(cards: cards, columns: layoutColumns, onSelect: { openCard = $0 }, onReachEnd: { Task { await loadNext() } })
                     if loading && !cards.isEmpty {
                         ProgressView().frame(maxWidth: .infinity).padding(.vertical, 8)
-                    }
-                    if !autoPaging {
-                        PagerBar(currentPage: currentPage, totalPages: totalPages, isLoading: loading) { page in
-                            Task { await goPage(page) }
-                        }
                     }
                 }
                 .padding(.horizontal, AdaptiveLayout.horizontalPadding)
                 .padding(.vertical, 12)
-            }
-            .onChange(of: currentPage) { _, _ in
-                if !autoPaging {
-                    withAnimation(.none) { proxy.scrollTo("catalogTop", anchor: .top) }
-                }
             }
         }
         .background(AVFanTheme.pageBackground)
@@ -602,7 +750,10 @@ struct CatalogListView: View {
                         activePath.isEmpty ? path : activePath,
                         form: filterForm, selections: newSelections)
                     activePath = filtered
-                    Task { await loadPage(filtered, page: 1) }
+                    Task {
+                        await loadPage(filtered, page: 1)
+                        withAnimation(.none) { proxy.scrollTo("catalogTop", anchor: .top) }
+                    }
                 }
             }
         }
@@ -614,14 +765,8 @@ struct CatalogListView: View {
         await loadPage(start, page: page)
     }
 
-    private func goPage(_ page: Int) async {
-        guard page != currentPage, page >= 1, !loading else { return }
-        let target = pagePaths[page] ?? HTMLParser.withPage(activePath.isEmpty ? path : activePath, page: page)
-        await loadPage(target, page: page)
-    }
-
     private func loadNext() async {
-        guard autoPaging, !loading, let target = nextPage else { return }
+        guard !loading, let target = nextPage else { return }
         await loadPage(target, page: currentPage + 1, append: true)
     }
 
@@ -641,35 +786,22 @@ struct CatalogListView: View {
             let html = result.html
             let parsed = await HTMLParser.detached {
                 (cards: HTMLParser.movieCards(in: html),
-                 pages: HTMLParser.pageMap(in: html),
                  form: HTMLParser.listFilterForm(in: html),
-                 next: HTMLParser.nextPagePath(in: html, currentPage: page))
-            }
-            // Next-page href for auto paging: the page's own next link
-            // first, then its numbered link for page + 1, then — when the
-            // page carries a pagination bar at all — the same path with
-            // page= bumped. An empty or all-duplicate page stops appends.
-            var next = parsed.next ?? parsed.pages[page + 1]
-            if next == nil, !parsed.pages.isEmpty {
-                next = HTMLParser.withPage(fetchPath, page: page + 1)
+                 next: HTMLParser.autoNextPath(in: html, page: page, path: fetchPath))
             }
             if append {
                 let known = Set(cards.map(\.pathID))
                 let fresh = parsed.cards.filter { !known.contains($0.pathID) }
                 cards += fresh
-                nextPage = fresh.isEmpty ? nil : next
+                nextPage = fresh.isEmpty ? nil : parsed.next
             } else {
                 cards = parsed.cards
-                nextPage = next
+                nextPage = parsed.next
             }
             currentPage = page
-            for (number, href) in parsed.pages { pagePaths[number] = href }
-            totalPages = max(totalPages, pagePaths.keys.max() ?? page, page)
             if filterForm == nil, let form = parsed.form {
                 filterForm = form
-                selections = Dictionary(uniqueKeysWithValues: form.groups.map { group in
-                    (group.name, Set(group.options.filter(\.selected).map(\.value)))
-                })
+                selections = form.defaultSelections
             }
             source = result.source
             errorMessage = nil
@@ -691,7 +823,7 @@ struct CatalogListView: View {
 /// toggle freely (the group's 全部 option is mutually exclusive with the
 /// rest, as on the site), radio groups pick one. Edits a draft; 应用
 /// hands the committed selections back.
-private struct FilterSheet: View {
+struct FilterSheet: View {
     let form: ListFilterForm
     let onApply: ([String: Set<String>]) -> Void
     @Environment(\.dismiss) private var dismiss

@@ -5,14 +5,23 @@ struct SearchView: View {
     @State private var query = ""
     @State private var cards: [MovieCard] = []
     @State private var loading = false
+    @State private var loadingMore = false
     @State private var errorMessage: String?
     @State private var source: FetchSource?
     @State private var showWeb = false
     @State private var pageURL: URL?
-    @State private var pagePaths: [Int: String] = [:]
-    @State private var totalPages = 1
     @State private var lastQuery = ""
-    @State private var currentPage = 1
+    /// Auto-loading (build 13): result pages append on scroll instead
+    /// of the manual pager; when the results page carries the site's
+    /// filter form, it is offered behind the 筛选 toolbar button.
+    @State private var loadedPage = 1
+    @State private var nextPage: String?
+    @State private var activePath = ""
+    @State private var filterForm: ListFilterForm?
+    @State private var selections: [String: Set<String>] = [:]
+    @State private var showFilters = false
+
+    private var layoutColumns: Int? { filterForm?.layoutColumns(selections: selections) }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -43,9 +52,9 @@ struct SearchView: View {
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
-                    MovieGrid(cards: cards)
-                    PagerBar(currentPage: currentPage, totalPages: totalPages, isLoading: loading) { page in
-                        Task { await goPage(page) }
+                    MovieGrid(cards: cards, columns: layoutColumns, onReachEnd: { Task { await loadNext() } })
+                    if loadingMore {
+                        ProgressView().frame(maxWidth: .infinity).padding(.vertical, 8)
                     }
                 }
                 .padding(.horizontal, AdaptiveLayout.horizontalPadding)
@@ -55,23 +64,51 @@ struct SearchView: View {
         .background(AVFanTheme.pageBackground)
         .navigationTitle("搜索")
         .navigationDestination(for: MovieCard.self) { MovieDetailView(card: $0) }
+        .toolbar {
+            if filterForm != nil {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { showFilters = true } label: {
+                        Image(systemName: "line.3.horizontal.decrease.circle")
+                    }
+                    .accessibilityLabel("筛选")
+                }
+            }
+        }
         .sheet(isPresented: $showWeb) {
             if let pageURL { InAppWebView(url: pageURL, title: "搜索") }
+        }
+        .sheet(isPresented: $showFilters) {
+            if let filterForm {
+                FilterSheet(form: filterForm, selections: selections) { newSelections in
+                    selections = newSelections
+                    let base = SiteClient.shared.searchURL(query: lastQuery).absoluteString
+                    activePath = HTMLParser.applyingFilters(
+                        activePath.isEmpty ? base : activePath,
+                        form: filterForm, selections: newSelections)
+                    Task { await loadFirstPage() }
+                }
+            }
         }
     }
 
     private func search() async {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+        lastQuery = trimmed
+        activePath = SiteClient.shared.searchURL(query: trimmed).absoluteString
+        filterForm = nil
+        selections = [:]
+        await loadFirstPage()
+    }
+
+    private func loadFirstPage() async {
+        guard let url = URL(string: activePath) else { return }
         loading = true
         errorMessage = nil
         cards = []
-        pagePaths = [:]
-        totalPages = 1
-        currentPage = 1
-        lastQuery = trimmed
+        loadedPage = 1
+        nextPage = nil
         defer { loading = false }
-        let url = SiteClient.shared.searchURL(query: trimmed)
         pageURL = url
         do {
             let result = try await SiteClient.shared.html(
@@ -82,13 +119,18 @@ struct SearchView: View {
                 expectCatalog: true
             )
             let html = result.html
+            let path = activePath
             let parsed = await HTMLParser.detached {
                 (cards: HTMLParser.movieCards(in: html),
-                 pages: HTMLParser.pageMap(in: html))
+                 form: HTMLParser.listFilterForm(in: html),
+                 next: HTMLParser.autoNextPath(in: html, page: 1, path: path))
             }
             cards = parsed.cards
-            pagePaths = parsed.pages
-            totalPages = max(1, parsed.pages.keys.max() ?? 1)
+            nextPage = parsed.next
+            if filterForm == nil, let form = parsed.form {
+                filterForm = form
+                selections = form.defaultSelections
+            }
             source = result.source
             if cards.isEmpty {
                 errorMessage = "搜索页没有可解析的影片，可改用应用内网页。"
@@ -98,20 +140,15 @@ struct SearchView: View {
         }
     }
 
-    /// Website-style paging (build 11): jump to a numbered page of the
-    /// current search instead of appending endlessly.
-    private func goPage(_ page: Int) async {
-        guard page != currentPage, page >= 1, !loading, !lastQuery.isEmpty else { return }
-        loading = true
-        defer { loading = false }
-        let url: URL
-        if let path = pagePaths[page] {
-            url = SiteClient.shared.catalogURL(path: path)
-        } else if let built = URL(string: HTMLParser.withPage(
-            SiteClient.shared.searchURL(query: lastQuery).absoluteString, page: page)) {
-            url = built
-        } else { return }
+    /// Auto-load the next page of results (scrolling append); a failed
+    /// fetch just ends paging, the loaded results stay on screen.
+    private func loadNext() async {
+        guard !loading, !loadingMore, let target = nextPage else { return }
+        loadingMore = true
+        defer { loadingMore = false }
+        let url = SiteClient.shared.catalogURL(path: target)
         pageURL = url
+        let pageNo = loadedPage + 1
         do {
             let result = try await SiteClient.shared.html(
                 for: url,
@@ -123,15 +160,16 @@ struct SearchView: View {
             let html = result.html
             let parsed = await HTMLParser.detached {
                 (cards: HTMLParser.movieCards(in: html),
-                 pages: HTMLParser.pageMap(in: html))
+                 next: HTMLParser.autoNextPath(in: html, page: pageNo, path: target))
             }
-            cards = parsed.cards
-            currentPage = page
-            for (number, href) in parsed.pages { pagePaths[number] = href }
-            totalPages = max(totalPages, pagePaths.keys.max() ?? page, page)
+            let known = Set(cards.map(\.pathID))
+            let fresh = parsed.cards.filter { !known.contains($0.pathID) }
+            cards += fresh
+            loadedPage = pageNo
+            nextPage = fresh.isEmpty ? nil : parsed.next
             source = result.source
         } catch {
-            errorMessage = error.localizedDescription
+            nextPage = nil
         }
     }
 }

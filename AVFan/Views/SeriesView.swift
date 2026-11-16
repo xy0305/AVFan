@@ -15,11 +15,21 @@ struct SeriesView: View {
     @State private var source: FetchSource?
     @State private var showWeb = false
     @State private var pageURL: URL?
-    @State private var pagePaths: [Int: String] = [:]
-    @State private var totalPages = 1
     @State private var prefixes: [NamedLink] = []
     @State private var goSearch = false
-    @State private var currentPage = 1
+    /// Auto-loading (build 13): pages append on scroll instead of the
+    /// manual pager; activePath carries any applied filter parameters
+    /// on top of the tab path in currentPath.
+    @State private var loadedPage = 1
+    @State private var nextPage: String?
+    @State private var activePath = "series"
+    @State private var filterForm: ListFilterForm?
+    @State private var selections: [String: Set<String>] = [:]
+    @State private var showFilters = false
+
+    private var prefetchID: String? {
+        items.dropFirst(max(0, items.count - 4)).first?.id
+    }
 
     var body: some View {
         ScrollView {
@@ -30,8 +40,9 @@ struct SeriesView: View {
                             ForEach(tabs) { tab in
                                 Button {
                                     currentPath = tab.href
-                                    pagePaths = [:]
-                                    totalPages = 1
+                                    activePath = tab.href
+                                    filterForm = nil
+                                    selections = [:]
                                     Task { await load() }
                                 } label: {
                                     Text(tab.name)
@@ -95,20 +106,33 @@ struct SeriesView: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .onAppear {
+                        if link.id == prefetchID {
+                            Task { await loadNext() }
+                        }
+                    }
                     Divider().padding(.leading, AdaptiveLayout.horizontalPadding)
                 }
-                PagerBar(currentPage: currentPage, totalPages: totalPages, isLoading: loading) { page in
-                    Task { await goPage(page) }
+                if loading && !items.isEmpty {
+                    ProgressView()
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
                 }
-                .padding(.horizontal, AdaptiveLayout.horizontalPadding)
             }
             .padding(.vertical, 6)
         }
-        .id(currentPage)
         .background(AVFanTheme.pageBackground)
         .navigationTitle("系列")
         .navigationDestination(isPresented: $goSearch) { SearchView() }
         .toolbar {
+            if filterForm != nil {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { showFilters = true } label: {
+                        Image(systemName: "line.3.horizontal.decrease.circle")
+                    }
+                    .accessibilityLabel("筛选")
+                }
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 Button { goSearch = true } label: { Image(systemName: "magnifyingglass") }
                     .accessibilityLabel("搜索")
@@ -118,6 +142,16 @@ struct SeriesView: View {
         .refreshable { await load() }
         .sheet(isPresented: $showWeb) {
             if let pageURL { InAppWebView(url: pageURL, title: "系列") }
+        }
+        .sheet(isPresented: $showFilters) {
+            if let filterForm {
+                FilterSheet(form: filterForm, selections: selections) { newSelections in
+                    selections = newSelections
+                    activePath = HTMLParser.applyingFilters(
+                        activePath, form: filterForm, selections: newSelections)
+                    Task { await load() }
+                }
+            }
         }
         .onChange(of: settings.locale) { _, _ in
             Task { await load() }
@@ -132,24 +166,22 @@ struct SeriesView: View {
     }
 
     private func load() async {
-        pagePaths = [:]
-        totalPages = 1
-        await load(path: currentPath)
+        await load(path: activePath, append: false)
     }
 
-    private func goPage(_ page: Int) async {
-        guard page != currentPage, page >= 1, !loading else { return }
-        let target = pagePaths[page] ?? HTMLParser.withPage(currentPath, page: page)
-        await load(path: target)
+    private func loadNext() async {
+        guard !loading, let target = nextPage else { return }
+        await load(path: target, append: true)
     }
 
-    private func load(path fetchPath: String) async {
+    private func load(path fetchPath: String, append: Bool) async {
         loading = true
-        errorMessage = nil
+        if !append { errorMessage = nil }
         defer { loading = false }
         let url = SiteClient.shared.pageURL(path: fetchPath, locale: settings.locale)
         pageURL = url
-        currentPage = Int(HTMLParser.firstMatch("[?&]page=(\\d+)", in: fetchPath) ?? "") ?? 1
+        let pageNo = append ? loadedPage + 1
+            : (Int(HTMLParser.firstMatch("[?&]page=(\\d+)", in: fetchPath) ?? "") ?? 1)
         do {
             let result = try await SiteClient.shared.html(
                 for: url,
@@ -162,21 +194,37 @@ struct SeriesView: View {
             let parsed = await HTMLParser.detached {
                 (items: HTMLParser.seriesItems(in: html),
                  tabs: HTMLParser.rankingTabs(in: html, basePath: "series", currentPath: "series?__none"),
-                 pages: HTMLParser.pageMap(in: html),
-                 prefixes: HTMLParser.prefixLinks(in: html))
+                 form: HTMLParser.listFilterForm(in: html),
+                 prefixes: HTMLParser.prefixLinks(in: html),
+                 next: HTMLParser.autoNextPath(in: html, page: pageNo, path: fetchPath))
             }
-            items = parsed.items
-            tabs = parsed.tabs
-            for (number, href) in parsed.pages { pagePaths[number] = href }
-            totalPages = max(totalPages, pagePaths.keys.max() ?? currentPage, currentPage)
+            if append {
+                let known = Set(items.map(\.id))
+                let fresh = parsed.items.filter { !known.contains($0.id) }
+                items += fresh
+                nextPage = fresh.isEmpty ? nil : parsed.next
+            } else {
+                items = parsed.items
+                tabs = parsed.tabs
+                nextPage = parsed.next
+                if filterForm == nil, let form = parsed.form {
+                    filterForm = form
+                    selections = form.defaultSelections
+                }
+                if items.isEmpty {
+                    errorMessage = "没有解析到系列条目，可改用应用内网页。"
+                    showWeb = true
+                }
+            }
+            loadedPage = pageNo
             if prefixes.isEmpty { prefixes = parsed.prefixes }
             source = result.source
-            if items.isEmpty {
-                errorMessage = "没有解析到系列条目，可改用应用内网页。"
-                showWeb = true
-            }
         } catch {
-            errorMessage = error.localizedDescription
+            if append {
+                nextPage = nil
+            } else {
+                errorMessage = error.localizedDescription
+            }
         }
     }
 

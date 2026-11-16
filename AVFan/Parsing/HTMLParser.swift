@@ -196,6 +196,20 @@ enum HTMLParser {
         return path + (path.contains("?") ? "&" : "?") + "page=\(page)"
     }
 
+    /// The next page to auto-load after `page`, computed from a list page
+    /// just fetched from `path`: its own next link first, then its
+    /// numbered link for page + 1, then — when the page carries a
+    /// pagination bar at all — `path` with page= bumped. nil when the
+    /// page shows no sign of a following page. (Build 13: every list
+    /// auto-loads on scroll; the manual pager is gone.)
+    static func autoNextPath(in html: String, page: Int, path: String) -> String? {
+        if let next = nextPagePath(in: html, currentPage: page) { return next }
+        let pages = pageMap(in: html)
+        if let mapped = pages[page + 1] { return mapped }
+        if !pages.isEmpty { return withPage(path, page: page + 1) }
+        return nil
+    }
+
     /// Cast entries on the site's cast index pages (/casts?t=asian etc.):
     /// anchors to /casts/<id> wrapping an avatar image and the name; a
     /// works-count line, when present in the block, becomes the subtitle.
@@ -337,16 +351,28 @@ enum HTMLParser {
             grouped[option.name, default: []].append(option)
         }
         var groups: [ListFilterGroup] = []
-        for name in order.prefix(4) {
+        for name in order.prefix(6) {
             guard let options = grouped[name], options.count >= 2 else { continue }
             let isRadio = options.first?.radio ?? false
-            let looksLikeSort = options.contains {
-                $0.label.contains("最新") || $0.label.contains("最高") || $0.label.contains("评分")
+            let labels = options.map(\.label)
+            let looksLikeSort = labels.contains {
+                $0.contains("最新") || $0.contains("最高") || $0.contains("评分")
             }
+            // The panel's own headings, recovered from the option sets:
+            // 布局 options are all "N列"; 影片类型 is the closed type
+            // vocabulary headed by 全部类型 (the homepage panel carries
+            // both alongside 筛选 and 排序).
+            let isLayout = !labels.isEmpty && labels.allSatisfy {
+                $0.range(of: "^\\d+列$", options: .regularExpression) != nil
+            }
+            let typeLabels: Set<String> = ["全部类型", "有码", "无码", "欧美", "FC2", "动漫", "华语"]
+            let isType = labels.contains("全部类型")
+                || (!labels.isEmpty && labels.allSatisfy { typeLabels.contains($0) })
+            let groupTitle = isLayout ? "布局" : isType ? "影片类型" : looksLikeSort ? "排序" : "筛选"
             groups.append(ListFilterGroup(
                 name: name,
                 isRadio: isRadio,
-                title: looksLikeSort ? "排序" : "筛选",
+                title: groupTitle,
                 options: options.prefix(12).map {
                     ListFilterOption(value: $0.value, label: $0.label, selected: $0.selected)
                 }
@@ -743,12 +769,12 @@ enum HTMLParser {
         let featuredIDs = Set(sections.flatMap { $0.cards.map(\.pathID) })
         let rest = cards.filter { !featuredIDs.contains($0.pathID) }
         if !rest.isEmpty {
-            sections.append(HomeSection(title: "最新磁链", cards: rest, moreHref: nil))
+            sections.append(HomeSection(title: "最新磁链", cards: rest, moreHref: nil, isMainList: true))
         }
         if sections.isEmpty, !cards.isEmpty {
-            sections.append(HomeSection(title: "首页", cards: cards, moreHref: nil))
+            sections.append(HomeSection(title: "首页", cards: cards, moreHref: nil, isMainList: true))
         }
-        return HomePage(sections: sections)
+        return HomePage(sections: sections, listCards: rest)
     }
 
     static func ranking(from html: String) -> RankingPage {
