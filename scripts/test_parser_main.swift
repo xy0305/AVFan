@@ -534,7 +534,7 @@ enum ParserTests {
         """
         let library = HTMLParser.libraryState(in: libraryHTML)
         expect(library?.csrfToken == "TOKEN123", "library csrf token")
-        expect(library?.reviewStatus == .none, "library state none when already-buttons hidden")
+        expect(library?.reviewStatus == ReviewStatus.none, "library state none when already-buttons hidden")
         expect(library?.watchlistURL == "/zh-CN/movies/s6bNHCTN/reviews", "library watchlist url")
         expect(library?.watchedActionType == "watched", "library watched action type")
         expect(library?.changeURL == "/zh-CN/movies/s6bNHCTN/list_items", "library change url")
