@@ -119,10 +119,25 @@ struct MovieDetailView: View {
         }
         .onChange(of: session.isSignedIn) { _, signedIn in
             if signedIn {
-                commentsLoaded = false
-                listsLoaded = false
-                comments = []
-                relatedRows = []
+                // Reload the detail for its library state, but
+                // only reset sections that are actually gated or
+                // not yet loaded. The session signal can flap
+                // false -> true mid-browse (a guest-parsed fetch
+                // followed by the self-check refetch), and the old
+                // unconditional clear wiped already-paged content:
+                // related lists loaded via 加载更多 visibly
+                // collapsed back to page one (build 32).
+                if commentsNeedLogin || !commentsLoaded {
+                    commentsLoaded = false
+                    comments = []
+                    commentsNeedLogin = false
+                }
+                if listsNeedLogin || listsFailed || !listsLoaded {
+                    listsLoaded = false
+                    relatedRows = []
+                    listsNeedLogin = false
+                    listsFailed = false
+                }
                 Task {
                     await model.load(card: card, settings: settings)
                     refreshResume()
@@ -1149,7 +1164,15 @@ struct MovieDetailView: View {
                 let known = Set(relatedRows.map(\.id))
                 relatedRows += parsed.filter { !known.contains($0.id) }
             }
-            listsNext = await HTMLParser.detached { HTMLParser.fragmentNextPage(in: fragment) }
+            let nextPage = await HTMLParser.detached { HTMLParser.fragmentNextPage(in: fragment) }
+            // Pagination must move forward: a fragment can carry
+            // a stale data-next-page (the same value on every
+            // page), which would refetch the page just loaded.
+            if let page, let nextPage, nextPage <= page {
+                listsNext = nil
+            } else {
+                listsNext = nextPage
+            }
             listsLoaded = true
             if page == nil, !gated {
                 listsFailed = false

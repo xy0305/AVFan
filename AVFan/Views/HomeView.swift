@@ -500,7 +500,7 @@ private struct HomeHeroPage: View {
 
     var body: some View {
         ZStack(alignment: .bottom) {
-            CoverImage(url: card.coverURL, code: card.code, anchorY: 0.22, allowUpscale: true, fitWholeImage: true)
+            CoverImage(url: card.coverURL, code: card.code, anchorY: 0.22, allowUpscale: true)
                 .frame(width: metrics.width, height: metrics.heroHeight)
             LinearGradient(
                 stops: [
