@@ -350,8 +350,8 @@ enum ParserTests {
         // Build 15: the real movie-toolbar on the captured homepage.
         // Its type/filter checkboxes carry no name attribute, which is
         // why the generic parse produced a partial panel on device.
-        let homeHTML = try fixture("home.html")
-        let toolbar = HTMLParser.listFilterForm(in: homeHTML)
+        let toolbarHomeHTML = try fixture("home.html")
+        let toolbar = HTMLParser.listFilterForm(in: toolbarHomeHTML)
         expect(toolbar?.toolbar != nil, "movie-toolbar detected on the homepage")
         expect(toolbar!.groups.map(\.title) == ["影片类型", "筛选", "排序", "布局", "布局"],
                "toolbar group titles, got \(toolbar!.groups.map(\.title))")
