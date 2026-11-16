@@ -110,11 +110,6 @@ struct MovieDetail: Hashable {
     /// when no direct media URL could be parsed — the WebView
     /// player fallback's entry condition (lock 1.3, step 4).
     var hasTrailerAffordance: Bool = false
-    /// The page's own number_letters directory path for this
-    /// movie's code prefix (e.g. /zh-CN/number_letters/DLDSS),
-    /// parsed from the detail page's own markup — nil when the
-    /// page carries no such link (never invented, lock 1.3 C).
-    var codePrefixPath: String? = nil
     /// Sample stills shown on the detail page (DMM jp-N images and
     /// avfan-hosted samples), in page order, cover excluded.
     var previewImages: [String] = []
@@ -131,6 +126,10 @@ struct MovieDetail: Hashable {
     /// (six each on the site, no "more" link).
     var alsoStarred: [MovieCard] = []
     var relatedWorks: [MovieCard] = []
+    /// The detail page's own 番号 prefix link (`/number_letters/IPZZ`
+    /// inside `.movie-number`). Nil when the page has no such link;
+    /// never invented.
+    var prefixLink: NamedLink? = nil
 
     var displayCode: String { code ?? pathID }
     var displayTitle: String { title.isEmpty ? displayCode : title }

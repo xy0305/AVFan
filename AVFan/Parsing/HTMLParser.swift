@@ -357,6 +357,21 @@ enum HTMLParser {
         return out
     }
 
+    /// The 番号 row's own prefix link, taken only from `.movie-number`.
+    /// Sidebar `/number_letters/` links are ignored. Nil when the
+    /// span has no such anchor — the URL is never invented.
+    static func movieNumberPrefix(in html: String) -> NamedLink? {
+        guard let regex = try? NSRegularExpression(
+            pattern: "<span[^>]*class=\"([^\"]*movie-number[^\"]*)\"[^>]*>([\\s\\S]*?)</span>",
+            options: [.caseInsensitive]
+        ) else { return nil }
+        let ns = html as NSString
+        guard let match = regex.firstMatch(in: html, range: NSRange(location: 0, length: ns.length)),
+              match.numberOfRanges >= 3 else { return nil }
+        let span = ns.substring(with: match.range(at: 2))
+        return prefixLinks(in: span).first
+    }
+
     /// id → visible text for every <label for="…"> on the page.
     private static func labelTexts(in html: String) -> [String: String] {
         var map: [String: String] = [:]
@@ -890,10 +905,8 @@ enum HTMLParser {
             guard let id = pathID(from: href) else { continue }
 
             let titleAttr = attribute("title", in: tag).map(unescape) ?? ""
-            let imgSrc = firstMatch("<img[^>]+src=\"([^\"]+)\"", in: inner)
-                ?? firstMatch("<img[^>]+src='([^']+)'", in: inner)
-            let imgAlt = firstMatch("<img[^>]+alt=\"([^\"]*)\"", in: inner).map(unescape)
-                ?? firstMatch("<img[^>]+alt='([^']*)'", in: inner).map(unescape) ?? ""
+            let imgSrc = firstMatch("<img[^>]+(?:data-src|data-original|src)=\"([^\"]+)\"", in: inner)
+            let imgAlt = firstMatch("<img[^>]+alt=\"([^\"]*)\"", in: inner).map(unescape) ?? ""
             let bold = firstMatch("class=\"[^\"]*font-bold[^\"]*\"[^>]*>([^<]+)", in: inner)
                 ?? firstMatch("<strong[^>]*>([^<]+)</strong>", in: inner)
             let sub = firstMatch("class=\"[^\"]*text-sm[^\"]*\"[^>]*>([^<]+)", in: inner)
@@ -966,13 +979,10 @@ enum HTMLParser {
                 }
             }
         }
-        // Sibling-cover pass (build 28): some sections render a
-        // card's cover OUTSIDE its title anchor (the anchor wraps
-        // only the code; the <img> is a sibling). The card then has
-        // a code but no cover — the owner's blank filmography rail.
-        // Scan the markup right after each still-coverless card's
-        // anchor, stopping at the next anchor so a neighbour's
-        // cover is never stolen.
+        // Sibling-cover pass: if a card's cover sits outside its
+        // title anchor, take the nearest image after (then before)
+        // that anchor, stopping at the neighbouring anchor so a
+        // neighbour's cover is not stolen.
         for index in cards.indices where cards[index].coverURL == nil {
             guard let anchorRange = html.range(of: cards[index].href) else { continue }
             var window = String(html[anchorRange.upperBound...].prefix(1500))
@@ -983,10 +993,6 @@ enum HTMLParser {
                 cards[index].coverURL = found
                 continue
             }
-            // Same pass, other side: the cover may sit just BEFORE
-            // the title anchor (sibling order swapped). Take the
-            // closest image behind the anchor, not crossing the
-            // previous card's anchor.
             let beforeText = String(html[..<anchorRange.lowerBound].suffix(1500))
             var bWindow = beforeText
             if let prevClose = beforeText.range(of: "</a>", options: [.caseInsensitive, .backwards]) {
@@ -1208,7 +1214,6 @@ enum HTMLParser {
             watchStreams: watchStreams(in: html, pageURL: pageURL),
             trailerURL: trailerURL(in: html),
             hasTrailerAffordance: hasTrailerAffordance(in: html),
-            codePrefixPath: codePrefixPath(in: html),
             previewImages: previewImages(in: html, cover: preferredCover),
             library: libraryState(in: html),
             commentsURL: firstMatch("data-comments-url=\"([^\"]+)\"", in: html).map(unescape),
@@ -1217,7 +1222,8 @@ enum HTMLParser {
                 ?? firstMatch("(/?[A-Za-z-]+/lists/related\\?movie_id=[A-Za-z0-9]+)", in: html).map(unescape),
             commentsCount: firstMatch("tabComments\"[^>]*>[\\s\\S]*?评论[\\s\\S]*?>(\\d+)<", in: html).flatMap { Int($0) },
             alsoStarred: sectionCards(in: html, heading: "还出演过"),
-            relatedWorks: sectionCards(in: html, heading: "相关作品")
+            relatedWorks: sectionCards(in: html, heading: "相关作品"),
+            prefixLink: movieNumberPrefix(in: html)
         )
     }
 
@@ -1244,25 +1250,76 @@ enum HTMLParser {
         }
         if slice.count > 60000 { slice = String(slice.prefix(60000)) }
         var seen = Set<String>()
-        return movieCards(in: slice).filter { seen.insert($0.pathID).inserted }.prefix(12).map { $0 }
+        let specialized = historyLinkCards(in: slice)
+        let parsed = specialized.isEmpty ? movieCards(in: slice) : specialized
+        return parsed.filter { seen.insert($0.pathID).inserted }.prefix(12).map { $0 }
     }
 
-    /// The detail page's own number_letters link for the movie's
-    /// code prefix: the markup is a span.movie-number whose prefix
-    /// is an anchor (<a href="/zh-CN/number_letters/DLDSS">DLDSS</a>-575).
-    /// Returns the anchor's href only when its text matches the
-    /// code prefix that follows it — never an invented URL.
-    static func codePrefixPath(in html: String) -> String? {
-        guard let span = firstMatch("class=\"[^\"]*movie-number[^\"]*\"[^>]*>([\\s\\S]*?)</span>", in: html) else { return nil }
-        guard let href = firstMatch("<a[^>]+href=\"([^\"]*/number_letters/[A-Za-z0-9%_-]+)\"[^>]*>([A-Za-z]+)</a>", in: span) else { return nil }
-        return unescape(href)
+    /// Cards in the detail page's 她/他还出演过 and 相关作品 grids.
+    /// Written from the real DLDSS-575 markup: one `history-link`
+    /// anchor per title, cover on `img src` (sometimes `data-src`)
+    /// near the start of the card, code in `<strong>`. The window
+    /// is cut at the next movie anchor so a later card's cover
+    /// cannot leak, and we do not depend on matching a distant `</a>`
+    /// across the star SVGs.
+    static func historyLinkCards(in html: String) -> [MovieCard] {
+        guard let regex = try? NSRegularExpression(
+            pattern: "<a([^>]*href=\"([^\"]*/movies/[A-Za-z0-9]{8})[^\"]*\"[^>]*)>",
+            options: [.caseInsensitive]
+        ) else { return [] }
+        let ns = html as NSString
+        let matches = regex.matches(in: html, range: NSRange(location: 0, length: ns.length))
+        var cards: [MovieCard] = []
+        var seen = Set<String>()
+        for (index, match) in matches.enumerated() {
+            let tag = ns.substring(with: match.range(at: 1))
+            let href = unescape(ns.substring(with: match.range(at: 2)))
+            guard let id = pathID(from: href), seen.insert(id).inserted else { continue }
+            let windowStart = match.range.location + match.range.length
+            let windowEnd = index + 1 < matches.count ? matches[index + 1].range.location : min(ns.length, windowStart + 2500)
+            let windowLen = max(0, windowEnd - windowStart)
+            let window = ns.substring(with: NSRange(location: windowStart, length: windowLen))
+            let titleAttr = attribute("title", in: tag).map(unescape) ?? ""
+            let imgSrc = firstMatch("<img[^>]+(?:data-src|data-original|src)=\"([^\"]+)\"", in: window)
+            let imgAlt = firstMatch("<img[^>]+alt=\"([^\"]*)\"", in: window).map(unescape) ?? ""
+            let bold = firstMatch("<strong[^>]*>([^<]+)</strong>", in: window)
+            let code = extractCode(from: bold ?? "") ?? extractCode(from: titleAttr) ?? extractCode(from: imgAlt)
+            var title = stripTags(bold ?? "")
+            if let code, title == code { title = "" }
+            if title.isEmpty {
+                if let code, titleAttr.contains(code) {
+                    title = titleAttr.replacingOccurrences(of: "[\(code)]", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
+                } else if !titleAttr.isEmpty {
+                    title = titleAttr
+                } else {
+                    title = imgAlt
+                }
+            }
+            let candidates = CoverURLPolicy.collect(from: window) + [imgSrc].compactMap { $0 }.map { absoluteURL($0) }
+            let cover = CoverURLPolicy.preferred(from: candidates)
+            cards.append(MovieCard(
+                pathID: id,
+                href: href,
+                code: code,
+                title: title,
+                coverURL: cover,
+                date: nil,
+                ratingText: firstMatch("(\\d+(?:\\.\\d+)?分[^<]*)", in: window).map(stripTags),
+                badges: [],
+                canPlay: window.contains("可播放")
+            ))
+        }
+        return cards
     }
 
     /// Whether the page carries a trailer player trigger at all
     /// (the trailer-player Stimulus component or its src value),
     /// regardless of whether a direct media URL parsed out.
     static func hasTrailerAffordance(in html: String) -> Bool {
-        html.contains("trailer-player") || html.contains("data-trailer")
+        html.contains("trailer-player")
+            || html.contains("data-trailer")
+            || html.contains(#"data-caption="预告片""#)
+            || html.contains("data-caption='预告片'")
     }
 
     /// Tag stripping that respects quoted attribute values: a `>`
@@ -1383,95 +1440,91 @@ enum HTMLParser {
         return nil
     }
 
-    /// Related-list rows from the related-lists fragment: each
-    /// /lists/<id> anchor's name plus the counts that follow it.
+    /// Related-list rows from the related-lists fragment.
+    /// Primary path is the real markup collected from DLDSS-575,
+    /// JUR-875, IPZZ-936 and SNOS-347: a `.item` / `#list-…` row
+    /// with `a.name.primary-link`, `span.works-count` (`14部作品,&nbsp;`)
+    /// and `span.hits-count` (`被查看0次`). Existing simpler
+    /// fixtures (plain `/lists/` anchors plus count text, including
+    /// single-quoted hrefs) stay as fallbacks. Names are never
+    /// taken from a cover URL.
     static func relatedListRows(in fragment: String) -> [RelatedListRow] {
-        guard let regex = try? NSRegularExpression(
-            pattern: "<a[^>]+href=\"([^\"]*/lists/[^\"/]+)\"[^>]*>([\\s\\S]*?)</a>",
-            options: [.caseInsensitive]
-        ) else { return [] }
-        let ns = fragment as NSString
-        let matches = regex.matches(in: fragment, range: NSRange(location: 0, length: ns.length))
         var rows: [RelatedListRow] = []
-        var seen = Set<String>()
         var indexByKey: [String: Int] = [:]
-        for (index, match) in matches.enumerated() {
-            let href = unescape(ns.substring(with: match.range(at: 1)))
+
+        func normalizedHref(_ raw: String) -> (href: String, key: String)? {
+            let href = unescape(raw)
             let stripped = stripLocale(href)
-            if stripped.hasPrefix("lists/related") { continue }
+            if stripped.hasPrefix("lists/related") { return nil }
             let idPart = stripped.split(separator: "?", maxSplits: 1).first.map(String.init) ?? stripped
             let last = idPart.split(separator: "/").last.map(String.init) ?? ""
-            if last.isEmpty || last == "lists" || last == "related" { continue }
-            var name = stripTags(ns.substring(with: match.range(at: 2)))
-            let end = index + 1 < matches.count ? matches[index + 1].range.location : ns.length
-            let extra = min(400, max(0, ns.length - end))
-            let windowStart = match.range.location
-            let windowLen = max(0, (end - windowStart) + extra)
-            let tail = stripTags(ns.substring(with: NSRange(location: windowStart, length: min(windowLen, ns.length - windowStart))))
-            let movies = firstMatch(#"(\d+)\s*部作品"#, in: tail).flatMap { Int($0) }
-            let views = firstMatch(#"被查看\s*(\d+)\s*次"#, in: tail).flatMap { Int($0) }
-            if name.count < 2 {
-                // Name is the text immediately before the first
-                // count phrase, so a later row cannot leak in.
-                var candidate = tail
-                if let r = candidate.range(of: #"\d+\s*部作品"#, options: .regularExpression) {
-                    candidate = String(candidate[..<r.lowerBound])
-                }
-                candidate = candidate.trimmingCharacters(in: CharacterSet(charactersIn: " ，,·・"))
-                if candidate.count >= 2 { name = candidate }
+            if last.isEmpty || last == "lists" || last == "related" { return nil }
+            return (href, idPart)
+        }
+
+        func cleanedName(_ raw: String) -> String {
+            var name = stripTagsQuoteAware(raw)
+            name = name.replacingOccurrences(of: "\u{00a0}", with: " ")
+            if let r = name.range(of: #"\d+\s*部作品"#, options: .regularExpression) {
+                name = String(name[..<r.lowerBound])
             }
-            let lowerName = name.lowercased()
-            if lowerName.contains("cover.jpg") || lowerName.hasSuffix(" cover") || name.hasPrefix("http") {
-                name = ""
+            if let r = name.range(of: #"被查看\s*\d+\s*次"#, options: .regularExpression) {
+                name = String(name[..<r.lowerBound])
             }
-            if let existing = indexByKey[idPart] {
+            name = name.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: " ，,·・")))
+            let lower = name.lowercased()
+            if lower.contains("cover.jpg") || lower.hasSuffix(" cover") || name.hasPrefix("http") {
+                return ""
+            }
+            return name
+        }
+
+        func counts(in text: String) -> (Int?, Int?) {
+            let plain = unescape(text).replacingOccurrences(of: "\u{00a0}", with: " ")
+            let movies = firstMatch(#"class="works-count"[^>]*>\s*(\d+)\s*部作品"#, in: plain).flatMap { Int($0) }
+                ?? firstMatch(#"(\d+)\s*部作品"#, in: plain).flatMap { Int($0) }
+            let views = firstMatch(#"class="hits-count"[^>]*>\s*被查看\s*(\d+)\s*次"#, in: plain).flatMap { Int($0) }
+                ?? firstMatch(#"被查看\s*(\d+)\s*次"#, in: plain).flatMap { Int($0) }
+            return (movies, views)
+        }
+
+        func merge(name: String, href: String, key: String, movies: Int?, views: Int?) {
+            if let existing = indexByKey[key] {
                 var row = rows[existing]
-                if name.count >= 2, (row.name.count < 2 || name.count < row.name.count) {
+                if name.count >= 2, (row.name.count < 2 || (name.count < row.name.count && !name.isEmpty)) {
                     row.name = name
                 }
                 if row.moviesCount == nil { row.moviesCount = movies }
                 if row.viewsCount == nil { row.viewsCount = views }
                 rows[existing] = row
-            } else {
-                indexByKey[idPart] = rows.count
-                seen.insert(href)
+            } else if name.count >= 2 {
+                indexByKey[key] = rows.count
                 rows.append(RelatedListRow(name: name, href: href, moviesCount: movies, viewsCount: views))
             }
         }
-        rows = rows.filter { !$0.name.isEmpty }
-        if rows.isEmpty {
-            // Fallback (lock 1.3): the fragment's rows may use
-            // single-quoted hrefs or non-anchor carriers. Scan for
-            // any /lists/ href, then read the name and counts from
-            // the text segment that follows it.
-            let loose = allMatches("href=['\"]([^'\"]*/lists/[^'\"/]+)['\"]", in: fragment)
-            var seenLoose = Set<String>()
-            for href in loose {
-                let clean = unescape(href)
-                guard seenLoose.insert(clean).inserted,
-                      let anchorRange = fragment.range(of: href) else { continue }
-                // Start AFTER the href and skip the rest of the
-                // opening tag, so the URL itself never leaks into
-                // the row's name.
-                let afterHref = fragment[anchorRange.upperBound...]
-                guard let tagEnd = afterHref.firstIndex(of: ">") else { continue }
-                let tail = stripTagsQuoteAware(String(afterHref[afterHref.index(after: tagEnd)...].prefix(600)))
-                var name = ""
-                var candidate = tail
-                for pattern in [#"\d+\s*部作品"#, #"被查看\s*\d+\s*次"#] {
-                    candidate = candidate.replacingOccurrences(of: pattern, with: "", options: .regularExpression)
-                }
-                candidate = candidate.trimmingCharacters(in: CharacterSet(charactersIn: " ，,·・"))
-                if candidate.count >= 2 { name = String(candidate.prefix(60)) }
-                guard !name.isEmpty else { continue }
-                rows.append(RelatedListRow(
-                    name: name,
-                    href: clean,
-                    moviesCount: firstMatch(#"(\d+)\s*部作品"#, in: tail).flatMap { Int($0) },
-                    viewsCount: firstMatch(#"被查看\s*(\d+)\s*次"#, in: tail).flatMap { Int($0) }
-                ))
+
+        // Real fragment: anchors into /lists/<id>, name in the
+        // anchor, counts in the following works-count / hits-count
+        // spans (or plain 部作品 / 被查看 text).
+        if let regex = try? NSRegularExpression(
+            pattern: "<a[^>]+href=[\"']([^\"']*/lists/[^\"'/]+)[\"'][^>]*>([\\s\\S]*?)</a>",
+            options: [.caseInsensitive]
+        ) {
+            let ns = fragment as NSString
+            let matches = regex.matches(in: fragment, range: NSRange(location: 0, length: ns.length))
+            for (index, match) in matches.enumerated() {
+                guard let ident = normalizedHref(ns.substring(with: match.range(at: 1))) else { continue }
+                let name = cleanedName(ns.substring(with: match.range(at: 2)))
+                let tailStart = match.range.location + match.range.length
+                let nextLoc = index + 1 < matches.count ? matches[index + 1].range.location : ns.length
+                let tailLen = min(500, max(0, nextLoc - tailStart))
+                let tail = ns.substring(with: NSRange(location: tailStart, length: tailLen))
+                let (movies, views) = counts(in: tail)
+                merge(name: name, href: ident.href, key: ident.key, movies: movies, views: views)
             }
         }
+
+        rows = rows.filter { !$0.name.isEmpty }
         return rows
     }
 
@@ -1815,48 +1868,58 @@ enum HTMLParser {
         return results
     }
 
-    /// The detail page's own preview trailer: the JSON-LD VideoObject
-    /// contentUrl when it points at a preview host (DMM's pv CDN), any
-    /// d1.avfan.com mp4, or any DMM /pv/ mp4 in the page. Full watch
-    /// streams are watchStreams' job; this is the media strip's cell.
+    /// The detail page's own preview trailer. Candidate order is
+    /// locked: an avfan-hosted media URL from the page (the
+    /// signed-in `data-trailer-player-src-value`, a d1/c1/other
+    /// avfan mp4 or HLS playlist) wins over a DMM `/pv/` sample.
+    /// `/api/` paths are rejected. JSON-LD `contentUrl` and any
+    /// remaining preview mp4/m3u8 are fallbacks.
     static func trailerURL(in html: String) -> String? {
-        // Candidates in page order: the trailer trigger's declared
-        // source, the structured-data contentUrl, then any media
-        // URL in the page. Lock 1.3 build 28 ranking: an
-        // avfan-hosted source (d1.avfan.com) beats a DMM sample —
-        // the DMM preview CDN refuses non-browser stacks even with
-        // a Referer, the site's own hosting does not.
-        var candidates: [String] = []
-        func consider(_ raw: String?) {
-            guard let raw else { return }
+        let text = html.replacingOccurrences(of: "\\/", with: "/")
+        var avfan: [String] = []
+        var declared: [String] = []
+        var other: [String] = []
+
+        func consider(_ raw: String, isDeclared: Bool) {
             let value = unescape(raw).trimmingCharacters(in: .whitespacesAndNewlines)
-            guard let url = URL(string: value), let host = url.host?.lowercased() else { return }
+            guard value.hasPrefix("http"), let url = URL(string: value), let host = url.host?.lowercased() else { return }
             let path = url.path.lowercased()
-            let isMedia = path.hasSuffix(".mp4") || path.hasSuffix(".m3u8")
+            let lower = value.lowercased()
+            if path.contains("/api/") || lower.contains("/api/") { return }
+            let isMedia = path.hasSuffix(".mp4") || path.hasSuffix(".m3u8") || path.hasSuffix(".m4v")
+                || lower.contains(".m3u8?") || lower.contains(".mp4?")
             guard isMedia else { return }
-            if host == "d1.avfan.com" || (host.contains("dmm.co.jp") && path.contains("/pv/")) {
-                if !candidates.contains(value) { candidates.append(value) }
+            if host.contains("avfan.com") {
+                if !avfan.contains(value) { avfan.append(value) }
+                return
+            }
+            if isDeclared {
+                if !declared.contains(value) { declared.append(value) }
+                return
+            }
+            let isDMM = host.contains("dmm.co.jp") || host.contains("dmm.com") || host.contains("fanza")
+            if isDMM, path.contains("/pv/") || path.hasSuffix(".mp4") || path.hasSuffix(".m3u8") {
+                if !other.contains(value) { other.append(value) }
             }
         }
-        let declared = firstMatch("data-trailer-player-src-value=\"([^\"]+)\"", in: html)
-        if let declared, declared.hasPrefix("http") {
-            consider(declared)
+
+        if let raw = firstMatch("data-trailer-player-src-value=\"([^\"]+)\"", in: html)
+            ?? firstMatch("data-trailer-player-src-value='([^']+)'", in: html) {
+            consider(raw, isDeclared: true)
         }
-        let text = html.replacingOccurrences(of: "\\/", with: "/")
-        consider(firstMatch(#"contentUrl"\s*:\s*"([^"]+)""#, in: text))
-        for raw in allMatches(#"(https?://[^\s"'<>]+\.(?:mp4|m3u8)(?:\?[^\s"'<>]*)?)"#, in: text) {
-            consider(raw)
+        if let content = firstMatch(#"contentUrl"\s*:\s*"([^"]+)""#, in: text) {
+            consider(content, isDeclared: false)
         }
-        if let avfanHosted = candidates.first(where: { URL(string: $0)?.host?.lowercased() == "d1.avfan.com" }) {
-            return avfanHosted
+        if let regex = try? NSRegularExpression(
+            pattern: #"(https?://[^\s"'<>]+(?:\.mp4|\.m3u8|\.m4v)(?:\?[^\s"'<>]*)?)"#,
+            options: [.caseInsensitive]
+        ) {
+            let ns = text as NSString
+            for match in regex.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
+                consider(ns.substring(with: match.range(at: 1)), isDeclared: false)
+            }
         }
-        if let first = candidates.first { return first }
-        // Last resort: the declared player source even when its
-        // extension is unusual (the site's own player uses it as-is).
-        if let declared, declared.hasPrefix("http") {
-            return unescape(declared).trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        return nil
+        return avfan.first ?? declared.first ?? other.first
     }
 
     /// Sample stills embedded in the detail page: DMM sample images

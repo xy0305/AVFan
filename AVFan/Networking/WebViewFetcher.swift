@@ -11,7 +11,7 @@ final class WebViewFetcher: NSObject, WKNavigationDelegate {
     private var continuation: CheckedContinuation<String, Error>?
     private var timeoutTask: Task<Void, Never>?
 
-    func html(for url: URL, ageCookie: String?) async throws -> String {
+    func html(for url: URL, ageCookie: String?, referer: URL? = nil) async throws -> String {
         if let ageCookie {
             await injectCookie(ageCookie, for: url)
         }
@@ -30,6 +30,9 @@ final class WebViewFetcher: NSObject, WKNavigationDelegate {
             }
             var request = URLRequest(url: url)
             request.setValue(SiteClient.mobileSafariUA, forHTTPHeaderField: "User-Agent")
+            if let referer {
+                request.setValue(referer.absoluteString, forHTTPHeaderField: "Referer")
+            }
             webView.load(request)
         }
     }

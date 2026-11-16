@@ -75,6 +75,8 @@ enum ParserTests {
         expect(detail.summary?.hasPrefix("デートして、温泉入って") == true, "summary from #description, got \(detail.summary?.prefix(20) ?? "nil")")
         expect(detail.commentsURL == "/zh-CN/movies/s6bNHCTN/comments", "comments url, got \(detail.commentsURL ?? "nil")")
         expect(detail.relatedListsURL == "/zh-CN/lists/related?movie_id=s6bNHCTN", "related lists url, got \(detail.relatedListsURL ?? "nil")")
+        expect(detail.prefixLink?.name == "IPZZ" && (detail.prefixLink?.href.contains("/number_letters/IPZZ") == true),
+               "IPZZ prefix link from movie-number, got \(String(describing: detail.prefixLink))")
         // Build 25: real comment markup (div.comment-list-item +
         // .username + cursor load-more), per the owner's screenshots
         // and the site's comment controller.
@@ -717,50 +719,65 @@ enum ParserTests {
         let shellComments = HTMLParser.movieComments(in: movieHTML)
         expect(shellComments.isEmpty, "empty #comments shell is not parsed as comments, got \(shellComments)")
 
-        let lists13 = try fixture("related-lists-jur875.html")
-        let rows13 = HTMLParser.relatedListRows(in: lists13)
-        expect(rows13.count == 2, "1.3 related lists count, got \(rows13.count) \(rows13)")
-        expect(rows13[0].name == "ntrr", "JUR-875 list name, got \(rows13[0].name)")
-        expect(rows13[0].moviesCount == 14 && rows13[0].viewsCount == 0, "JUR-875 ntrr is 14部作品 被查看0次, got \(rows13[0])")
-        expect(rows13[0].href.contains("/lists/") && !rows13[0].href.contains("/api/"), "list link is not an /api/ path")
+        // Build 28: real related-list fragments collected from the
+        // site (movie-page Referer, public HTML). DLDSS-575, JUR-875,
+        // IPZZ-936, SNOS-347. Parser is written from this markup
+        // (a.name.primary-link, works-count, hits-count).
+        let listsDLDSS = try fixture("related-lists-dldss575.html")
+        let rowsDLDSS = HTMLParser.relatedListRows(in: listsDLDSS)
+        expect(rowsDLDSS.count == 1, "DLDSS-575 related lists count, got \(rowsDLDSS.count) \(rowsDLDSS)")
+        expect(rowsDLDSS[0].name == "ntrr", "DLDSS-575 list name, got \(rowsDLDSS[0].name)")
+        expect(rowsDLDSS[0].moviesCount == 14 && rowsDLDSS[0].viewsCount == 0,
+               "DLDSS-575 ntrr is 14部作品 被查看0次, got \(rowsDLDSS[0])")
+        expect(rowsDLDSS[0].href.contains("/lists/Yim2aEoC") && !rowsDLDSS[0].href.contains("/api/"),
+               "DLDSS-575 list link is not an /api/ path, got \(rowsDLDSS[0].href)")
 
-        // Build 28: DLDSS-575's real related-lists fragment
-        // (captured from the site's own endpoint): exactly one
-        // row — ntrr, 14 works, 0 views.
-        let lists575 = try fixture("related-lists-dldss575.html")
-        let rows575 = HTMLParser.relatedListRows(in: lists575)
-        expect(rows575.count == 1, "DLDSS-575 related lists count, got \(rows575.count) \(rows575)")
-        expect(rows575.first?.name == "ntrr", "DLDSS-575 list name, got \(rows575.first?.name ?? "nil")")
-        expect(rows575.first?.moviesCount == 14 && rows575.first?.viewsCount == 0, "DLDSS-575 ntrr is 14部作品 被查看0次, got \(String(describing: rows575.first))")
-        expect(rows575.first?.href.hasSuffix("/lists/Yim2aEoC") == true, "DLDSS-575 list href, got \(rows575.first?.href ?? "nil")")
-        // Build 28: code prefix path from the page's own
-        // movie-number markup; absent markup stays nil.
-        expect(HTMLParser.codePrefixPath(in: "<span class=\"movie-number\"><a href=\"/zh-CN/number_letters/DLDSS\">DLDSS</a>-575</span>") == "/zh-CN/number_letters/DLDSS", "code prefix path")
-        expect(HTMLParser.codePrefixPath(in: "<span class=\"movie-number\">IPZZ-936</span>") == nil, "no prefix link, no invented path")
-        // Build 28: sibling covers — a card whose anchor wraps
-        // only the code still gets its cover from the sibling img
-        // (either side), and never steals the next card's cover.
-        let siblingAfter = """
-        <h3>她/他还出演过</h3>
-        <div class="cell"><a href="/zh-CN/movies/aaaa1111"><strong>DLDSS-478</strong></a><img src="https://c1.avfan.com/covers/dl/dldss478.jpg"></div>
-        <div class="cell"><a href="/zh-CN/movies/bbbb2222"><strong>SONE-346</strong></a><img src="https://c1.avfan.com/covers/so/sone346.jpg"></div>
+        let listsJUR = try fixture("related-lists-jur875.html")
+        let rowsJUR = HTMLParser.relatedListRows(in: listsJUR)
+        expect(rowsJUR.count == 4, "JUR-875 related lists count, got \(rowsJUR.count) \(rowsJUR)")
+        expect(rowsJUR.map(\.name) == ["若菜れいか", "哈喽呀看", "调教女1", "hcham"],
+               "JUR-875 list names, got \(rowsJUR.map(\.name))")
+        expect(rowsJUR[0].moviesCount == 25 && rowsJUR[0].viewsCount == 0, "JUR-875 first counts, got \(rowsJUR[0])")
+        expect(rowsJUR[3].moviesCount == 179, "JUR-875 hcham count, got \(rowsJUR[3])")
+
+        let listsIPZZ = try fixture("related-lists-ipzz936.html")
+        let rowsIPZZ = HTMLParser.relatedListRows(in: listsIPZZ)
+        expect(rowsIPZZ.count == 4, "IPZZ-936 related lists count, got \(rowsIPZZ.count)")
+        expect(rowsIPZZ.map(\.name) == ["哈喽呀看", "有碼肥臀", "日本无码", "hcham"],
+               "IPZZ-936 list names, got \(rowsIPZZ.map(\.name))")
+        expect(rowsIPZZ[0].moviesCount == 28 && rowsIPZZ[2].moviesCount == 69, "IPZZ-936 counts")
+
+        let listsSNOS = try fixture("related-lists-snos347.html")
+        let rowsSNOS = HTMLParser.relatedListRows(in: listsSNOS)
+        expect(rowsSNOS.count == 4, "SNOS-347 related lists count, got \(rowsSNOS.count) \(rowsSNOS)")
+        expect(rowsSNOS[0].name == "母狗调教" && rowsSNOS[0].moviesCount == 215 && rowsSNOS[0].viewsCount == 15,
+               "SNOS-347 first row, got \(rowsSNOS[0])")
+        expect(rowsSNOS[1].name == "痴汉公交" && rowsSNOS[1].moviesCount == 17, "SNOS-347 second row, got \(rowsSNOS[1])")
+        expect(HTMLParser.fragmentNextPage(in: listsSNOS) == 2, "SNOS-347 real fragment next page, got \(String(describing: HTMLParser.fragmentNextPage(in: listsSNOS)))")
+
+        let listsEmpty = try fixture("related-lists-empty.html")
+        expect(HTMLParser.relatedListRows(in: listsEmpty).isEmpty,
+               "尚无内容 is a successful empty list, got \(HTMLParser.relatedListRows(in: listsEmpty))")
+
+        let dldssPartial = try fixture("movie-dldss575-partial.html")
+        let dldssDetail = HTMLParser.movieDetail(from: dldssPartial, url: URL(string: "https://avfan.com/zh-CN/movies/7XcoFgaf")!)
+        expect(dldssDetail.prefixLink?.name == "DLDSS" && (dldssDetail.prefixLink?.href.contains("/number_letters/DLDSS") == true),
+               "DLDSS prefix comes from movie-number, not the sidebar, got \(String(describing: dldssDetail.prefixLink))")
+        expect(dldssDetail.relatedListsURL == "/zh-CN/lists/related?movie_id=7XcoFgaf",
+               "DLDSS-575 related lists url, got \(dldssDetail.relatedListsURL ?? "nil")")
+        expect(HTMLParser.hasTrailerAffordance(in: dldssPartial) == true,
+               "logged-out 预告片 tile is a trailer affordance")
+        expect(dldssDetail.trailerURL == "https://cc3001.dmm.co.jp/pv/CyAsExldrgefJ9dbL-StoYJox5J8QAQwz8va45VBviUfx307yIafqv6-81Yz16bd8/1dldss00575mmb.mp4",
+               "DLDSS-575 public trailer is the JSON-LD DMM sample, got \(String(describing: dldssDetail.trailerURL))")
+
+        let mixedTrailer = """
+        <script type="application/ld+json">{"contentUrl":"https://cc3001.dmm.co.jp/pv/abc/jur00875mmb.mp4"}</script>
+        <a data-trailer-player-src-value="https://d1.avfan.com/trailers/jur875.m3u8">预告片</a>
         """
-        let sibCards = HTMLParser.sectionCards(in: siblingAfter, heading: "还出演过")
-        expect(sibCards.count == 2 && sibCards[0].coverURL?.contains("dldss478") == true, "sibling cover after anchor, got \(sibCards.map { $0.coverURL ?? "nil" })")
-        expect(sibCards.count == 2 && sibCards[1].coverURL?.contains("sone346") == true, "second sibling cover is its own, got \(sibCards.map { $0.coverURL ?? "nil" })")
-        let siblingBefore = """
-        <h3>她/他还出演过</h3>
-        <div class="cell"><img src='https://c1.avfan.com/covers/dl/dldss478.jpg'><a href="/zh-CN/movies/aaaa1111"><strong>DLDSS-478</strong></a></div>
-        """
-        let sibBeforeCards = HTMLParser.sectionCards(in: siblingBefore, heading: "还出演过")
-        expect(sibBeforeCards.count == 1 && sibBeforeCards[0].coverURL?.contains("dldss478") == true, "sibling cover before anchor (single-quoted), got \(sibBeforeCards.map { $0.coverURL ?? "nil" })")
-        // Build 28: avfan-hosted trailer beats a DMM sample when
-        // both are in the same page.
-        let bothTrailers = """
-        <div data-trailer-player-src-value="https://cc3001.dmm.co.jp/pv/x/dldss575mmb.mp4"></div>
-        <video><source src="https://d1.avfan.com/trailers/dldss575.m3u8"></video>
-        """
-        expect(HTMLParser.trailerURL(in: bothTrailers) == "https://d1.avfan.com/trailers/dldss575.m3u8", "avfan-hosted trailer preferred, got \(String(describing: HTMLParser.trailerURL(in: bothTrailers)))")
+        expect(HTMLParser.trailerURL(in: mixedTrailer) == "https://d1.avfan.com/trailers/jur875.m3u8",
+               "avfan-hosted signed-in trailer wins over a DMM sample, got \(String(describing: HTMLParser.trailerURL(in: mixedTrailer)))")
+        expect(HTMLParser.trailerURL(in: "<video src=\"https://avfan.com/api/play.m3u8\"></video>") == nil,
+               "trailer parser rejects /api/ HLS URLs")
 
         let preview13 = try fixture("preview-with-ad.html")
         let stills13 = HTMLParser.previewImages(in: preview13, cover: "https://c1.avfan.com/covers/jr/jur875.jpg")
@@ -783,7 +800,26 @@ enum ParserTests {
         expect(filoCards.allSatisfy { ($0.coverURL ?? "").contains("/covers/") },
                "filmography uses front covers only, got \(filoCards.map { $0.coverURL ?? "nil" })")
 
-        print("PASS: home, detail magnets, ranking merge, hot casts, HQ cover sources, empty shell, block detection, cover policy, login signals, ranking tabs, pagination, news, series, detail cover identity, page map, cast cards, prefix links, filter form, homepage panel, auto-next, home main list, movie toolbar, tab hygiene, tab locale guard, drawer shortcuts, poster quality, javbus, tenhow, amazon, avbase catalogue, trailer and stills, library sync parsing, cast profile, comments sanitize, related lists, preview whitelist, filmography")
+        let filoReal = try fixture("filmography-dldss575.html")
+        let filoStarred = HTMLParser.sectionCards(in: filoReal, heading: "还出演过")
+        expect(filoStarred.count == 6, "real DLDSS-575 filmography count, got \(filoStarred.count)")
+        expect(Array(filoStarred.map(\.displayCode).prefix(3)) == ["DLDSS-478", "SONE-346", "SONE-297"],
+               "real filmography first three codes, got \(filoStarred.map(\.displayCode))")
+        expect(filoStarred.allSatisfy { ($0.coverURL ?? "").contains("/covers/") },
+               "real filmography covers present, got \(filoStarred.map { $0.coverURL ?? "nil" })")
+        expect(filoStarred[0].coverURL == "https://c1.avfan.com/covers/np/NPlstW.jpg",
+               "DLDSS-478 front cover, got \(filoStarred[0].coverURL ?? "nil")")
+        expect(filoStarred[1].coverURL == "https://c1.avfan.com/covers/io/IoD5hv.jpg",
+               "SONE-346 front cover, got \(filoStarred[1].coverURL ?? "nil")")
+        expect(filoStarred[2].coverURL == "https://c1.avfan.com/covers/ft/Ft7ZGX.jpg",
+               "SONE-297 front cover, got \(filoStarred[2].coverURL ?? "nil")")
+        let filoRelated = HTMLParser.sectionCards(in: filoReal, heading: "相关作品")
+        expect(filoRelated.count == 6, "real related-works count, got \(filoRelated.count)")
+        expect(filoRelated.allSatisfy { ($0.coverURL ?? "").contains("/covers/") },
+               "related-works covers present, got \(filoRelated.map { $0.coverURL ?? "nil" })")
+
+
+        print("PASS: home, detail magnets, ranking merge, hot casts, HQ cover sources, empty shell, block detection, cover policy, login signals, ranking tabs, pagination, news, series, detail cover identity, page map, cast cards, prefix links, filter form, homepage panel, auto-next, home main list, movie toolbar, tab hygiene, tab locale guard, drawer shortcuts, poster quality, javbus, tenhow, amazon, avbase catalogue, trailer and stills, library sync parsing, cast profile, comments sanitize, related lists, preview whitelist, filmography, real list fragments, number prefix, avfan trailer preference")
     }
 }
 

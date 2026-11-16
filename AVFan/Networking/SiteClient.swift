@@ -167,41 +167,68 @@ actor SiteClient {
     }
 
     /// HTML fragment fetch in the site's session, mirroring the
-    /// page's own XHR fragment loads (cast details panel, review
-    /// lists). Returns the raw fragment text. Lock 1.3 build 28:
-    /// the Referer is the page the fragment belongs to (the movie
-    /// page for detail fragments — the site root is not what the
-    /// page itself sends), and a blocked/failed URLSession fetch
-    /// falls back to the WebView session like full pages do,
-    /// instead of surfacing as an empty fragment upstream.
-    func fragment(for url: URL, csrf: String?, referer: URL? = nil) async throws -> String {
+    /// page's own XHR fragment loads (related lists, comments, cast
+    /// details). Referer is the page that declared the fragment
+    /// (the movie detail URL for related lists) — never a bare
+    /// https://avfan.com/. 403/429/503 and Cloudflare challenge
+    /// pages fall back to a real WKWebView session, same as page HTML.
+    func fragment(
+        for url: URL,
+        csrf: String?,
+        referer: URL? = nil,
+        ageCookie: String? = nil,
+        allowWebViewFallback: Bool = true
+    ) async throws -> String {
         do {
-            try await respectRateLimit()
-            var request = URLRequest(url: url)
-            request.setValue(Self.mobileSafariUA, forHTTPHeaderField: "User-Agent")
-            request.setValue("text/html", forHTTPHeaderField: "Accept")
-            request.setValue("XMLHttpRequest", forHTTPHeaderField: "X-Requested-With")
-            request.setValue(referer?.absoluteString ?? "https://avfan.com/", forHTTPHeaderField: "Referer")
-            if let csrf { request.setValue(csrf, forHTTPHeaderField: "X-CSRF-Token") }
-            let (data, response) = try await session.data(for: request)
-            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-            guard (200..<300).contains(status) else {
-                throw SiteClientError.transport("HTTP \(status)")
-            }
-            return String(data: data, encoding: .utf8) ?? String(decoding: data, as: UTF8.self)
-        } catch {
-            // WebView fallback (same route as html()): the shared
-            // WebKit session may pass where URLSession was refused.
-            let html = try await WebViewFetcher.shared.html(for: url, ageCookie: nil)
-            await CookieBridge.exportWebKitToShared()
+            let html = try await fetchFragmentWithURLSession(url: url, csrf: csrf, referer: referer, ageCookie: ageCookie)
             if HTMLParser.isBlocked(html, status: nil) {
                 throw SiteClientError.blocked(status: 403, url: url)
             }
-            if html.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                throw SiteClientError.transport("片段为空")
-            }
             return html
+        } catch {
+            let shouldFallback: Bool
+            if case SiteClientError.blocked = error { shouldFallback = true }
+            else if let urlError = error as? URLError, urlError.code == .userAuthenticationRequired {
+                shouldFallback = true
+            } else if let raw = error as? HTTPStatusError, raw.status == 403 || raw.status == 429 || raw.status == 503 {
+                shouldFallback = true
+            } else {
+                shouldFallback = false
+            }
+            if shouldFallback && allowWebViewFallback {
+                let html = try await fetchWithWebView(url: url, ageCookie: ageCookie, referer: referer)
+                if HTMLParser.isBlocked(html, status: nil) {
+                    throw SiteClientError.blocked(status: 403, url: url)
+                }
+                return html
+            }
+            if let raw = error as? HTTPStatusError, raw.status == 403 || raw.status == 429 || raw.status == 503 {
+                throw SiteClientError.blocked(status: raw.status, url: url)
+            }
+            throw error
         }
+    }
+
+    private func fetchFragmentWithURLSession(url: URL, csrf: String?, referer: URL?, ageCookie: String?) async throws -> String {
+        try await respectRateLimit()
+        if ageCookie != nil { await CookieBridge.applyLegalAge(true) }
+        var request = URLRequest(url: url)
+        request.setValue(Self.mobileSafariUA, forHTTPHeaderField: "User-Agent")
+        request.setValue("text/html", forHTTPHeaderField: "Accept")
+        request.setValue("XMLHttpRequest", forHTTPHeaderField: "X-Requested-With")
+        if let referer {
+            request.setValue(referer.absoluteString, forHTTPHeaderField: "Referer")
+        }
+        if let csrf { request.setValue(csrf, forHTTPHeaderField: "X-CSRF-Token") }
+        let (data, response) = try await session.data(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        if status == 403 || status == 429 || status == 503 {
+            throw HTTPStatusError(status: status)
+        }
+        guard (200..<300).contains(status) else {
+            throw SiteClientError.transport("HTTP \(status)")
+        }
+        return String(data: data, encoding: .utf8) ?? String(decoding: data, as: UTF8.self)
     }
 
     private func fetchWithURLSession(url: URL, locale: SiteLocale, ageCookie: String?) async throws -> String {
@@ -223,10 +250,10 @@ actor SiteClient {
         return String(data: data, encoding: .utf8) ?? String(decoding: data, as: UTF8.self)
     }
 
-    private func fetchWithWebView(url: URL, ageCookie: String?) async throws -> String {
+    private func fetchWithWebView(url: URL, ageCookie: String?, referer: URL? = nil) async throws -> String {
         try await respectRateLimit()
         await CookieBridge.applyLegalAge(ageCookie != nil)
-        let html = try await WebViewFetcher.shared.html(for: url, ageCookie: ageCookie)
+        let html = try await WebViewFetcher.shared.html(for: url, ageCookie: ageCookie, referer: referer)
         await CookieBridge.exportWebKitToShared()
         return html
     }
