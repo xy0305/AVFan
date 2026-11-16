@@ -35,7 +35,7 @@ struct MovieDetailView: View {
     /// planned, pushing the play row past the artwork and the gradient —
     /// the pills' lower halves landed on the light sheet and looked cut.
     /// The gradient now stretches to the measured content height.
-    @State private var heroContentHeight: CGFloat = 0
+
 
     private enum PlaySource { case online, pan115 }
 
@@ -247,13 +247,20 @@ struct MovieDetailView: View {
                 .clipped()
                 .accessibilityHidden(true)
                 .accessibilityIdentifier("detail-hero-artwork")
-            LinearGradient(stops: [
-                .init(color: .clear, location: 0.36),
-                .init(color: Color.black.opacity(0.24), location: 0.57),
-                .init(color: Color.black.opacity(0.78), location: 0.86),
-                .init(color: Color.black.opacity(0.92), location: 1),
-            ], startPoint: .top, endPoint: .bottom)
-            .frame(height: max(imageHeight + 30, heroContentHeight))
+            // Backdrop: the gradient belongs to the image alone; the
+            // text zone below the cover sits on solid dark.
+            VStack(spacing: 0) {
+                LinearGradient(stops: [
+                    .init(color: .clear, location: 0.36),
+                    .init(color: Color.black.opacity(0.24), location: 0.57),
+                    .init(color: Color.black.opacity(0.78), location: 0.86),
+                    .init(color: Color.black.opacity(0.92), location: 1),
+                ], startPoint: .top, endPoint: .bottom)
+                .frame(height: imageHeight)
+                Color.black.opacity(0.92)
+            }
+            .frame(width: width)
+            .frame(maxHeight: .infinity)
             .allowsHitTesting(false)
 
             VStack(alignment: .leading, spacing: 0) {
@@ -276,11 +283,6 @@ struct MovieDetailView: View {
             }
             .padding(.top, titleTop)
             .padding(.bottom, 16)
-            .onGeometryChange(for: CGFloat.self) { proxy in
-                proxy.size.height
-            } action: { newHeight in
-                heroContentHeight = newHeight
-            }
             .foregroundStyle(.white)
         }
         .frame(width: width)
@@ -873,7 +875,9 @@ struct DetailPortraitGeometry {
     init(availableSize: CGSize, isPad: Bool) {
         width = max(1, min(availableSize.width, isPad ? 900 : 600))
         imageHeight = min(width * 1.58, max(600, availableSize.height * 0.8))
-        titleTop = min(width * 1.06, max(390, availableSize.height * 0.56))
+        // The title block starts BELOW the cover (owner, build 21):
+        // text never overlays the artwork.
+        titleTop = imageHeight + 14
         controlsTop = max(titleTop + 132, min(width * 1.42, availableSize.height * 0.64))
     }
 }
