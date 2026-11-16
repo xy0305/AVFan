@@ -161,11 +161,19 @@ final class PosterImageModel: ObservableObject {
     /// not the request.
     @Published var resolvedURL: String?
     private var token = 0
+    /// Code of the movie whose bitmap is currently on screen.
+    /// A reload for the SAME movie (grid cover → detail cover)
+    /// keeps the current bitmap until the new one is ready —
+    /// blanking it first is the detail page's visible flash
+    /// (build 29). A different movie still blanks immediately,
+    /// so a reused grid cell never shows the wrong cover.
+    private var shownCode: String?
 
     func load(url: String?, code: String? = nil, displayPoints: CGSize, allowUpscale: Bool, actors: [String] = []) {
         token += 1
         let current = token
-        image = nil
+        let sameMovie = code != nil && code == shownCode && image != nil
+        if !sameMovie { image = nil }
         failed = false
         resolvedURL = url
         guard let url, !url.isEmpty else {
@@ -203,6 +211,7 @@ final class PosterImageModel: ObservableObject {
             guard current == token else { return }
             if let loaded {
                 image = loaded
+                shownCode = code
             } else if displayURL != url {
                 // The cached winner failed to load; fall back to the
                 // page cover rather than showing nothing.
@@ -211,6 +220,7 @@ final class PosterImageModel: ObservableObject {
                 guard current == token else { return }
                 if let fallback {
                     image = fallback
+                    shownCode = code
                 } else {
                     failed = true
                 }

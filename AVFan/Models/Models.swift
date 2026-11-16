@@ -29,6 +29,18 @@ struct MovieCard: Identifiable, Hashable, Codable {
         }
         return title.isEmpty ? displayCode : title
     }
+
+    /// The title as the DETAIL page will show it: catalog titles
+    /// carry the code as a prefix ("SNOS-343 私の教師…"), the
+    /// detail page's own title does not. Detail placeholders are
+    /// built with this so the hero title never changes its text
+    /// when the real detail lands (build 29 flicker fix).
+    var titleWithoutCodePrefix: String {
+        guard let code, !code.isEmpty, title.hasPrefix(code) else { return title }
+        let rest = title.dropFirst(code.count)
+            .drop(while: { $0 == " " || $0 == "　" || $0 == "-" || $0 == "－" })
+        return rest.isEmpty ? title : String(rest)
+    }
 }
 
 struct HomeSection: Identifiable, Hashable {

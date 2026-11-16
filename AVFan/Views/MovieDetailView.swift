@@ -85,7 +85,7 @@ struct MovieDetailView: View {
             pathID: card.pathID,
             pageURL: HTMLParser.absoluteURL(card.href),
             code: card.code,
-            title: card.title,
+            title: card.titleWithoutCodePrefix,
             coverURL: card.coverURL,
             summary: nil,
             releaseDate: card.date,
@@ -319,7 +319,14 @@ struct MovieDetailView: View {
                     portraitMetadata(detail)
                         .padding(.horizontal, 18).padding(.top, 16)
                 }
-                .frame(minHeight: max(0, geometry.controlsTop - titleTop - 18), alignment: .bottom)
+                // Top-pinned (build 29): the block's height is
+                // reserved by minHeight, and the truncation toggle
+                // arrives a beat after first render — bottom
+                // anchoring moved the title on every height change
+                // (the visible flicker); top anchoring keeps the
+                // title's first line fixed and lets growth extend
+                // into the reserved zone.
+                .frame(minHeight: max(0, geometry.controlsTop - titleTop - 18), alignment: .top)
                 portraitControls(detail)
                     .padding(.horizontal, 18).padding(.top, 18)
             }
@@ -1485,7 +1492,7 @@ final class MovieDetailViewModel: ObservableObject {
                 }
             }
             if parsed.code == nil { parsed.code = card.code }
-            if parsed.title.isEmpty { parsed.title = card.title }
+            if parsed.title.isEmpty { parsed.title = card.titleWithoutCodePrefix }
             if parsed.coverURL == nil { parsed.coverURL = card.coverURL }
             if parsed.pageURL.isEmpty { parsed.pageURL = url.absoluteString }
             detail = parsed
@@ -1496,7 +1503,7 @@ final class MovieDetailViewModel: ObservableObject {
                 pathID: card.pathID,
                 pageURL: url.absoluteString,
                 code: card.code,
-                title: card.title,
+                title: card.titleWithoutCodePrefix,
                 coverURL: card.coverURL,
                 summary: nil,
                 releaseDate: card.date,
