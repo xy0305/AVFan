@@ -14,6 +14,8 @@ enum LibrarySync {
         var removeURL: String?
         /// Set by a successful list creation: the returned row HTML.
         var listFragment: String?
+        /// Set by a successful cast-review creation: the review's id.
+        var reviewID: String?
     }
 
     private static func resolve(_ path: String) -> URL? {
@@ -26,12 +28,66 @@ enum LibrarySync {
             return Outcome(success: false, message: "请先登录 avfan 账号", needsLogin: true)
         }
         let success = (json?["success"] as? Bool) ?? (200..<300).contains(status)
+        var reviewID: String?
+        if let number = json?["id"] as? NSNumber { reviewID = number.stringValue }
+        if let text = json?["id"] as? String { reviewID = text }
         return Outcome(
             success: success,
             message: json?["message"] as? String,
             removeURL: json?["remove_url"] as? String,
-            listFragment: json?["list"] as? String
+            listFragment: json?["list"] as? String,
+            reviewID: reviewID
         )
+    }
+
+    /// A model action （关注/收藏）: POST {model, model_id} to the
+    /// button's own data-url, exactly like the site's model controller.
+    static func modelAction(url: String, model: String?, modelID: String?, csrf: String?) async -> Outcome {
+        guard let endpoint = resolve(url) else {
+            return Outcome(success: false, message: "页面没有给出同步地址")
+        }
+        do {
+            let (status, json) = try await SiteClient.shared.jsonRequest(
+                method: "POST", url: endpoint, csrf: csrf,
+                body: ["model": model ?? "", "model_id": modelID ?? ""]
+            )
+            return outcome(status: status, json: json)
+        } catch {
+            return Outcome(success: false, message: "同步失败：\(error.localizedDescription)")
+        }
+    }
+
+    /// The undo of a model action （取消关注/取消收藏）: DELETE the
+    /// button's data-url.
+    static func modelUndo(url: String, csrf: String?) async -> Outcome {
+        guard let endpoint = resolve(url) else {
+            return Outcome(success: false, message: "页面没有给出同步地址")
+        }
+        do {
+            let (status, json) = try await SiteClient.shared.jsonRequest(
+                method: "DELETE", url: endpoint, csrf: csrf, body: nil
+            )
+            return outcome(status: status, json: json)
+        } catch {
+            return Outcome(success: false, message: "同步失败：\(error.localizedDescription)")
+        }
+    }
+
+    /// Post a cast short review: POST {cast_id, score, body} to the
+    /// review element's data-create-url (a score is required).
+    static func createCastReview(url: String, castSqid: String, score: Int, body: String, csrf: String?) async -> Outcome {
+        guard let endpoint = resolve(url) else {
+            return Outcome(success: false, message: "页面没有给出同步地址")
+        }
+        do {
+            let (status, json) = try await SiteClient.shared.jsonRequest(
+                method: "POST", url: endpoint, csrf: csrf,
+                body: ["cast_id": castSqid, "score": "\(score)", "body": body]
+            )
+            return outcome(status: status, json: json)
+        } catch {
+            return Outcome(success: false, message: "同步失败：\(error.localizedDescription)")
+        }
     }
 
     /// Mark the movie 想看 or 看过 (the site's createReview call; it

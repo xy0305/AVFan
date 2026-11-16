@@ -89,7 +89,7 @@ struct RankingsView: View {
                                         GridItem(.flexible(), spacing: 12)], spacing: 14) {
                         ForEach(page.people) { person in
                             NavigationLink {
-                                CatalogListView(title: person.name, path: person.href)
+                                CastProfileView(name: person.name, path: person.href)
                             } label: {
                                 VStack(spacing: 6) {
                                     CoverImage(url: person.imageURL)

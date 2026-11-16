@@ -129,7 +129,8 @@ struct MovieDetailView: View {
                 TrailerPlayerView(
                     url: url,
                     pageURL: model.pageURL,
-                    title: (display.displayCode) + " 预告片"
+                    title: (display.displayCode) + " 预告片",
+                    poster: display.coverURL ?? card.coverURL
                 )
             }
         }
@@ -942,7 +943,13 @@ struct LinkChips: View {
         FlowLayout(spacing: 8) {
             ForEach(links) { link in
                 NavigationLink {
-                    CatalogListView(title: link.name, path: link.href)
+                    // Cast links open the native cast profile page
+                    // (build 23); everything else keeps the catalog.
+                    if HTMLParser.stripLocale(link.href).hasPrefix("casts/") {
+                        CastProfileView(name: link.name, path: link.href)
+                    } else {
+                        CatalogListView(title: link.name, path: link.href)
+                    }
                 } label: {
                     Text(link.name)
                         .font(.caption.weight(.semibold))
@@ -1241,37 +1248,24 @@ struct ListPickerSheet: View {
     }
 }
 
-/// Trailer playback. The DMM preview CDN (CloudFront) rejects the
-/// KSPlayer/ffmpeg stack outright, so the trailer plays in the system
-/// AVPlayer with a browser user agent and the movie page as referer;
-/// if that still fails, it falls back to the site's own trailer page
-/// (page URL + "/trailer"), whose player runs in its own context.
+/// Trailer playback in an embedded media view: a bare <video>
+/// element — the WebKit media stack is what the site's own trailer
+/// player uses, and the only one the DMM preview CDN accepts (the
+/// KSPlayer/ffmpeg stack and bare AVPlayer are both rejected).
+/// Presented fullscreen on black with the video's native controls;
+/// no site page is ever shown.
 struct TrailerPlayerView: View {
     @Environment(\.dismiss) private var dismiss
+    let url: URL
     let pageURL: URL?
     let title: String
-    @StateObject private var playback: TrailerPlayback
-    @State private var webFallback = false
-
-    init(url: URL, pageURL: URL?, title: String) {
-        self.pageURL = pageURL
-        self.title = title
-        let headers = [
-            "User-Agent": SiteClient.mobileSafariUA,
-            "Referer": pageURL?.absoluteString ?? "https://avfan.com/",
-        ]
-        _playback = StateObject(wrappedValue: TrailerPlayback(url: url, headers: headers))
-    }
+    let poster: String?
 
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
-            if webFallback, let pageURL {
-                InAppWebView(url: pageURL.appendingPathComponent("trailer"), title: title)
-                    .padding(.top, 52)
-            } else {
-                AudioOwnedTrailerPlayer(playback: playback)
-            }
+            TrailerVideoWebView(url: url, poster: poster, baseURL: pageURL)
+                .ignoresSafeArea()
             VStack {
                 HStack(spacing: 14) {
                     Button { dismiss() } label: {
@@ -1291,12 +1285,6 @@ struct TrailerPlayerView: View {
                 .padding(.top, 10)
                 Spacer()
             }
-        }
-        .onAppear {
-            playback.onFailed = {
-                if pageURL != nil { webFallback = true }
-            }
-            playback.player.play()
         }
     }
 }

@@ -72,7 +72,7 @@ struct CastsView: View {
                                     GridItem(.flexible(), spacing: 12)], spacing: 14) {
                     ForEach(casts) { cast in
                         NavigationLink {
-                            CatalogListView(title: cast.name, path: cast.href)
+                            CastProfileView(name: cast.name, path: cast.href)
                         } label: {
                             VStack(spacing: 6) {
                                 CoverImage(url: cast.avatarURL)

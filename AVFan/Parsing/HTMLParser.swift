@@ -1259,6 +1259,174 @@ enum HTMLParser {
         return results
     }
 
+    /// A cast profile page: identity from the <title> segments and
+    /// the page's own control wiring (the `model` controller's
+    /// follow/collect buttons, the cast-profile details fragment URL,
+    /// the cast-review element's data attributes). Nothing is guessed;
+    /// absent pieces stay nil.
+    static func castProfile(in html: String) -> CastProfile {
+        var profile = CastProfile()
+        profile.csrfToken = firstMatch("<meta[^>]*name=\"csrf-token\"[^>]*content=\"([^\"]+)\"", in: html)
+            ?? firstMatch("<meta[^>]*content=\"([^\"]+)\"[^>]*name=\"csrf-token\"", in: html)
+
+        // Title: "喜多川みら, きたがわみら, mira kitagawa | AVFan".
+        if let title = firstMatch("<title>([^<]+)</title>", in: html) {
+            let head = title.components(separatedBy: "|").first ?? title
+            let parts = head.components(separatedBy: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+            if let first = parts.first { profile.name = first }
+            if parts.count > 1 { profile.reading = parts[1] }
+            if parts.count > 2 { profile.romaji = parts[2] }
+        }
+        if profile.name.isEmpty, let h1 = firstMatch("<h1[^>]*>([\\s\\S]*?)</h1>", in: html) {
+            profile.name = stripTags(h1)
+        }
+
+        // Avatar: the page's /avatars/ image (alt carries the name
+        // when present; the first one is the profile picture).
+        if let avatar = firstMatch("<img[^>]+src=\"([^\"]*/avatars/[^\"]+)\"", in: html) {
+            profile.avatarURL = unescape(avatar)
+        }
+
+        // Social links (X / Twitter and friends).
+        var seenSocial = Set<String>()
+        if let regex = try? NSRegularExpression(pattern: "<a[^>]+href=\"(https?://(?:twitter\\.com|x\\.com)/[^\"]+)\"", options: [.caseInsensitive]) {
+            let ns = html as NSString
+            for match in regex.matches(in: html, range: NSRange(location: 0, length: ns.length)) {
+                let href = ns.substring(with: match.range(at: 1))
+                guard seenSocial.insert(href).inserted else { continue }
+                let handle = href.components(separatedBy: "/").last.map { "@\($0)" } ?? "X"
+                profile.socialLinks.append(NamedLink(name: handle, href: href, kind: "social"))
+            }
+        }
+
+        if let countText = firstMatch(#"(\d+)\s*部作品"#, in: stripTags(html)) {
+            profile.worksCount = Int(countText)
+        }
+
+        // The `model` controller's four buttons.
+        func modelTag(_ target: String) -> String? {
+            firstMatch("(<[^>]*data-model-target=\"\(target)\"[^>]*>)", in: html)
+        }
+        func visible(_ tag: String?) -> Bool {
+            guard let tag else { return false }
+            return !(attribute("class", in: tag) ?? "").split(separator: " ").contains("hidden")
+        }
+        let follow = modelTag("btnFollow")
+        let unfollow = modelTag("btnUnfollow")
+        let collect = modelTag("btnCollect")
+        let uncollect = modelTag("btnUncollect")
+        if let follow {
+            profile.followURL = attribute("data-url", in: follow)
+            profile.modelName = attribute("data-model", in: follow)
+            profile.modelID = attribute("data-model-id", in: follow)
+        }
+        if let unfollow { profile.unfollowURL = attribute("data-url", in: unfollow) }
+        if let collect {
+            profile.collectURL = attribute("data-url", in: collect)
+            if profile.modelName == nil { profile.modelName = attribute("data-model", in: collect) }
+            if profile.modelID == nil { profile.modelID = attribute("data-model-id", in: collect) }
+        }
+        if let uncollect { profile.uncollectURL = attribute("data-url", in: uncollect) }
+        profile.isFollowing = visible(unfollow)
+        profile.isCollected = visible(uncollect)
+
+        // 详细资料： the cast-profile element's fragment URL value.
+        if let tag = firstMatch("(<[^>]*data-controller=\"[^\"]*cast-profile[^\"]*\"[^>]*>)", in: html) {
+            profile.detailsURL = attribute("data-cast-profile-url-value", in: tag)
+        }
+
+        // 短评： the cast-review element carries create URL + cast id.
+        if let tag = firstMatch("(<[^>]*data-controller=\"[^\"]*cast-review[^\"]*\"[^>]*>)", in: html) {
+            profile.reviewCreateURL = attribute("data-create-url", in: tag)
+            profile.reviewCastSqid = attribute("data-cast-sqid", in: tag)
+            profile.reviewListURL = attribute("data-cast-review-list-url-value", in: tag)
+            profile.ownReviewID = attribute("data-review-id", in: tag)
+            profile.ownReviewDestroyURL = attribute("data-destroy-url", in: tag)
+        }
+        return profile
+    }
+
+    /// Label/value rows from an HTML fragment (the cast details
+    /// panel): table rows first, then definition lists, then list
+    /// items split on their colon.
+    static func infoRows(in fragment: String) -> [(label: String, value: String)] {
+        var rows: [(label: String, value: String)] = []
+        if let regex = try? NSRegularExpression(pattern: "<tr[^>]*>([\\s\\S]*?)</tr>", options: [.caseInsensitive]) {
+            let ns = fragment as NSString
+            for match in regex.matches(in: fragment, range: NSRange(location: 0, length: ns.length)) {
+                let cells = allMatches("<t[hd][^>]*>([\\s\\S]*?)</t[hd]>", in: ns.substring(with: match.range(at: 1)))
+                    .map { stripTags($0) }
+                if cells.count >= 2, !cells[0].isEmpty {
+                    rows.append((cells[0], cells[1]))
+                }
+            }
+        }
+        if rows.isEmpty, let regex = try? NSRegularExpression(pattern: "<dt[^>]*>([\\s\\S]*?)</dt>\\s*<dd[^>]*>([\\s\\S]*?)</dd>", options: [.caseInsensitive]) {
+            let ns = fragment as NSString
+            for match in regex.matches(in: fragment, range: NSRange(location: 0, length: ns.length)) {
+                let label = stripTags(ns.substring(with: match.range(at: 1)))
+                let value = stripTags(ns.substring(with: match.range(at: 2)))
+                if !label.isEmpty { rows.append((label, value)) }
+            }
+        }
+        if rows.isEmpty {
+            for item in allMatches("<li[^>]*>([\\s\\S]*?)</li>", in: fragment) {
+                let text = stripTags(item)
+                if let range = text.range(of: "：") ?? text.range(of: ":") {
+                    let label = String(text[..<range.lowerBound]).trimmingCharacters(in: .whitespaces)
+                    let value = String(text[range.upperBound...]).trimmingCharacters(in: .whitespaces)
+                    if !label.isEmpty { rows.append((label, value)) }
+                } else if !text.isEmpty {
+                    rows.append(("", text))
+                }
+            }
+        }
+        return rows
+    }
+
+    /// Short-review items from the cast-review list fragment. Blocks
+    /// are delimited by the like controllers; each block's longest
+    /// text is the review body, its first anchor the author, and a
+    /// date-like string the meta line. Falls back to no items when
+    /// the fragment has no recognizable blocks (the view then shows
+    /// the fragment's plain text lines instead).
+    static func castReviews(in fragment: String) -> [CastReviewItem] {
+        guard let regex = try? NSRegularExpression(
+            pattern: "(<[^>]*data-controller=\"cast-review-like\"[^>]*>)",
+            options: [.caseInsensitive]
+        ) else { return [] }
+        let ns = fragment as NSString
+        let matches = regex.matches(in: fragment, range: NSRange(location: 0, length: ns.length))
+        guard !matches.isEmpty else { return [] }
+        var items: [CastReviewItem] = []
+        var blockStart = 0
+        for match in matches {
+            // The item's content precedes its like button: the block
+            // runs from the previous like tag's end to this tag.
+            let block = ns.substring(with: NSRange(location: blockStart, length: match.range.location - blockStart))
+            let tag = ns.substring(with: match.range(at: 1))
+            blockStart = match.range.location + match.range.length
+            let likeURL = attribute("data-cast-review-like-url-value", in: tag)
+            var author = "匿名"
+            if let anchorRegex = try? NSRegularExpression(pattern: "<a[^>]+href=\"[^\"]+\"[^>]*>([\\s\\S]*?)</a>", options: [.caseInsensitive]) {
+                let blockNS = block as NSString
+                if let anchor = anchorRegex.firstMatch(in: block, range: NSRange(location: 0, length: blockNS.length)) {
+                    let name = stripTags(blockNS.substring(with: anchor.range(at: 1)))
+                    if !name.isEmpty { author = name }
+                }
+            }
+            let text = stripTags(block)
+            let meta = firstMatch(#"(\d{4}-\d{2}-\d{2}|\d+\s*(?:天|小时|分钟)前)"#, in: text)
+            var body = text
+            if author != "匿名", let range = body.range(of: author) { body.removeSubrange(range) }
+            if let meta, let range = body.range(of: meta) { body.removeSubrange(range) }
+            body = body.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !body.isEmpty else { continue }
+            items.append(CastReviewItem(author: author, body: body, meta: meta, likeURL: likeURL))
+        }
+        return items
+    }
+
     /// The signed-in user's own lists, from the /user/lists page:
     /// anchors into user/lists/<id> with their names.
     static func userLists(in html: String) -> [NamedLink] {
@@ -1282,6 +1450,13 @@ enum HTMLParser {
     /// d1.avfan.com mp4, or any DMM /pv/ mp4 in the page. Full watch
     /// streams are watchStreams' job; this is the media strip's cell.
     static func trailerURL(in html: String) -> String? {
+        // The trailer trigger itself declares the exact source the
+        // site's own player attaches (an mp4 or an HLS playlist) —
+        // that wins over the structured-data URL.
+        if let declared = firstMatch("data-trailer-player-src-value=\"([^\"]+)\"", in: html) {
+            let url = unescape(declared).trimmingCharacters(in: .whitespacesAndNewlines)
+            if url.hasPrefix("http") { return url }
+        }
         let text = html.replacingOccurrences(of: "\\/", with: "/")
         func isTrailer(_ raw: String) -> String? {
             let value = unescape(raw).trimmingCharacters(in: .whitespacesAndNewlines)

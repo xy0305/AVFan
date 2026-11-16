@@ -159,6 +159,25 @@ actor SiteClient {
         return (status, json)
     }
 
+    /// HTML fragment fetch in the site's session, mirroring the
+    /// page's own XHR fragment loads (cast details panel, review
+    /// lists). Returns the raw fragment text.
+    func fragment(for url: URL, csrf: String?) async throws -> String {
+        try await respectRateLimit()
+        var request = URLRequest(url: url)
+        request.setValue(Self.mobileSafariUA, forHTTPHeaderField: "User-Agent")
+        request.setValue("text/html", forHTTPHeaderField: "Accept")
+        request.setValue("XMLHttpRequest", forHTTPHeaderField: "X-Requested-With")
+        request.setValue("https://avfan.com/", forHTTPHeaderField: "Referer")
+        if let csrf { request.setValue(csrf, forHTTPHeaderField: "X-CSRF-Token") }
+        let (data, response) = try await session.data(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard (200..<300).contains(status) else {
+            throw SiteClientError.transport("HTTP \(status)")
+        }
+        return String(data: data, encoding: .utf8) ?? String(decoding: data, as: UTF8.self)
+    }
+
     private func fetchWithURLSession(url: URL, locale: SiteLocale, ageCookie: String?) async throws -> String {
         try await respectRateLimit()
         await CookieBridge.applyLegalAge(ageCookie != nil)

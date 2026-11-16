@@ -417,3 +417,44 @@ struct SyncListOption: Identifiable, Hashable {
 
     var id: String { listID }
 }
+
+
+/// A cast's profile page, parsed from the page's own markup: header
+/// identity, the model controller's follow/collect wiring, the
+/// lazy-loaded details fragment URL, and the short-review wiring.
+struct CastProfile: Hashable {
+    var name: String = ""
+    var reading: String?
+    var romaji: String?
+    var avatarURL: String?
+    var socialLinks: [NamedLink] = []
+    var worksCount: Int?
+    var csrfToken: String?
+    // Follow / collect (the site's `model` controller).
+    var followURL: String?
+    var unfollowURL: String?
+    var collectURL: String?
+    var uncollectURL: String?
+    var modelName: String?
+    var modelID: String?
+    var isFollowing: Bool = false
+    var isCollected: Bool = false
+    /// Lazy fragment with the 详细资料 rows.
+    var detailsURL: String?
+    /// Short reviews （短评）.
+    var reviewCreateURL: String?
+    var reviewCastSqid: String?
+    var reviewListURL: String?
+    var ownReviewID: String?
+    var ownReviewDestroyURL: String?
+}
+
+/// One short review of a cast, parsed from the list fragment.
+struct CastReviewItem: Identifiable, Hashable {
+    var author: String
+    var body: String
+    var meta: String?
+    var likeURL: String?
+
+    var id: String { author + "|" + body + "|" + (meta ?? "") }
+}

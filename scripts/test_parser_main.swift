@@ -500,6 +500,8 @@ enum ParserTests {
                "detail trailer is the page's DMM preview mp4, got \(String(describing: detail.trailerURL))")
         expect(HTMLParser.trailerURL(in: "<video src=\"https://example.com/full.mp4\"></video>") == nil,
                "a non-preview mp4 is not a trailer")
+        expect(HTMLParser.trailerURL(in: "<a data-trailer-player-src-value=\"https://example.com/hls/abc.m3u8\">预告片</a>") == "https://example.com/hls/abc.m3u8",
+               "the trailer trigger's declared src wins")
         let stillsHTML = """
         <img src="https://pics.dmm.co.jp/digital/video/ipzz00936/ipzz00936jp-1.jpg">
         <img data-src="https://pics.dmm.co.jp/digital/video/ipzz00936/ipzz00936jp-2.jpg">
@@ -569,7 +571,54 @@ enum ParserTests {
         expect(HTMLParser.signOutURL(in: signedHTML)?.contains("sign_out") == true, "sign_out url")
         expect(HTMLParser.containsSignInLink("<a href=\"/zh-CN/sign_in\">登录</a>"), "sign_in link")
 
-        print("PASS: home, detail magnets, ranking merge, hot casts, HQ cover sources, empty shell, block detection, cover policy, login signals, ranking tabs, pagination, news, series, detail cover identity, page map, cast cards, prefix links, filter form, homepage panel, auto-next, home main list, movie toolbar, tab hygiene, tab locale guard, drawer shortcuts, poster quality, javbus, tenhow, amazon, avbase catalogue, trailer and stills, library sync parsing")
+        // Build 23: cast profile page — identity, model buttons,
+        // details fragment URL and review wiring from the page markup.
+        let castPage = """
+        <html><head><title>喜多川みら, きたがわみら, mira kitagawa | AVFan</title>
+        <meta name="csrf-token" content="tok123"></head><body>
+        <img src="https://c1.avfan.com/avatars/7x/7xP6X6mq.jpg" alt="喜多川みら">
+        <a href="https://twitter.com/k_mira_c">X</a>
+        <div>20部作品</div>
+        <button data-model-target="btnFollow" data-url="/follows" data-model="Cast" data-model-id="42">关注</button>
+        <button data-model-target="btnUnfollow" data-url="/follows/42" class="hidden">已关注</button>
+        <button data-model-target="btnCollect" data-url="/collections" data-model="Cast" data-model-id="42">收藏</button>
+        <button data-model-target="btnUncollect" data-url="/collections/42" class="hidden">已收藏</button>
+        <div data-controller="cast-profile" data-cast-profile-url-value="/casts/sxT5CTN5/profile"></div>
+        <div data-controller="cast-review" data-create-url="/cast_reviews" data-cast-sqid="sxT5CTN5" data-cast-review-list-url-value="/casts/sxT5CTN5/reviews"></div>
+        </body></html>
+        """
+        let castProfile = HTMLParser.castProfile(in: castPage)
+        expect(castProfile.name == "喜多川みら" && castProfile.reading == "きたがわみら" && castProfile.romaji == "mira kitagawa",
+               "cast identity from title segments, got \(castProfile.name)/\(castProfile.reading ?? "-")/\(castProfile.romaji ?? "-")")
+        expect(castProfile.avatarURL == "https://c1.avfan.com/avatars/7x/7xP6X6mq.jpg", "cast avatar parsed")
+        expect(castProfile.socialLinks.first?.name == "@k_mira_c", "cast X handle parsed")
+        expect(castProfile.worksCount == 20, "cast works count parsed")
+        expect(castProfile.followURL == "/follows" && castProfile.unfollowURL == "/follows/42" && !castProfile.isFollowing,
+               "follow state follows the visible button")
+        expect(castProfile.collectURL == "/collections" && !castProfile.isCollected, "collect state follows the visible button")
+        expect(castProfile.detailsURL == "/casts/sxT5CTN5/profile", "details fragment URL parsed")
+        expect(castProfile.reviewCreateURL == "/cast_reviews" && castProfile.reviewCastSqid == "sxT5CTN5" && castProfile.reviewListURL == "/casts/sxT5CTN5/reviews",
+               "review wiring parsed")
+
+        // Cast details fragment rows: table first, then definitions.
+        let tableRows = HTMLParser.infoRows(in: "<table><tr><th>生日</th><td>1999-01-01</td></tr><tr><th>身高</th><td>160cm</td></tr></table>")
+        expect(tableRows.count == 2 && tableRows[0].label == "生日" && tableRows[0].value == "1999-01-01" && tableRows[1].label == "身高",
+               "info table rows, got \(tableRows)")
+        let dlRows = HTMLParser.infoRows(in: "<dl><dt>罩杯</dt><dd>F</dd></dl>")
+        expect(dlRows.count == 1 && dlRows[0].label == "罩杯" && dlRows[0].value == "F",
+               "info definition rows, got \(dlRows)")
+
+        // Cast review fragment: blocks split on the like controllers.
+        let reviewFragment = """
+        <div><a href="/users/7">小明</a><p>演技很好，值得一看。</p><span>2026-11-10</span>
+        <span data-controller="cast-review-like" data-cast-review-like-url-value="/cast_reviews/5/like"></span></div>
+        """
+        let reviewItems = HTMLParser.castReviews(in: reviewFragment)
+        expect(reviewItems.count == 1 && reviewItems[0].author == "小明" && reviewItems[0].body.contains("演技很好") && reviewItems[0].meta == "2026-11-10",
+               "review item parsed, got \(reviewItems)")
+        expect(HTMLParser.castReviews(in: "<p>nothing</p>").isEmpty, "no like blocks means no review items")
+
+        print("PASS: home, detail magnets, ranking merge, hot casts, HQ cover sources, empty shell, block detection, cover policy, login signals, ranking tabs, pagination, news, series, detail cover identity, page map, cast cards, prefix links, filter form, homepage panel, auto-next, home main list, movie toolbar, tab hygiene, tab locale guard, drawer shortcuts, poster quality, javbus, tenhow, amazon, avbase catalogue, trailer and stills, library sync parsing, cast profile")
     }
 }
 
