@@ -102,6 +102,16 @@ struct MovieDetail: Hashable {
     var tags: [NamedLink]
     var magnets: [MagnetItem]
     var watchStreams: [WatchStream] = []
+    /// Preview trailer declared by the detail page itself (JSON-LD
+    /// contentUrl / DMM preview mp4). Distinct from watchStreams: the
+    /// site shows it as the first cell of the media strip.
+    var trailerURL: String? = nil
+    /// Sample stills shown on the detail page (DMM jp-N images and
+    /// avfan-hosted samples), in page order, cover excluded.
+    var previewImages: [String] = []
+    /// Account-library wiring parsed from the detail page's own markup
+    /// （想看/看过/保存至清单）; nil when the page carries no such block.
+    var library: LibraryPageState? = nil
 
     var displayCode: String { code ?? pathID }
     var displayTitle: String { title.isEmpty ? displayCode : title }
@@ -364,4 +374,46 @@ enum SiteClientError: Error, LocalizedError {
             return message
         }
     }
+}
+
+
+/// The state of a movie in the user's avfan library.
+enum ReviewStatus: String, Hashable {
+    case none
+    case watchlist
+    case watched
+}
+
+/// Everything the detail page itself declares about the account
+/// library actions （想看 / 看过 / 保存至清单）: the CSRF token, the
+/// endpoints carried in the buttons' data attributes, and the state
+/// the page rendered. All values come from the page's own markup —
+/// nothing is guessed. URLs are site-relative paths as printed.
+struct LibraryPageState: Hashable {
+    var csrfToken: String?
+    var reviewStatus: ReviewStatus = .none
+    /// POST target + status value for marking 想看.
+    var watchlistURL: String?
+    var watchlistActionType: String = "watchlist"
+    /// POST target + status value for marking 看过.
+    var watchedURL: String?
+    var watchedActionType: String = "watched"
+    /// DELETE target for removing the review, when one exists.
+    var removeURL: String?
+    /// GET endpoint returning the save-to-list modal's list rows.
+    var listsURL: String?
+    /// POST target toggling a list's membership for this movie.
+    var changeURL: String?
+    /// POST target + mode for creating a new list.
+    var createListURL: String?
+    var createListMode: String = "new"
+}
+
+/// One row of the site's save-to-list picker.
+struct SyncListOption: Identifiable, Hashable {
+    var listID: String
+    var name: String
+    var checked: Bool
+
+    var id: String { listID }
 }

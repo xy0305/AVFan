@@ -494,12 +494,82 @@ enum ParserTests {
                "avbase record cover is the pl jacket, got \(String(describing: avbaseRecord?.cover))")
         expect(avbaseRecord?.images.first == avbaseRecord?.cover, "avbase images are HQ-first")
 
+        // Build 20: the detail page's own trailer (JSON-LD contentUrl on
+        // DMM's preview CDN, present in the real fixture) and its stills.
+        expect(detail.trailerURL == "https://cc3001.dmm.co.jp/pv/Cx4GGWZWrYOl52cGncc563fxVjJvycitPeYNqr2lpA3aNjdAY08nWjd6mlItYN/ipzz00936mmb.mp4",
+               "detail trailer is the page's DMM preview mp4, got \(String(describing: detail.trailerURL))")
+        expect(HTMLParser.trailerURL(in: "<video src=\"https://example.com/full.mp4\"></video>") == nil,
+               "a non-preview mp4 is not a trailer")
+        let stillsHTML = """
+        <img src="https://pics.dmm.co.jp/digital/video/ipzz00936/ipzz00936jp-1.jpg">
+        <img data-src="https://pics.dmm.co.jp/digital/video/ipzz00936/ipzz00936jp-2.jpg">
+        <img src="https://c1.avfan.com/samples/4j/4jOrgf-3.jpg">
+        <img src="https://pics.dmm.co.jp/digital/video/ipzz00936/ipzz00936jp-1.jpg">
+        <img src="https://static.gdario.com/aimages/ad_1.jpg">
+        """
+        let stills = HTMLParser.previewImages(in: stillsHTML, cover: "https://c1.avfan.com/covers/4j/4jOrgf.jpg")
+        expect(stills == [
+            "https://pics.dmm.co.jp/digital/video/ipzz00936/ipzz00936jp-1.jpg",
+            "https://pics.dmm.co.jp/digital/video/ipzz00936/ipzz00936jp-2.jpg",
+            "https://c1.avfan.com/samples/4j/4jOrgf-3.jpg",
+        ], "stills keep page order, dedupe, and exclude ads, got \(stills)")
+
+        // Build 20: account library wiring parsed from the page's own
+        // markup (review controller targets + save-to-list modal), the
+        // modal's list rows, and the /user/lists index.
+        let libraryHTML = """
+        <html><head><meta name="csrf-token" content="TOKEN123" /></head><body>
+        <div data-controller="review">
+          <button data-review-target="btnAddToWatchlist" data-url="/zh-CN/movies/s6bNHCTN/reviews" data-action-type="watchlist" class="inline-flex">想看</button>
+          <button data-review-target="btnAlreadyInWatchlist" class="hidden">已想看</button>
+          <button data-review-target="btnWatched" data-url="/zh-CN/movies/s6bNHCTN/reviews" data-action-type="watched" class="inline-flex">看过</button>
+          <button data-review-target="btnAlreadyWatched" class="hidden">已看过</button>
+          <button data-review-target="btnRemoveReview" data-url="">删除</button>
+        </div>
+        <div id="save-to-list-modal" data-change-url="/zh-CN/movies/s6bNHCTN/list_items">
+          <div id="lists-container" data-url="/zh-CN/movies/s6bNHCTN/lists?x=1"></div>
+        </div>
+        <div id="new-list-modal"><button id="save-list-btn" data-url="/zh-CN/user/lists" data-mode="new">保存</button></div>
+        </body></html>
+        """
+        let library = HTMLParser.libraryState(in: libraryHTML)
+        expect(library?.csrfToken == "TOKEN123", "library csrf token")
+        expect(library?.reviewStatus == .none, "library state none when already-buttons hidden")
+        expect(library?.watchlistURL == "/zh-CN/movies/s6bNHCTN/reviews", "library watchlist url")
+        expect(library?.watchedActionType == "watched", "library watched action type")
+        expect(library?.changeURL == "/zh-CN/movies/s6bNHCTN/list_items", "library change url")
+        expect(library?.listsURL == "/zh-CN/movies/s6bNHCTN/lists?x=1", "library lists url")
+        expect(library?.createListURL == "/zh-CN/user/lists" && library?.createListMode == "new", "library create list")
+        let watchedHTML2 = libraryHTML.replacingOccurrences(
+            of: "data-review-target=\"btnAlreadyWatched\" class=\"hidden\"",
+            with: "data-review-target=\"btnAlreadyWatched\" class=\"inline-flex\"")
+        expect(HTMLParser.libraryState(in: watchedHTML2)?.reviewStatus == .watched, "library state watched when already-watched visible")
+        expect(HTMLParser.libraryState(in: "<html><body>no block</body></html>") == nil, "no library block, no state")
+
+        let listFragment = """
+        <label class="row"><input type="checkbox" data-list-id="12" checked> 默认 (3)</label>
+        <label class="row"><input type="checkbox" data-list-id="34"> 精选 (0)</label>
+        """
+        let options = HTMLParser.listOptions(in: listFragment)
+        expect(options.count == 2 && options[0].listID == "12" && options[0].checked && options[0].name == "默认",
+               "list options parse id/checked/name, got \(options)")
+        expect(options.count == 2 && options[1].listID == "34" && !options[1].checked && options[1].name == "精选",
+               "list options second row")
+
+        let userListsHTML = """
+        <a href="/zh-CN/user/lists">我的清单</a>
+        <a href="/zh-CN/user/lists/Ab12Cd34">默认</a>
+        <a href="/zh-CN/user/lists/Xy99Zz88">精选</a>
+        """
+        let userLists = HTMLParser.userLists(in: userListsHTML)
+        expect(userLists.map(\.name) == ["默认", "精选"], "user lists exclude the index link, got \(userLists.map(\.name))")
+
         let signedHTML = "<a href=\"/zh-CN/sign_out\">退出登录</a>"
         expect(HTMLParser.isSignedIn(html: signedHTML), "sign_out means signed in")
         expect(HTMLParser.signOutURL(in: signedHTML)?.contains("sign_out") == true, "sign_out url")
         expect(HTMLParser.containsSignInLink("<a href=\"/zh-CN/sign_in\">登录</a>"), "sign_in link")
 
-        print("PASS: home, detail magnets, ranking merge, hot casts, HQ cover sources, empty shell, block detection, cover policy, login signals, ranking tabs, pagination, news, series, detail cover identity, page map, cast cards, prefix links, filter form, homepage panel, auto-next, home main list, movie toolbar, tab hygiene, tab locale guard, drawer shortcuts, poster quality, javbus, tenhow, amazon, avbase catalogue")
+        print("PASS: home, detail magnets, ranking merge, hot casts, HQ cover sources, empty shell, block detection, cover policy, login signals, ranking tabs, pagination, news, series, detail cover identity, page map, cast cards, prefix links, filter form, homepage panel, auto-next, home main list, movie toolbar, tab hygiene, tab locale guard, drawer shortcuts, poster quality, javbus, tenhow, amazon, avbase catalogue, trailer and stills, library sync parsing")
     }
 }
 

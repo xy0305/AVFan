@@ -129,6 +129,36 @@ actor SiteClient {
         }
     }
 
+    /// Authenticated JSON call in the site's own session (the shared
+    /// cookie store the login flow populates), mirroring the page's own
+    /// fetch() calls for the library actions: JSON body, CSRF header,
+    /// same rate limit as page fetches. HTTP statuses are RETURNED, not
+    /// thrown — the site's own code treats 401/403 as "go sign in", and
+    /// the caller needs the JSON message either way.
+    func jsonRequest(
+        method: String,
+        url: URL,
+        csrf: String?,
+        body: [String: Any]? = nil
+    ) async throws -> (status: Int, json: [String: Any]?) {
+        try await respectRateLimit()
+        var request = URLRequest(url: url)
+        request.httpMethod = method
+        request.setValue(Self.mobileSafariUA, forHTTPHeaderField: "User-Agent")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("XMLHttpRequest", forHTTPHeaderField: "X-Requested-With")
+        request.setValue("https://avfan.com/", forHTTPHeaderField: "Referer")
+        if let csrf { request.setValue(csrf, forHTTPHeaderField: "X-CSRF-Token") }
+        if let body {
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        }
+        let (data, response) = try await session.data(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        return (status, json)
+    }
+
     private func fetchWithURLSession(url: URL, locale: SiteLocale, ageCookie: String?) async throws -> String {
         try await respectRateLimit()
         await CookieBridge.applyLegalAge(ageCookie != nil)

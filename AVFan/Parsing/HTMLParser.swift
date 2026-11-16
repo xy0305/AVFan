@@ -1167,8 +1167,165 @@ enum HTMLParser {
             casts: links(in: definitionHTML(named: "演员", in: html) ?? "", kind: "cast"),
             tags: links(in: definitionHTML(named: "标签", in: html) ?? "", kind: "tag"),
             magnets: magnets(in: html),
-            watchStreams: watchStreams(in: html, pageURL: pageURL)
+            watchStreams: watchStreams(in: html, pageURL: pageURL),
+            trailerURL: trailerURL(in: html),
+            previewImages: previewImages(in: html, cover: preferredCover),
+            library: libraryState(in: html)
         )
+    }
+
+    /// The account library block （想看 / 看过 / 保存至清单） as the detail
+    /// page itself declares it: the review controller's buttons carry
+    /// their POST endpoints in data-url and their state in which
+    /// "already" button is not hidden; the save-to-list modal carries
+    /// the toggle endpoint and the list-rows endpoint. Everything is
+    /// read from the page's own attributes — no endpoint is guessed.
+    /// Returns nil when the page has no such block.
+    static func libraryState(in html: String) -> LibraryPageState? {
+        func targetTag(_ target: String) -> String? {
+            firstMatch("(<[^>]*data-review-target=\"\(target)\"[^>]*>)", in: html)
+        }
+        let addWatchlist = targetTag("btnAddToWatchlist")
+        let alreadyWatchlist = targetTag("btnAlreadyInWatchlist")
+        let watchedButton = targetTag("btnWatched")
+        let markWatched = targetTag("btnMarkAsWatched")
+        let alreadyWatched = targetTag("btnAlreadyWatched")
+        let removeButton = targetTag("btnRemoveReview")
+        let modal = firstMatch("(<[^>]*id=\"save-to-list-modal\"[^>]*>)", in: html)
+        guard addWatchlist != nil || alreadyWatchlist != nil || watchedButton != nil
+            || markWatched != nil || alreadyWatched != nil || modal != nil else { return nil }
+
+        func visible(_ tag: String?) -> Bool {
+            guard let tag else { return false }
+            let classes = (attribute("class", in: tag) ?? "").split(separator: " ")
+            return !classes.contains("hidden")
+        }
+
+        var state = LibraryPageState()
+        state.csrfToken = firstMatch("<meta[^>]*name=\"csrf-token\"[^>]*content=\"([^\"]+)\"", in: html)
+            ?? firstMatch("<meta[^>]*content=\"([^\"]+)\"[^>]*name=\"csrf-token\"", in: html)
+        if visible(alreadyWatched) {
+            state.reviewStatus = .watched
+        } else if visible(alreadyWatchlist) {
+            state.reviewStatus = .watchlist
+        }
+        if let addWatchlist {
+            state.watchlistURL = attribute("data-url", in: addWatchlist)
+            if let type = attribute("data-action-type", in: addWatchlist) { state.watchlistActionType = type }
+        }
+        if let watchedSource = markWatched ?? watchedButton {
+            state.watchedURL = attribute("data-url", in: watchedSource)
+            if let type = attribute("data-action-type", in: watchedSource) { state.watchedActionType = type }
+        }
+        // The site's create call is one endpoint for both statuses; if
+        // only one button printed its URL, it serves both.
+        if state.watchlistURL == nil { state.watchlistURL = state.watchedURL }
+        if state.watchedURL == nil { state.watchedURL = state.watchlistURL }
+        if let removeButton { state.removeURL = attribute("data-url", in: removeButton) }
+        if let modal { state.changeURL = attribute("data-change-url", in: modal) }
+        if let container = firstMatch("(<[^>]*id=\"lists-container\"[^>]*>)", in: html) {
+            state.listsURL = attribute("data-url", in: container)
+        }
+        if let saveButton = firstMatch("(<[^>]*id=\"save-list-btn\"[^>]*>)", in: html) {
+            state.createListURL = attribute("data-url", in: saveButton)
+            if let mode = attribute("data-mode", in: saveButton) { state.createListMode = mode }
+        }
+        return state
+    }
+
+    /// Rows of the save-to-list picker, parsed from the HTML fragment
+    /// the lists endpoint returns: one checkbox input per list, its
+    /// data-list-id, checked state, and the label text after it.
+    static func listOptions(in fragment: String) -> [SyncListOption] {
+        var results: [SyncListOption] = []
+        var seen = Set<String>()
+        guard let regex = try? NSRegularExpression(pattern: "<input[^>]*>", options: [.caseInsensitive]) else { return [] }
+        let ns = fragment as NSString
+        for match in regex.matches(in: fragment, range: NSRange(location: 0, length: ns.length)) {
+            let tag = ns.substring(with: match.range)
+            guard let listID = attribute("data-list-id", in: tag), seen.insert(listID).inserted else { continue }
+            let checked = tag.range(of: #"(^|\s)checked(\s|=|>|$)"#, options: .regularExpression) != nil
+            let tail = ns.substring(from: match.range.location + match.range.length)
+            var name = stripTags(String(tail.prefix(300))).trimmingCharacters(in: .whitespacesAndNewlines)
+            // The label reads "名称 (数量)" and the next row's text
+            // follows in the same fragment: cut at the first count.
+            if let range = name.range(of: #"\s*[\(（]\d+[\)）]"#, options: .regularExpression) {
+                name = String(name[..<range.lowerBound]).trimmingCharacters(in: .whitespaces)
+            }
+            if name.count > 40 { name = String(name.prefix(40)) }
+            if name.isEmpty { name = "清单 \(listID)" }
+            results.append(SyncListOption(listID: listID, name: name, checked: checked))
+        }
+        return results
+    }
+
+    /// The signed-in user's own lists, from the /user/lists page:
+    /// anchors into user/lists/<id> with their names.
+    static func userLists(in html: String) -> [NamedLink] {
+        var results: [NamedLink] = []
+        var seen = Set<String>()
+        guard let regex = try? NSRegularExpression(pattern: "<a[^>]+href=\"([^\"]+)\"[^>]*>([\\s\\S]*?)</a>", options: [.caseInsensitive]) else { return [] }
+        let ns = html as NSString
+        for match in regex.matches(in: html, range: NSRange(location: 0, length: ns.length)) {
+            let href = ns.substring(with: match.range(at: 1))
+            let stripped = stripLocale(href)
+            guard stripped.hasPrefix("user/lists/") else { continue }
+            let name = stripTags(ns.substring(with: match.range(at: 2))).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty, seen.insert(stripped).inserted else { continue }
+            results.append(NamedLink(name: name, href: href, kind: "userlist"))
+        }
+        return results
+    }
+
+    /// The detail page's own preview trailer: the JSON-LD VideoObject
+    /// contentUrl when it points at a preview host (DMM's pv CDN), any
+    /// d1.avfan.com mp4, or any DMM /pv/ mp4 in the page. Full watch
+    /// streams are watchStreams' job; this is the media strip's cell.
+    static func trailerURL(in html: String) -> String? {
+        let text = html.replacingOccurrences(of: "\\/", with: "/")
+        func isTrailer(_ raw: String) -> String? {
+            let value = unescape(raw).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let url = URL(string: value), let host = url.host?.lowercased() else { return nil }
+            let path = url.path.lowercased()
+            guard path.hasSuffix(".mp4") else { return nil }
+            if host == "d1.avfan.com" { return value }
+            if host.contains("dmm.co.jp"), path.contains("/pv/") { return value }
+            return nil
+        }
+        if let content = firstMatch(#"contentUrl"\s*:\s*"([^"]+)""#, in: text), let hit = isTrailer(content) {
+            return hit
+        }
+        for raw in allMatches(#"(https?://[^\s"'<>]+\.mp4(?:\?[^\s"'<>]*)?)"#, in: text) {
+            if let hit = isTrailer(raw) { return hit }
+        }
+        return nil
+    }
+
+    /// Sample stills embedded in the detail page: DMM sample images
+    /// (…jp-N.jpg on the DMM image hosts) and avfan-hosted samples.
+    /// Anything else on the page (ads, covers of other titles, avatars)
+    /// is not a still of this movie. Page order, de-duplicated, the
+    /// movie's own cover excluded.
+    static func previewImages(in html: String, cover: String?) -> [String] {
+        let text = html.replacingOccurrences(of: "\\/", with: "/")
+        var results: [String] = []
+        var seen = Set<String>()
+        for raw in allMatches(#"(https?://[^\s"'<>\\]+)"#, in: text) {
+            let value = unescape(raw).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let url = URL(string: value), let host = url.host?.lowercased() else { continue }
+            let path = url.path
+            let lower = path.lowercased()
+            let isDMMSample = (host.contains("dmm.co.jp") || host.contains("awsimgsrc"))
+                && lower.range(of: #"jp-\d+\.(jpg|jpeg|png)$"#, options: .regularExpression) != nil
+            let isAvfanSample = host == "c1.avfan.com" && lower.contains("/samples/")
+            guard isDMMSample || isAvfanSample else { continue }
+            if let cover, value == cover { continue }
+            if seen.insert(value).inserted {
+                results.append(value)
+                if results.count >= 24 { break }
+            }
+        }
+        return results
     }
 
 

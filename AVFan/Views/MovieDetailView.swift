@@ -5,6 +5,7 @@ struct MovieDetailView: View {
     let card: MovieCard
     @EnvironmentObject private var settings: AppSettings
     @EnvironmentObject private var bookmarks: BookmarkStore
+    @EnvironmentObject private var session: SiteSession
     @EnvironmentObject private var pan115: Pan115Settings
     @Environment(\.dismiss) private var dismiss
     @Environment(\.availableLayoutSize) private var layoutSize
@@ -20,6 +21,14 @@ struct MovieDetailView: View {
     @State private var toast: String?
     @State private var resume115: PlaybackResumeEntry?
     @State private var resumeOnline: PlaybackResumeEntry?
+    @State private var showListPicker = false
+    @State private var showLogin = false
+    @State private var reviewOverride: ReviewStatus?
+    @State private var removeURLOverride: String?
+    @State private var syncBusy = false
+    @State private var playTrailer = false
+    @State private var stillBox: IndexBox?
+    @State private var mediaExpanded = false
     @State private var sourceOverride: PlaySource?
     /// Measured height of the hero's text stack (title block + controls).
     /// A long title with its expand button outgrows the slot the geometry
@@ -115,6 +124,27 @@ struct MovieDetailView: View {
         }
         .onChange(of: showPlayer) { _, open in if !open { refreshResume() } }
         .onChange(of: showWatchPlayer) { _, open in if !open { refreshResume() } }
+        .fullScreenCover(isPresented: $playTrailer) {
+            if let trailer = display.trailerURL, let url = URL(string: trailer) {
+                WatchOnlinePlayerView(
+                    title: (display.displayCode) + " 预告片",
+                    url: url,
+                    resumeKey: PlaybackResumeKey.make(number: display.displayCode, source: "avfan-trailer"),
+                    startFromBeginning: true
+                )
+            }
+        }
+        .sheet(isPresented: $showListPicker) {
+            if let library = display.library {
+                ListPickerSheet(state: library)
+            }
+        }
+        .sheet(isPresented: $showLogin) {
+            SiteLoginView()
+        }
+        .fullScreenCover(item: $stillBox) { box in
+            StillViewer(images: galleryImages(display), index: box.value)
+        }
         .overlay(alignment: .topLeading) { detailChrome }
         .overlay(alignment: .bottom) {
             if let toast {
@@ -188,7 +218,9 @@ struct MovieDetailView: View {
                     ProgressView("正在加载详情…").frame(maxWidth: .infinity)
                 }
                 resourceCards(detail)
+                libraryActions(detail)
                 movieInfoCard(detail)
+                mediaSection(detail)
                 if !detail.tags.isEmpty { tagsSection(detail.tags) }
                 if !detail.casts.isEmpty { linkSection("演员", detail.casts) }
                 if let summary = detail.summary, !summary.isEmpty { summarySection(summary) }
@@ -543,6 +575,203 @@ struct MovieDetailView: View {
         }
     }
 
+    /// 想看 / 看过 / 保存至清单 — synced to the user's avfan account
+    /// through the site's own calls (endpoints and state parsed from
+    /// this page). Tapping the active state removes the review, like
+    /// the site's remove action. When the page carries no library
+    /// block, the row is hidden.
+    @ViewBuilder
+    private func libraryActions(_ detail: MovieDetail) -> some View {
+        if let library = detail.library {
+            let status = reviewOverride ?? library.reviewStatus
+            HStack(spacing: 10) {
+                libraryButton(
+                    icon: status == .watchlist ? "eye.fill" : "eye",
+                    title: "想看",
+                    active: status == .watchlist
+                ) {
+                    Task { await syncReview(library: library, target: .watchlist) }
+                }
+                libraryButton(
+                    icon: status == .watched ? "checkmark.circle.fill" : "checkmark.circle",
+                    title: "看过",
+                    active: status == .watched
+                ) {
+                    Task { await syncReview(library: library, target: .watched) }
+                }
+                libraryButton(
+                    icon: "list.bullet.rectangle",
+                    title: "保存至清单",
+                    active: false
+                ) {
+                    showListPicker = true
+                }
+            }
+            .opacity(syncBusy ? 0.55 : 1)
+            .disabled(syncBusy)
+        }
+    }
+
+    private func syncReview(library: LibraryPageState, target: ReviewStatus) async {
+        let current = reviewOverride ?? library.reviewStatus
+        syncBusy = true
+        defer { syncBusy = false }
+        if current == target {
+            guard let removeURL = removeURLOverride ?? library.removeURL else {
+                toast = "页面没有给出取消地址"
+                hideToastLater()
+                return
+            }
+            let outcome = await LibrarySync.removeReview(url: removeURL, csrf: library.csrfToken)
+            if outcome.success {
+                reviewOverride = .none
+                removeURLOverride = nil
+                toast = "已取消"
+            } else {
+                handleSyncFailure(outcome)
+            }
+        } else {
+            let isWatchlist = target == .watchlist
+            guard let url = isWatchlist ? library.watchlistURL : library.watchedURL else {
+                toast = "页面没有给出同步地址"
+                hideToastLater()
+                return
+            }
+            let outcome = await LibrarySync.setReview(
+                url: url,
+                actionType: isWatchlist ? library.watchlistActionType : library.watchedActionType,
+                csrf: library.csrfToken
+            )
+            if outcome.success {
+                reviewOverride = target
+                if let remove = outcome.removeURL { removeURLOverride = remove }
+                toast = isWatchlist ? "已加入想看" : "已标记看过"
+            } else {
+                handleSyncFailure(outcome)
+            }
+        }
+        hideToastLater()
+    }
+
+    private func handleSyncFailure(_ outcome: LibrarySync.Outcome) {
+        if outcome.needsLogin {
+            showLogin = true
+        } else {
+            toast = outcome.message ?? "同步失败"
+            hideToastLater()
+        }
+    }
+
+    private func libraryButton(icon: String, title: String, active: Bool, action: @escaping () -> Void) -> some View {
+        Button {
+            GlassHaptic.tap()
+            action()
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: icon).font(.system(size: 14, weight: .semibold))
+                Text(title).font(.subheadline.weight(.medium))
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 10)
+            .foregroundStyle(active ? Color.white : AVFanTheme.accent)
+            .background(active ? AVFanTheme.accent : AVFanTheme.accent.opacity(0.10),
+                        in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// 预告片 + 预览图 — mirrors the site's media grid under the library
+    /// buttons: a 4-column grid whose first cell is the trailer, then
+    /// the cover, then the samples; collapsed to 8 cells with a chevron
+    /// that expands in place. Stills (cover first, like the site's
+    /// gallery) open in a swipeable full-screen viewer; the trailer
+    /// plays in the same online player.
+    @ViewBuilder
+    private func mediaSection(_ detail: MovieDetail) -> some View {
+        let gallery = galleryImages(detail)
+        if detail.trailerURL != nil || !gallery.isEmpty {
+            let trailerCells = detail.trailerURL != nil ? 1 : 0
+            let cellCount = trailerCells + gallery.count
+            let shown = mediaExpanded ? cellCount : min(cellCount, 8)
+            VStack(alignment: .leading, spacing: 12) {
+                GlassSectionHeader(title: "预告与预览图", icon: "photo.on.rectangle.angled", trailingTitle: nil)
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 4), spacing: 8) {
+                    if detail.trailerURL != nil {
+                        Button {
+                            GlassHaptic.tap()
+                            playTrailer = true
+                        } label: {
+                            mediaCell(url: detail.coverURL, badge: "预告片", play: true)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    ForEach(Array(gallery.enumerated()), id: \.offset) { index, url in
+                        if trailerCells + index < shown {
+                            Button {
+                                GlassHaptic.tap()
+                                stillBox = IndexBox(value: index)
+                            } label: {
+                                mediaCell(url: url, badge: nil, play: false)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+                if cellCount > 8 {
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.2)) { mediaExpanded.toggle() }
+                    } label: {
+                        Image(systemName: mediaExpanded ? "chevron.up" : "chevron.down")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 4)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    /// The site's gallery order: the cover is image 1, samples follow.
+    private func galleryImages(_ detail: MovieDetail) -> [String] {
+        var images: [String] = []
+        if let cover = detail.coverURL, !cover.isEmpty { images.append(cover) }
+        images.append(contentsOf: detail.previewImages)
+        return images
+    }
+
+    private func mediaCell(url: String?, badge: String?, play: Bool) -> some View {
+        ZStack {
+            RemoteImage(url: url)
+            if play {
+                Image(systemName: "play.circle.fill")
+                    .font(.system(size: 30))
+                    .foregroundStyle(.white, .black.opacity(0.35))
+            }
+            if let badge {
+                VStack {
+                    Spacer()
+                    HStack {
+                        Text(badge)
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(.black.opacity(0.55), in: Capsule())
+                        Spacer()
+                    }
+                }
+                .padding(5)
+            }
+        }
+        .aspectRatio(4.0 / 3.0, contentMode: .fill)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+
     private func summarySection(_ summary: String) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             GlassSectionHeader(title: "简介", icon: "text.alignleft", trailingTitle: nil)
@@ -882,6 +1111,166 @@ final class MovieDetailViewModel: ObservableObject {
                 tags: [],
                 magnets: []
             )
+        }
+    }
+}
+
+struct IndexBox: Identifiable {
+    let value: Int
+    var id: Int { value }
+}
+
+/// 保存至清单 picker, account-synced: the rows are the account's own
+/// lists as the site's modal endpoint returns them; tapping a row
+/// toggles this movie's membership on the account, and a new list is
+/// created on the account (the site returns its row, inserted here).
+struct ListPickerSheet: View {
+    let state: LibraryPageState
+    @Environment(\.dismiss) private var dismiss
+    @State private var options: [SyncListOption] = []
+    @State private var loading = true
+    @State private var newListName = ""
+    @State private var message: String?
+    @State private var showLogin = false
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if loading {
+                    HStack(spacing: 10) {
+                        ProgressView()
+                        Text("正在读取账号清单…")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                } else if options.isEmpty {
+                    Text("账号里还没有清单。用下面的输入框新建一个。")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(options) { option in
+                    Button {
+                        Task { await toggle(option) }
+                    } label: {
+                        HStack {
+                            Text(option.name).foregroundStyle(.primary)
+                            Spacer()
+                            if option.checked {
+                                Image(systemName: "checkmark").foregroundStyle(AVFanTheme.accent)
+                            }
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+                Section("新建清单") {
+                    HStack {
+                        TextField("清单名称", text: $newListName)
+                        Button("新建") {
+                            Task { await create() }
+                        }
+                        .disabled(newListName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || state.createListURL == nil)
+                    }
+                }
+                if let message {
+                    Text(message)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .navigationTitle("保存至清单")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("完成") { dismiss() }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .task { await load() }
+        .sheet(isPresented: $showLogin) { SiteLoginView() }
+    }
+
+    private func load() async {
+        loading = true
+        if let listsURL = state.listsURL {
+            options = await LibrarySync.fetchListOptions(listsURL: listsURL, csrf: state.csrfToken)
+        }
+        loading = false
+    }
+
+    private func toggle(_ option: SyncListOption) async {
+        guard let changeURL = state.changeURL else {
+            message = "页面没有给出同步地址"
+            return
+        }
+        let outcome = await LibrarySync.toggleList(changeURL: changeURL, listID: option.listID, csrf: state.csrfToken)
+        if outcome.success {
+            if let index = options.firstIndex(where: { $0.listID == option.listID }) {
+                options[index].checked.toggle()
+            }
+            message = outcome.message
+        } else if outcome.needsLogin {
+            showLogin = true
+        } else {
+            message = outcome.message ?? "同步失败"
+        }
+    }
+
+    private func create() async {
+        guard let url = state.createListURL else { return }
+        let name = newListName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return }
+        let outcome = await LibrarySync.createList(url: url, mode: state.createListMode, name: name, csrf: state.csrfToken)
+        if outcome.success {
+            newListName = ""
+            message = outcome.message ?? "已新建清单"
+            if let fragment = outcome.listFragment, let parsed = HTMLParser.listOptions(in: fragment).first {
+                options.insert(parsed, at: 0)
+            } else {
+                await load()
+            }
+        } else if outcome.needsLogin {
+            showLogin = true
+        } else {
+            message = outcome.message ?? "新建失败"
+        }
+    }
+}
+
+/// Full-screen viewer for the detail page's sample stills.
+struct StillViewer: View {
+    let images: [String]
+    @Environment(\.dismiss) private var dismiss
+    @State private var current: Int
+
+    init(images: [String], index: Int) {
+        self.images = images
+        _current = State(initialValue: index)
+    }
+
+    var body: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+            TabView(selection: $current) {
+                ForEach(Array(images.enumerated()), id: \.offset) { i, url in
+                    RemoteImage(url: url, contentMode: .fit)
+                        .tag(i)
+                }
+            }
+            .tabViewStyle(.page(indexDisplayMode: .automatic))
+            VStack {
+                HStack {
+                    Spacer()
+                    Button { dismiss() } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 28))
+                            .foregroundStyle(.white, .black.opacity(0.4))
+                    }
+                    .padding(16)
+                }
+                Spacer()
+            }
         }
     }
 }
