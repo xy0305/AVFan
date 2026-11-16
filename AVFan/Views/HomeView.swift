@@ -745,7 +745,7 @@ struct CatalogListView: View {
                             .padding(.vertical, 10)
                             .background(isOn ? Color(.secondarySystemBackground) : AVFanTheme.accent,
                                         in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                            .foregroundStyle(isOn ? .primary : .white)
+                            .foregroundStyle(isOn ? Color.primary : Color.white)
                         }
                         .buttonStyle(.plain)
                         .disabled(collectBusy)
