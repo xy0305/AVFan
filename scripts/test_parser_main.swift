@@ -383,12 +383,34 @@ enum ParserTests {
         expect(HTMLParser.applyingFilters("/zh-CN", form: toolbar!, selections: combo) == "/zh-CN?mfilter=has_magnets,can_play&msort=sort_by_release",
                "combined filter and sort parameters")
 
+        // Build 16: the series page's language menu and drawer entry
+        // are not tabs; the news page keeps its deliberate 全部 tab.
+        let seriesTabsHTML = """
+        <a href="/en/series">English</a>
+        <a href="/zh-TW/series">繁體中文</a>
+        <a href="/zh-CN/series">系列</a>
+        <a href="/zh-CN/series?t=asian">亚洲</a>
+        <a href="/zh-CN/series?t=western">欧美</a>
+        <a href="/zh-CN/series?t=anime">动漫</a>
+        """
+        let seriesTabs = HTMLParser.rankingTabs(in: seriesTabsHTML, basePath: "series", currentPath: "series?__none")
+        expect(seriesTabs.map(\.name) == ["亚洲", "欧美", "动漫"],
+               "series tabs exclude language menu and self link, got \(seriesTabs.map(\.name))")
+        let newsTabsHTML = """
+        <a href="/zh-CN/news">全部</a>
+        <a href="/zh-CN/news">资讯</a>
+        <a href="/zh-CN/news?category=45">新片情報</a>
+        """
+        let newsTabs = HTMLParser.rankingTabs(in: newsTabsHTML, basePath: "news", currentPath: "news?__none")
+        expect(newsTabs.map(\.name) == ["全部", "新片情報"],
+               "news keeps its 全部 tab and drops the drawer entry, got \(newsTabs.map(\.name))")
+
         let signedHTML = "<a href=\"/zh-CN/sign_out\">退出登录</a>"
         expect(HTMLParser.isSignedIn(html: signedHTML), "sign_out means signed in")
         expect(HTMLParser.signOutURL(in: signedHTML)?.contains("sign_out") == true, "sign_out url")
         expect(HTMLParser.containsSignInLink("<a href=\"/zh-CN/sign_in\">登录</a>"), "sign_in link")
 
-        print("PASS: home, detail magnets, ranking merge, hot casts, HQ cover sources, empty shell, block detection, cover policy, login signals, ranking tabs, pagination, news, series, detail cover identity, page map, cast cards, prefix links, filter form, homepage panel, auto-next, home main list, movie toolbar")
+        print("PASS: home, detail magnets, ranking merge, hot casts, HQ cover sources, empty shell, block detection, cover policy, login signals, ranking tabs, pagination, news, series, detail cover identity, page map, cast cards, prefix links, filter form, homepage panel, auto-next, home main list, movie toolbar, tab hygiene")
     }
 }
 

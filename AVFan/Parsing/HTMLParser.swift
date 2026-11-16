@@ -93,6 +93,10 @@ enum HTMLParser {
     /// page's own anchors / select options whose locale-stripped path equals
     /// the ranking's base path. Pagination links (page=) are excluded; the
     /// currently shown variant is excluded too.
+    /// Visible names of the site's locales, as rendered in its
+    /// language menu; links with these labels are never tabs.
+    static let languageNames: Set<String> = ["English", "简体中文", "繁體中文", "日本語", "한국어", "ภาษาไทย"]
+
     static func rankingTabs(in html: String, basePath: String, currentPath: String) -> [NamedLink] {
         let base = stripLocale(basePath)
         let current = stripLocale(currentPath)
@@ -102,6 +106,14 @@ enum HTMLParser {
             let href = unescape(rawHref).trimmingCharacters(in: .whitespacesAndNewlines)
             let label = stripTags(rawLabel)
             guard !label.isEmpty, label.count <= 14 else { return }
+            // The site's language menu links to this same page in other
+            // locales; its entries are language names, not tabs (build
+            // 16: an "English" chip appeared among the series tabs).
+            guard !languageNames.contains(label) else { return }
+            // A bare link to the section root (the drawer entry, e.g.
+            // 系列 on the series page) is not a tab variant either —
+            // except a deliberate 全部 tab, which the news page keeps.
+            if stripLocale(href) == base, label != "全部" { return }
             guard stripLocale(href) != current else { return }
             guard stripLocale(href).split(separator: "?").first.map(String.init) == base else { return }
             guard !href.contains("page=") else { return }

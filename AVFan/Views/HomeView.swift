@@ -118,17 +118,21 @@ struct HomeView: View {
                         GlassHaptic.tap()
                         openCatalog = CatalogDestination(title: item.title, path: item.path(locale: settings.locale))
                     } label: {
-                        VStack(spacing: 8) {
+                        // Liquid-glass boxes (build 16, owner's call):
+                        // the whole shortcut — icon and title — sits in
+                        // one rounded glass card instead of a glass
+                        // circle with a bare label under it.
+                        VStack(spacing: 6) {
                             Image(systemName: shortcutIcon(item))
-                                .font(.system(size: 18, weight: .semibold))
-                                .frame(width: m.quickCircle, height: m.quickCircle)
-                                .homeGlass(in: Circle())
-                                .foregroundStyle(Color.primary)
+                                .font(.system(size: 19, weight: .semibold))
+                                .foregroundStyle(AVFanTheme.accent)
                             Text(item.title)
                                 .font(.system(size: 11, weight: .semibold))
-                                .foregroundStyle(Color.secondary)
+                                .foregroundStyle(Color.primary)
                         }
-                        .frame(width: m.quickItem)
+                        .frame(width: m.quickItem + 10)
+                        .padding(.vertical, 11)
+                        .liquidGlassRect(cornerRadius: 18, interactive: true)
                     }
                     .buttonStyle(HomePressStyle(scale: 0.92))
                     .accessibilityLabel(item.title)

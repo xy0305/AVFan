@@ -43,6 +43,12 @@ struct SeriesView: View {
                                     activePath = tab.href
                                     filterForm = nil
                                     selections = [:]
+                                    // Drop the old tab's rows at once:
+                                    // leaving them in place while the
+                                    // new list loads painted both lists
+                                    // over each other mid-switch.
+                                    items = []
+                                    nextPage = nil
                                     Task { await load() }
                                 } label: {
                                     Text(tab.name)
@@ -120,6 +126,9 @@ struct SeriesView: View {
                 }
             }
             .padding(.vertical, 6)
+            // A tab switch rebuilds the stack instead of diffing two
+            // unrelated lists into the same cells.
+            .id(currentPath)
         }
         .background(AVFanTheme.pageBackground)
         .navigationTitle("系列")
