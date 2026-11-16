@@ -253,8 +253,9 @@ enum HTMLParser {
             for match in regex.matches(in: html, range: NSRange(location: 0, length: ns.length)) {
                 let href = unescape(ns.substring(with: match.range(at: 1)))
                 let stripped = stripLocale(href)
-                guard stripped.hasPrefix("/number_letters/") else { continue }
-                let segment = String(stripped.dropFirst("/number_letters/".count))
+                // stripLocale drops the leading slash: "number_letters/JUR".
+                guard stripped.hasPrefix("number_letters/") else { continue }
+                let segment = String(stripped.dropFirst("number_letters/".count))
                     .split(separator: "?").first.map(String.init) ?? ""
                 guard !segment.isEmpty, !segment.contains("/") else { continue }
                 guard seen.insert(stripped).inserted else { continue }
