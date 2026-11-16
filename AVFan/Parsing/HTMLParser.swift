@@ -1319,8 +1319,12 @@ enum HTMLParser {
     /// preserved — the site ranks them, and the first three get
     /// the coloured treatment in the UI.
     static func hotSearchTerms(in html: String) -> [String] {
-        guard let start = html.range(of: "热门搜索") else { return [] }
-        let slice = String(html[start.lowerBound...].prefix(24000))
+        // Comments are not content: the marker word can appear in
+        // one long before the section itself.
+        let cleaned = html.replacingOccurrences(
+            of: "<!--[\\s\\S]*?-->", with: "", options: .regularExpression)
+        guard let start = cleaned.range(of: "热门搜索") else { return [] }
+        let slice = String(cleaned[start.lowerBound...].prefix(24000))
         var out: [String] = []
         var seen = Set<String>()
         guard let regex = try? NSRegularExpression(
