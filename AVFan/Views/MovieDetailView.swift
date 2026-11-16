@@ -761,10 +761,6 @@ struct MovieDetailView: View {
         .buttonStyle(.plain)
     }
 
-    /// 预告与预览图: trailer tile first with a play control, then
-    /// preview stills only. Fixed-aspect equal-height grid — no
-    /// masonry, no overlap, no ad banners.
-    @ViewBuilder
     /// Trailer tap (lock 1.3 build 28): re-bridge the cookies,
     /// and when signed in refetch the movie page BYPASSING the
     /// cache so the media URL comes from the current signed-in
@@ -789,6 +785,10 @@ struct MovieDetailView: View {
         playTrailer = true
     }
 
+    /// 预告与预览图: trailer tile first with a play control, then
+    /// preview stills only. Fixed-aspect equal-height grid — no
+    /// masonry, no overlap, no ad banners.
+    @ViewBuilder
     private func mediaSection(_ detail: MovieDetail) -> some View {
         let gallery = galleryImages(detail)
         let showTrailer = detail.trailerURL != nil || detail.hasTrailerAffordance
