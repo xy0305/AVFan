@@ -363,12 +363,24 @@ enum HTMLParser {
         guard groups.contains(where: { ["tfilter", "mfilter", "msort"].contains($0.name) }) else { return nil }
         let categories = controllerValue("category-paths")
             .map { allMatches("\"([^\"]+)\"", in: $0) } ?? []
-        return ListFilterForm(groups: groups, toolbar: ListFilterForm.ToolbarMeta(
+        let meta = ListFilterForm.ToolbarMeta(
             basePath: controllerValue("base-path") ?? "",
             categoryPaths: categories,
             defaultType: controllerValue("default-type") ?? "all",
             defaultFilter: controllerValue("default-filter") ?? "",
-            defaultSort: controllerValue("default-sort") ?? ""))
+            defaultSort: controllerValue("default-sort") ?? "")
+        // A page whose checkboxes carry no pre-checked state (the
+        // controller restores it from cookies client-side) still gets
+        // the site's declared defaults: 全部类型 for types, the
+        // defaultFilter option for filters.
+        for gi in groups.indices where !groups[gi].isRadio {
+            guard !groups[gi].options.contains(where: \.selected) else { continue }
+            let fallback = groups[gi].name == "mfilter" ? meta.defaultFilter : ""
+            for oi in groups[gi].options.indices where groups[gi].options[oi].value == fallback {
+                groups[gi].options[oi].selected = true
+            }
+        }
+        return ListFilterForm(groups: groups, toolbar: meta)
     }
 
     /// Port of the movie-toolbar controller's apply(): a single chosen
