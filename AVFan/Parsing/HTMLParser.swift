@@ -1258,7 +1258,7 @@ enum HTMLParser {
     /// loadMore): the next fetch is
     /// commentsURL?sort_by=<sortBy>&last_value=<lastValue>&last_id=<lastId>.
     static func commentsCursor(in fragment: String) -> (sortBy: String, lastValue: String, lastId: String)? {
-        guard let tag = firstMatch("<a[^>]*data-action=\"comment#loadMore\"[^>]*>", in: fragment),
+        guard let tag = firstMatch("(<a[^>]*data-action=\"comment#loadMore\"[^>]*>)", in: fragment),
               let sortBy = firstMatch("data-sort-by=\"([^\"]*)\"", in: tag),
               let lastValue = firstMatch("data-last-value=\"([^\"]*)\"", in: tag),
               let lastId = firstMatch("data-last-id=\"([^\"]*)\"", in: tag) else { return nil }
