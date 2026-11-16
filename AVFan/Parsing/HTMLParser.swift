@@ -891,7 +891,9 @@ enum HTMLParser {
 
             let titleAttr = attribute("title", in: tag).map(unescape) ?? ""
             let imgSrc = firstMatch("<img[^>]+src=\"([^\"]+)\"", in: inner)
-            let imgAlt = firstMatch("<img[^>]+alt=\"([^\"]*)\"", in: inner).map(unescape) ?? ""
+                ?? firstMatch("<img[^>]+src='([^']+)'", in: inner)
+            let imgAlt = firstMatch("<img[^>]+alt=\"([^\"]*)\"", in: inner).map(unescape)
+                ?? firstMatch("<img[^>]+alt='([^']*)'", in: inner).map(unescape) ?? ""
             let bold = firstMatch("class=\"[^\"]*font-bold[^\"]*\"[^>]*>([^<]+)", in: inner)
                 ?? firstMatch("<strong[^>]*>([^<]+)</strong>", in: inner)
             let sub = firstMatch("class=\"[^\"]*text-sm[^\"]*\"[^>]*>([^<]+)", in: inner)
@@ -962,6 +964,38 @@ enum HTMLParser {
                 if let index = cards.firstIndex(where: { $0.pathID == id }) {
                     cards[index].coverURL = CoverURLPolicy.preferred(from: [cards[index].coverURL, absoluteURL(src)].compactMap { $0 }) ?? cards[index].coverURL
                 }
+            }
+        }
+        // Sibling-cover pass (build 28): some sections render a
+        // card's cover OUTSIDE its title anchor (the anchor wraps
+        // only the code; the <img> is a sibling). The card then has
+        // a code but no cover — the owner's blank filmography rail.
+        // Scan the markup right after each still-coverless card's
+        // anchor, stopping at the next anchor so a neighbour's
+        // cover is never stolen.
+        for index in cards.indices where cards[index].coverURL == nil {
+            guard let anchorRange = html.range(of: cards[index].href) else { continue }
+            var window = String(html[anchorRange.upperBound...].prefix(1500))
+            if let nextAnchor = window.range(of: "<a ", options: .caseInsensitive) {
+                window = String(window[..<nextAnchor.lowerBound])
+            }
+            if let found = CoverURLPolicy.preferred(in: window) {
+                cards[index].coverURL = found
+                continue
+            }
+            // Same pass, other side: the cover may sit just BEFORE
+            // the title anchor (sibling order swapped). Take the
+            // closest image behind the anchor, not crossing the
+            // previous card's anchor.
+            let beforeText = String(html[..<anchorRange.lowerBound].suffix(1500))
+            var bWindow = beforeText
+            if let prevClose = beforeText.range(of: "</a>", options: [.caseInsensitive, .backwards]) {
+                bWindow = String(beforeText[prevClose.upperBound...])
+            }
+            let lastImg = allMatches("<img[^>]+(?:src|data-src)=\"([^\"]+)\"", in: bWindow).last
+                ?? allMatches("<img[^>]+(?:src|data-src)='([^']+)'", in: bWindow).last
+            if let lastImg {
+                cards[index].coverURL = CoverURLPolicy.preferred(from: [absoluteURL(lastImg)])
             }
         }
         return cards
@@ -1181,6 +1215,7 @@ enum HTMLParser {
                 ?? firstMatch("data-url=\"([^\"]+)\"[^>]*id=\"related-lists\"", in: html).map(unescape)
                 ?? firstMatch("(/?[A-Za-z-]+/lists/related\\?movie_id=[A-Za-z0-9]+)", in: html).map(unescape),
             commentsCount: firstMatch("tabComments\"[^>]*>[\\s\\S]*?评论[\\s\\S]*?>(\\d+)<", in: html).flatMap { Int($0) },
+            codePrefixPath: codePrefixPath(in: html),
             alsoStarred: sectionCards(in: html, heading: "还出演过"),
             relatedWorks: sectionCards(in: html, heading: "相关作品")
         )
@@ -1210,6 +1245,17 @@ enum HTMLParser {
         if slice.count > 60000 { slice = String(slice.prefix(60000)) }
         var seen = Set<String>()
         return movieCards(in: slice).filter { seen.insert($0.pathID).inserted }.prefix(12).map { $0 }
+    }
+
+    /// The detail page's own number_letters link for the movie's
+    /// code prefix: the markup is a span.movie-number whose prefix
+    /// is an anchor (<a href="/zh-CN/number_letters/DLDSS">DLDSS</a>-575).
+    /// Returns the anchor's href only when its text matches the
+    /// code prefix that follows it — never an invented URL.
+    static func codePrefixPath(in html: String) -> String? {
+        guard let span = firstMatch("class=\"[^\"]*movie-number[^\"]*\"[^>]*>([\\s\\S]*?)</span>", in: html) else { return nil }
+        guard let href = firstMatch("<a[^>]+href=\"([^\"]*/number_letters/[A-Za-z0-9%_-]+)\"[^>]*>([A-Za-z]+)</a>", in: span) else { return nil }
+        return unescape(href)
     }
 
     /// Whether the page carries a trailer player trigger at all
@@ -1774,28 +1820,41 @@ enum HTMLParser {
     /// d1.avfan.com mp4, or any DMM /pv/ mp4 in the page. Full watch
     /// streams are watchStreams' job; this is the media strip's cell.
     static func trailerURL(in html: String) -> String? {
-        // The trailer trigger itself declares the exact source the
-        // site's own player attaches (an mp4 or an HLS playlist) —
-        // that wins over the structured-data URL.
-        if let declared = firstMatch("data-trailer-player-src-value=\"([^\"]+)\"", in: html) {
-            let url = unescape(declared).trimmingCharacters(in: .whitespacesAndNewlines)
-            if url.hasPrefix("http") { return url }
+        // Candidates in page order: the trailer trigger's declared
+        // source, the structured-data contentUrl, then any media
+        // URL in the page. Lock 1.3 build 28 ranking: an
+        // avfan-hosted source (d1.avfan.com) beats a DMM sample —
+        // the DMM preview CDN refuses non-browser stacks even with
+        // a Referer, the site's own hosting does not.
+        var candidates: [String] = []
+        func consider(_ raw: String?) {
+            guard let raw else { return }
+            let value = unescape(raw).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let url = URL(string: value), let host = url.host?.lowercased() else { return }
+            let path = url.path.lowercased()
+            let isMedia = path.hasSuffix(".mp4") || path.hasSuffix(".m3u8")
+            guard isMedia else { return }
+            if host == "d1.avfan.com" || (host.contains("dmm.co.jp") && path.contains("/pv/")) {
+                if !candidates.contains(value) { candidates.append(value) }
+            }
+        }
+        let declared = firstMatch("data-trailer-player-src-value=\"([^\"]+)\"", in: html)
+        if let declared, declared.hasPrefix("http") {
+            consider(declared)
         }
         let text = html.replacingOccurrences(of: "\\/", with: "/")
-        func isTrailer(_ raw: String) -> String? {
-            let value = unescape(raw).trimmingCharacters(in: .whitespacesAndNewlines)
-            guard let url = URL(string: value), let host = url.host?.lowercased() else { return nil }
-            let path = url.path.lowercased()
-            guard path.hasSuffix(".mp4") else { return nil }
-            if host == "d1.avfan.com" { return value }
-            if host.contains("dmm.co.jp"), path.contains("/pv/") { return value }
-            return nil
+        consider(firstMatch(#"contentUrl"\s*:\s*"([^"]+)""#, in: text))
+        for raw in allMatches(#"(https?://[^\s"'<>]+\.(?:mp4|m3u8)(?:\?[^\s"'<>]*)?)"#, in: text) {
+            consider(raw)
         }
-        if let content = firstMatch(#"contentUrl"\s*:\s*"([^"]+)""#, in: text), let hit = isTrailer(content) {
-            return hit
+        if let avfanHosted = candidates.first(where: { URL(string: $0)?.host?.lowercased() == "d1.avfan.com" }) {
+            return avfanHosted
         }
-        for raw in allMatches(#"(https?://[^\s"'<>]+\.mp4(?:\?[^\s"'<>]*)?)"#, in: text) {
-            if let hit = isTrailer(raw) { return hit }
+        if let first = candidates.first { return first }
+        // Last resort: the declared player source even when its
+        // extension is unusual (the site's own player uses it as-is).
+        if let declared, declared.hasPrefix("http") {
+            return unescape(declared).trimmingCharacters(in: .whitespacesAndNewlines)
         }
         return nil
     }

@@ -724,6 +724,44 @@ enum ParserTests {
         expect(rows13[0].moviesCount == 14 && rows13[0].viewsCount == 0, "JUR-875 ntrr is 14部作品 被查看0次, got \(rows13[0])")
         expect(rows13[0].href.contains("/lists/") && !rows13[0].href.contains("/api/"), "list link is not an /api/ path")
 
+        // Build 28: DLDSS-575's real related-lists fragment
+        // (captured from the site's own endpoint): exactly one
+        // row — ntrr, 14 works, 0 views.
+        let lists575 = try fixture("related-lists-dldss575.html")
+        let rows575 = HTMLParser.relatedListRows(in: lists575)
+        expect(rows575.count == 1, "DLDSS-575 related lists count, got \(rows575.count) \(rows575)")
+        expect(rows575.first?.name == "ntrr", "DLDSS-575 list name, got \(rows575.first?.name ?? "nil")")
+        expect(rows575.first?.moviesCount == 14 && rows575.first?.viewsCount == 0, "DLDSS-575 ntrr is 14部作品 被查看0次, got \(String(describing: rows575.first))")
+        expect(rows575.first?.href.hasSuffix("/lists/Yim2aEoC") == true, "DLDSS-575 list href, got \(rows575.first?.href ?? "nil")")
+        // Build 28: code prefix path from the page's own
+        // movie-number markup; absent markup stays nil.
+        expect(HTMLParser.codePrefixPath(in: "<span class=\"movie-number\"><a href=\"/zh-CN/number_letters/DLDSS\">DLDSS</a>-575</span>") == "/zh-CN/number_letters/DLDSS", "code prefix path")
+        expect(HTMLParser.codePrefixPath(in: "<span class=\"movie-number\">IPZZ-936</span>") == nil, "no prefix link, no invented path")
+        // Build 28: sibling covers — a card whose anchor wraps
+        // only the code still gets its cover from the sibling img
+        // (either side), and never steals the next card's cover.
+        let siblingAfter = """
+        <h3>她/他还出演过</h3>
+        <div class="cell"><a href="/zh-CN/movies/aaaa1111"><strong>DLDSS-478</strong></a><img src="https://c1.avfan.com/covers/dl/dldss478.jpg"></div>
+        <div class="cell"><a href="/zh-CN/movies/bbbb2222"><strong>SONE-346</strong></a><img src="https://c1.avfan.com/covers/so/sone346.jpg"></div>
+        """
+        let sibCards = HTMLParser.sectionCards(in: siblingAfter, heading: "还出演过")
+        expect(sibCards.count == 2 && sibCards[0].coverURL?.contains("dldss478") == true, "sibling cover after anchor, got \(sibCards.map { $0.coverURL ?? "nil" })")
+        expect(sibCards.count == 2 && sibCards[1].coverURL?.contains("sone346") == true, "second sibling cover is its own, got \(sibCards.map { $0.coverURL ?? "nil" })")
+        let siblingBefore = """
+        <h3>她/他还出演过</h3>
+        <div class="cell"><img src='https://c1.avfan.com/covers/dl/dldss478.jpg'><a href="/zh-CN/movies/aaaa1111"><strong>DLDSS-478</strong></a></div>
+        """
+        let sibBeforeCards = HTMLParser.sectionCards(in: siblingBefore, heading: "还出演过")
+        expect(sibBeforeCards.count == 1 && sibBeforeCards[0].coverURL?.contains("dldss478") == true, "sibling cover before anchor (single-quoted), got \(sibBeforeCards.map { $0.coverURL ?? "nil" })")
+        // Build 28: avfan-hosted trailer beats a DMM sample when
+        // both are in the same page.
+        let bothTrailers = """
+        <div data-trailer-player-src-value="https://cc3001.dmm.co.jp/pv/x/dldss575mmb.mp4"></div>
+        <video><source src="https://d1.avfan.com/trailers/dldss575.m3u8"></video>
+        """
+        expect(HTMLParser.trailerURL(in: bothTrailers) == "https://d1.avfan.com/trailers/dldss575.m3u8", "avfan-hosted trailer preferred, got \(String(describing: HTMLParser.trailerURL(in: bothTrailers)))")
+
         let preview13 = try fixture("preview-with-ad.html")
         let stills13 = HTMLParser.previewImages(in: preview13, cover: "https://c1.avfan.com/covers/jr/jur875.jpg")
         expect(!stills13.contains(where: { $0.contains("gdario.com") }), "ad CDN excluded, got \(stills13)")

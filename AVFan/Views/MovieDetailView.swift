@@ -31,6 +31,10 @@ struct MovieDetailView: View {
     @State private var removeURLOverride: String?
     @State private var syncBusy = false
     @State private var playTrailer = false
+    /// Trailer URL prepared at tap time (build 28): cookies are
+    /// re-bridged and the movie page refetched bypassing the cache
+    /// first, so the player never works from a stale guest parse.
+    @State private var trailerPlayURL: String?
     @State private var stillBox: IndexBox?
     @State private var mediaExpanded = false
     @State private var sourceOverride: PlaySource?
@@ -56,6 +60,9 @@ struct MovieDetailView: View {
     @State private var listsBusy = false
     @State private var listsLoaded = false
     @State private var listsNeedLogin = false
+    /// Related-lists fetch failed (lock 1.3 build 28 three-state):
+    /// an error shows a retry, never the empty text.
+    @State private var listsError = false
     /// Measured height of the hero's text stack (title block + controls).
     /// A long title with its expand button outgrows the slot the geometry
     /// planned, pushing the play row past the artwork and the gradient —
@@ -165,7 +172,7 @@ struct MovieDetailView: View {
         .onChange(of: showWatchPlayer) { _, open in if !open { refreshResume() } }
         .fullScreenCover(isPresented: $playTrailer) {
             TrailerPlayerView(
-                url: display.trailerURL.flatMap { URL(string: $0) },
+                url: (trailerPlayURL ?? display.trailerURL).flatMap { URL(string: $0) },
                 pageURL: model.pageURL,
                 title: (display.displayCode) + " 预告片",
                 poster: display.coverURL ?? card.coverURL
@@ -552,7 +559,7 @@ struct MovieDetailView: View {
 
     private func movieInfoCard(_ detail: MovieDetail) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            infoRow("番号", detail.displayCode)
+            codeRow(detail)
             infoRow("发行日期", detail.releaseDate)
             infoRow("片长", detail.duration)
             if let rating = detail.rating {
@@ -568,6 +575,36 @@ struct MovieDetailView: View {
         }
         .padding(16)
         .liquidGlassRect(cornerRadius: 18)
+    }
+
+    /// 番号 row (lock 1.3 C): when the page itself links the code
+    /// prefix to its number_letters directory, the prefix is a
+    /// native link into that catalog; otherwise the code stays
+    /// plain text — no invented URLs.
+    @ViewBuilder
+    private func codeRow(_ detail: MovieDetail) -> some View {
+        let code = detail.displayCode
+        let prefix = String(code.prefix(while: { $0.isLetter }))
+        if let path = detail.codePrefixPath, !prefix.isEmpty, code.count > prefix.count {
+            HStack(alignment: .top) {
+                Text("番号").foregroundStyle(.secondary).frame(width: 72, alignment: .leading)
+                HStack(spacing: 0) {
+                    NavigationLink {
+                        CatalogListView(title: prefix, path: path)
+                    } label: {
+                        Text(prefix)
+                            .foregroundStyle(AVFanTheme.accent)
+                            .fontWeight(.semibold)
+                    }
+                    .buttonStyle(.plain)
+                    Text(String(code.dropFirst(prefix.count)))
+                }
+                Spacer()
+            }
+            .font(.subheadline)
+        } else {
+            infoRow("番号", code)
+        }
     }
 
     @ViewBuilder
@@ -728,6 +765,30 @@ struct MovieDetailView: View {
     /// preview stills only. Fixed-aspect equal-height grid — no
     /// masonry, no overlap, no ad banners.
     @ViewBuilder
+    /// Trailer tap (lock 1.3 build 28): re-bridge the cookies,
+    /// and when signed in refetch the movie page BYPASSING the
+    /// cache so the media URL comes from the current signed-in
+    /// HTML — never from a stale guest parse. Then present.
+    private func prepareTrailer(_ detail: MovieDetail) async {
+        trailerPlayURL = detail.trailerURL
+        await CookieBridge.exportWebKitToShared()
+        if session.isSignedIn, let pageURL = model.pageURL,
+           let fresh = try? await SiteClient.shared.html(
+               for: pageURL,
+               locale: settings.locale,
+               ageCookie: settings.legalAgeCookie,
+               allowWebViewFallback: true,
+               expectCatalog: false,
+               bypassCache: true
+           ) {
+            let parsed = await HTMLParser.detached { HTMLParser.movieDetail(from: fresh.html, url: pageURL) }
+            if let freshURL = parsed.trailerURL {
+                trailerPlayURL = freshURL
+            }
+        }
+        playTrailer = true
+    }
+
     private func mediaSection(_ detail: MovieDetail) -> some View {
         let gallery = galleryImages(detail)
         let showTrailer = detail.trailerURL != nil || detail.hasTrailerAffordance
@@ -750,7 +811,7 @@ struct MovieDetailView: View {
                                 if detail.trailerURL == nil && !session.isSignedIn {
                                     showLogin = true
                                 } else {
-                                    playTrailer = true
+                                    Task { await prepareTrailer(detail) }
                                 }
                             } label: {
                                 mediaCell(url: detail.coverURL ?? gallery.first, badge: "预告片", play: true)
@@ -902,6 +963,16 @@ struct MovieDetailView: View {
             GlassSectionHeader(title: "相关清单", icon: "list.bullet.rectangle", trailingTitle: nil)
             if listsBusy && relatedRows.isEmpty {
                 ProgressView().frame(maxWidth: .infinity)
+            } else if relatedRows.isEmpty && listsError {
+                HStack(spacing: 10) {
+                    Text("相关清单加载失败。")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    Button("重试") {
+                        Task { await loadRelatedLists(detail, page: nil) }
+                    }
+                    .font(.footnote.weight(.semibold))
+                }
             } else if relatedRows.isEmpty && listsLoaded && listsNeedLogin {
                 Button("登录后查看相关清单") { showLogin = true }
                     .font(.footnote.weight(.semibold))
@@ -1009,14 +1080,16 @@ struct MovieDetailView: View {
         do {
             var fragment = try await SiteClient.shared.fragment(
                 for: SiteClient.shared.catalogURL(path: path),
-                csrf: detail.library?.csrfToken
+                csrf: detail.library?.csrfToken,
+                referer: model.pageURL
             )
             var parsed = await HTMLParser.detached { HTMLParser.movieComments(in: fragment) }
             if cursor == nil, parsed.isEmpty, fragmentIsLoginGate(fragment) {
                 await CookieBridge.exportWebKitToShared()
                 fragment = try await SiteClient.shared.fragment(
                     for: SiteClient.shared.catalogURL(path: path),
-                    csrf: detail.library?.csrfToken
+                    csrf: detail.library?.csrfToken,
+                    referer: model.pageURL
                 )
                 parsed = await HTMLParser.detached { HTMLParser.movieComments(in: fragment) }
             }
@@ -1053,7 +1126,8 @@ struct MovieDetailView: View {
         do {
             var fragment = try await SiteClient.shared.fragment(
                 for: SiteClient.shared.catalogURL(path: path),
-                csrf: detail.library?.csrfToken
+                csrf: detail.library?.csrfToken,
+                referer: model.pageURL
             )
             var parsed = await HTMLParser.detached { HTMLParser.relatedListRows(in: fragment) }
             // Lock 1.3: an empty/gated first fragment gets ONE
@@ -1063,7 +1137,8 @@ struct MovieDetailView: View {
                 await CookieBridge.exportWebKitToShared()
                 fragment = try await SiteClient.shared.fragment(
                     for: SiteClient.shared.catalogURL(path: path),
-                    csrf: detail.library?.csrfToken
+                    csrf: detail.library?.csrfToken,
+                    referer: model.pageURL
                 )
                 parsed = await HTMLParser.detached { HTMLParser.relatedListRows(in: fragment) }
             }
@@ -1076,9 +1151,15 @@ struct MovieDetailView: View {
             }
             listsNext = await HTMLParser.detached { HTMLParser.fragmentNextPage(in: fragment) }
             listsLoaded = true
+            listsError = false
         } catch {
+            // Build 28 three-state: a failed fetch is an ERROR with
+            // a retry — it must never render as "no lists".
             listsNext = nil
-            listsLoaded = true
+            if page == nil {
+                listsError = true
+                listsLoaded = false
+            }
         }
     }
 
@@ -1563,12 +1644,14 @@ struct ListPickerSheet: View {
     }
 }
 
-/// Trailer playback, locked 1.3 order:
+/// Trailer playback, locked 1.3 order (build 28 revision):
 /// (1) KSPlayer with Referer + avfan cookies;
 /// (2) system AVPlayer if the preview CDN rejects ffmpeg;
-/// (3) in-app official-player WebView only when a trailer is visible
-/// but no media URL exists in the HTML. WebView is not a fallback
-/// after a native failure when a URL was parsed.
+/// (3) if BOTH native players fail — or no media URL was parsed
+/// at all — the in-app official-player WebView on the shared
+/// cookie store, opened on this movie's page. When the session
+/// is signed in, the failure overlay offers no login button:
+/// the diagnosis is not "you are logged out".
 struct TrailerPlayerView: View {
     @Environment(\.dismiss) private var dismiss
     let url: URL?
@@ -1606,15 +1689,18 @@ struct TrailerPlayerView: View {
             case .avPlayer:
                 if let url {
                     NativeTrailerPlayer(url: url, pageURL: pageURL) {
-                        stage = .failed
+                        stage = pageURL != nil ? .pageWeb : .failed
                     }
                     .id("av-\(reloadTick)")
                     .ignoresSafeArea()
                 }
             case .pageWeb:
                 if let pageURL {
-                    TrailerPageWebView(url: pageURL)
-                        .ignoresSafeArea()
+                    TrailerPageWebView(url: pageURL) {
+                        stage = .failed
+                    }
+                    .id("web-\(reloadTick)")
+                    .ignoresSafeArea()
                 }
             case .failed:
                 Color.black.ignoresSafeArea()
@@ -1627,14 +1713,18 @@ struct TrailerPlayerView: View {
                     Text("预告片加载失败")
                         .font(.headline)
                         .foregroundStyle(.white)
-                    Text("已用原生播放器尝试打开预告片。若浏览器里可以观看，请确认已登录后再试。")
+                    Text(SiteSession.shared.isSignedIn
+                         ? "原生播放器和站内播放器都已尝试，仍未播出。这部片在网站上可能本身没有可播的预告。"
+                         : "已用原生播放器尝试打开预告片。若浏览器里可以观看，请确认已登录后再试。")
                         .font(.footnote)
                         .foregroundStyle(.white.opacity(0.75))
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, 40)
                     HStack(spacing: 12) {
-                        Button("登录") { showLogin = true }
-                            .buttonStyle(.borderedProminent)
+                        if !SiteSession.shared.isSignedIn {
+                            Button("登录") { showLogin = true }
+                                .buttonStyle(.borderedProminent)
+                        }
                         Button("重试") {
                             stage = url != nil ? .ksPlayer : .pageWeb
                             reloadTick += 1
@@ -1726,6 +1816,24 @@ struct NativeTrailerPlayer: View {
 /// trailer but no media URL could be parsed.
 struct TrailerPageWebView: UIViewRepresentable {
     let url: URL
+    var onLoadFailure: (() -> Void)? = nil
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onLoadFailure: onLoadFailure)
+    }
+
+    final class Coordinator: NSObject, WKNavigationDelegate {
+        let onLoadFailure: (() -> Void)?
+        init(onLoadFailure: (() -> Void)?) {
+            self.onLoadFailure = onLoadFailure
+        }
+        func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+            onLoadFailure?()
+        }
+        func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+            onLoadFailure?()
+        }
+    }
 
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
@@ -1746,6 +1854,7 @@ struct TrailerPageWebView: UIViewRepresentable {
         )
         config.userContentController.addUserScript(script)
         let view = WKWebView(frame: .zero, configuration: config)
+        view.navigationDelegate = context.coordinator
         view.customUserAgent = SiteClient.mobileSafariUA
         view.load(URLRequest(url: url))
         return view
