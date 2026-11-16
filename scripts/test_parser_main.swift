@@ -129,7 +129,7 @@ enum ParserTests {
         <div class='row'><a href='/zh-CN/lists/QwErTy12'>ntrr</a><span>14部作品</span><span>被查看0次</span></div>
         """
         let singleRows = HTMLParser.relatedListRows(in: singleQuoteLists)
-        expect(singleRows.count == 1 && singleRows.first?.name == "ntrr" && singleRows.first?.moviesCount == 14, "single-quote list rows, got \(singleRows.map(\\.name))")
+        expect(singleRows.count == 1 && singleRows.first?.name == "ntrr" && singleRows.first?.moviesCount == 14, "single-quote list rows, got \(singleRows.map(\.name))")
         expect(HTMLParser.hasTrailerAffordance(in: "<div data-controller=\"trailer-player\"></div>") == true, "trailer affordance")
         expect(HTMLParser.hasTrailerAffordance(in: "<div class=\"plain\"></div>") == false, "no trailer affordance")
         let typeFragment = """
