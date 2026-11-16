@@ -708,6 +708,9 @@ struct CatalogListView: View {
     /// hero, which pops correctly). Value links resolved by a tab-root
     /// registration popped straight to the root, skipping this list.
     @State private var openCard: MovieCard?
+    /// Bumped after a filter reload so the list scrolls back to its top
+    /// (the ScrollViewReader's proxy is not in scope inside the sheet).
+    @State private var topScrollTick = 0
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -723,6 +726,9 @@ struct CatalogListView: View {
                 }
                 .padding(.horizontal, AdaptiveLayout.horizontalPadding)
                 .padding(.vertical, 12)
+            }
+            .onChange(of: topScrollTick) { _, _ in
+                withAnimation(.none) { proxy.scrollTo("catalogTop", anchor: .top) }
             }
         }
         .background(AVFanTheme.pageBackground)
@@ -752,7 +758,7 @@ struct CatalogListView: View {
                     activePath = filtered
                     Task {
                         await loadPage(filtered, page: 1)
-                        withAnimation(.none) { proxy.scrollTo("catalogTop", anchor: .top) }
+                        topScrollTick += 1
                     }
                 }
             }
