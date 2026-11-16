@@ -162,7 +162,7 @@ final class PosterImageModel: ObservableObject {
     @Published var resolvedURL: String?
     private var token = 0
 
-    func load(url: String?, code: String? = nil, displayPoints: CGSize, allowUpscale: Bool) {
+    func load(url: String?, code: String? = nil, displayPoints: CGSize, allowUpscale: Bool, actors: [String] = []) {
         token += 1
         let current = token
         image = nil
@@ -194,7 +194,7 @@ final class PosterImageModel: ObservableObject {
                 displayURL = cached
                 displayCap = max(cap, 1200)
             } else {
-                Task { _ = await HQCoverResolver.shared.winner(for: code, pageCover: url) }
+                Task { _ = await HQCoverResolver.shared.winner(for: code, pageCover: url, actors: actors) }
             }
         }
         resolvedURL = displayURL
@@ -262,6 +262,9 @@ struct CoverImage: View {
     /// the whole image at its native aspect instead of force-filling
     /// the tall hero frame.
     var fitWholeImage: Bool = false
+    /// Actor display names for Tenhow cover discovery (build 19);
+    /// only the detail page can supply them.
+    var actors: [String] = []
 
     @StateObject private var model = PosterImageModel()
     @State private var lastURL: String?
@@ -298,7 +301,7 @@ struct CoverImage: View {
     private func reload(size: CGSize) {
         if lastURL != url || model.image == nil {
             lastURL = url
-            model.load(url: url, code: code, displayPoints: size, allowUpscale: allowUpscale)
+            model.load(url: url, code: code, displayPoints: size, allowUpscale: allowUpscale, actors: actors)
         }
     }
 

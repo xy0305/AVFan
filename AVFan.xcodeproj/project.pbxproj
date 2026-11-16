@@ -62,6 +62,11 @@
 		AF1100000000000000000069 /* NewsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF1100000000000000000068 /* NewsView.swift */; };
 		AF1100000000000000000071 /* SeriesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF1100000000000000000070 /* SeriesView.swift */; };
 		AF1100000000000000000073 /* CastsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF1100000000000000000072 /* CastsView.swift */; };
+		AF110000000000000000000083 /* CataloguePoster.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF110000000000000000000082 /* CataloguePoster.swift */; };
+		AF110000000000000000000081 /* TenhowActorLinks.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF110000000000000000000080 /* TenhowActorLinks.swift */; };
+		AF110000000000000000000079 /* TenhowPoster.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF110000000000000000000078 /* TenhowPoster.swift */; };
+		AF110000000000000000000077 /* JavBusPoster.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF110000000000000000000076 /* JavBusPoster.swift */; };
+		AF110000000000000000000075 /* PosterQuality.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF110000000000000000000074 /* PosterQuality.swift */; };
 		AF1100000000000000000059 /* HeroSwipePolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF1100000000000000000058 /* HeroSwipePolicy.swift */; };
 		AF110000000000000000005B /* SiteLoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF110000000000000000005A /* SiteLoginView.swift */; };
 		AF110000000000000000005D /* DetailPlayPill.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF110000000000000000005C /* DetailPlayPill.swift */; };
@@ -124,6 +129,11 @@
 		AF1100000000000000000068 /* NewsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewsView.swift; sourceTree = "<group>"; };
 		AF1100000000000000000070 /* SeriesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SeriesView.swift; sourceTree = "<group>"; };
 		AF1100000000000000000072 /* CastsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CastsView.swift; sourceTree = "<group>"; };
+		AF110000000000000000000082 /* CataloguePoster.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CataloguePoster.swift; sourceTree = "<group>"; };
+		AF110000000000000000000080 /* TenhowActorLinks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TenhowActorLinks.swift; sourceTree = "<group>"; };
+		AF110000000000000000000078 /* TenhowPoster.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TenhowPoster.swift; sourceTree = "<group>"; };
+		AF110000000000000000000076 /* JavBusPoster.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JavBusPoster.swift; sourceTree = "<group>"; };
+		AF110000000000000000000074 /* PosterQuality.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PosterQuality.swift; sourceTree = "<group>"; };
 		AF1100000000000000000058 /* HeroSwipePolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HeroSwipePolicy.swift; sourceTree = "<group>"; };
 		AF110000000000000000005A /* SiteLoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SiteLoginView.swift; sourceTree = "<group>"; };
 		AF110000000000000000005C /* DetailPlayPill.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DetailPlayPill.swift; sourceTree = "<group>"; };
@@ -215,6 +225,11 @@
 				AF1100000000000000000060 /* DMMCoverResolver.swift */,
 				AF1100000000000000000062 /* DMMLabelSeed.swift */,
 				AF1100000000000000000064 /* HQCoverResolver.swift */,
+				AF110000000000000000000082 /* CataloguePoster.swift */,
+				AF110000000000000000000080 /* TenhowActorLinks.swift */,
+				AF110000000000000000000078 /* TenhowPoster.swift */,
+				AF110000000000000000000076 /* JavBusPoster.swift */,
+				AF110000000000000000000074 /* PosterQuality.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -414,6 +429,11 @@
 				AF1100000000000000000061 /* DMMCoverResolver.swift in Sources */,
 				AF1100000000000000000063 /* DMMLabelSeed.swift in Sources */,
 				AF1100000000000000000065 /* HQCoverResolver.swift in Sources */,
+				AF110000000000000000000083 /* CataloguePoster.swift in Sources */,
+				AF110000000000000000000081 /* TenhowActorLinks.swift in Sources */,
+				AF110000000000000000000079 /* TenhowPoster.swift in Sources */,
+				AF110000000000000000000077 /* JavBusPoster.swift in Sources */,
+				AF110000000000000000000075 /* PosterQuality.swift in Sources */,
 				AF1100000000000000000067 /* CategoriesView.swift in Sources */,
 				AF1100000000000000000069 /* NewsView.swift in Sources */,
 				AF1100000000000000000071 /* SeriesView.swift in Sources */,
@@ -473,7 +493,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 18;
+				CURRENT_PROJECT_VERSION = 19;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -502,7 +522,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 18;
+				CURRENT_PROJECT_VERSION = 19;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;

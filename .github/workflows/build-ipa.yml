@@ -40,6 +40,11 @@ jobs:
             AVFan/Services/JRHTML.swift \
             AVFan/Services/DMMCoverResolver.swift \
             AVFan/Services/DMMLabelSeed.swift \
+            AVFan/Services/PosterQuality.swift \
+            AVFan/Services/JavBusPoster.swift \
+            AVFan/Services/TenhowPoster.swift \
+            AVFan/Services/TenhowActorLinks.swift \
+            AVFan/Services/CataloguePoster.swift \
             scripts/test_parser_main.swift
           "$RUNNER_TEMP/parser-tests"
 

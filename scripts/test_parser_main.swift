@@ -436,12 +436,70 @@ enum ParserTests {
         expect(drawerLinks.map(\.name) == ["SNOS", "Blacked", "麻豆傳媒映畫"],
                "drawer series shortcuts, got \(drawerLinks.map(\.name))")
 
+        // Build 19: AVDB's scored poster selection.
+        let dmmFront = PosterQuality(source: "https://awsimgsrc.dmm.co.jp/pics_dig/digital/video/1fns00123/1fns00123ps.jpg",
+                                     width: 745, height: 1081, originalPortrait: false)
+        let busFront = PosterQuality(source: "https://www.javbus.com/pics/cover/9ab_b.jpg",
+                                     width: 377, height: 538, originalPortrait: false)
+        let smallPortrait = PosterQuality(source: "https://image.mgstage.com/images/prestige/abf/123/pf_e_abf-123.jpg",
+                                          width: 376, height: 538, originalPortrait: true)
+        expect(PosterQuality.winner([busFront, smallPortrait, dmmFront])?.source == dmmFront.source,
+               "poster winner is the highest-scored official front")
+        expect(PosterQuality.winner([PosterQuality(source: "https://pics.dmm.co.jp/xps.jpg", width: 147, height: 200, originalPortrait: true)]) == nil,
+               "147x200 thumbnails are never eligible")
+        let bigOriginal = PosterQuality(source: "https://m.media-amazon.com/images/P/B0ABCDEFGH.01.MAIN._SCRM_.jpg",
+                                        width: 1778, height: 2530, originalPortrait: true)
+        expect(PosterQuality.winner([dmmFront, bigOriginal])?.source == bigOriginal.source,
+               "a larger original portrait beats a derived front")
+
+        // Build 19: JavBus identity-checked main jacket extraction.
+        let javbusHTML = """
+        <div class="movie"><div class="info">
+        <p><span class="header">識別碼:</span><span>IPZZ-936</span></p>
+        </div><a class="bigImage" href="https://www.javbus.com/pics/cover/9ab_b.jpg"><img src="x"></a></div>
+        """
+        let javbusImages = (try? JavBusPoster.images(html: javbusHTML, number: "IPZZ-936",
+                                                     finalURL: URL(string: "https://www.javbus.com/IPZZ-936")!)) ?? []
+        expect(javbusImages == ["https://www.javbus.com/pics/cover/9ab_b.jpg"],
+               "javbus main jacket, got \(javbusImages)")
+
+        // Build 19: Tenhow actor pages, record match, Amazon ASIN HQ.
+        expect(TenhowPoster.pages(identities: [["JULIA"]]) == ["/julia.html"],
+               "tenhow actor page from the bundled mapping")
+        expect(TenhowPoster.number("FNS-123") == "fns-123", "tenhow number normalization")
+        let tenhowHTML = """
+        <div class="um_image_a um_popup">
+        <a href="https://al.fanza.co.jp/?lurl=https://video.dmm.co.jp/av/content/?id=1fns00123">link</a>
+        <a title="拡大表示" href="https://www.tenhow.net/images/B0ABCDEFGH.jpg">img</a>
+        </div>
+        """
+        let tenhowMatch = try? TenhowPoster.match(html: tenhowHTML, number: "FNS-123")
+        expect(tenhowMatch?.images == ["https://www.tenhow.net/images/B0ABCDEFGH.jpg"],
+               "tenhow record image, got \(String(describing: tenhowMatch?.images))")
+        expect(tenhowMatch?.official.count == 2 && tenhowMatch?.official.first?.contains("awsimgsrc") == true,
+               "tenhow exact-record DMM pair, got \(String(describing: tenhowMatch?.official))")
+        expect(AmazonPoster.asin(URL(string: "https://www.tenhow.net/images/B0ABCDEFGH.jpg")!) == "B0ABCDEFGH",
+               "amazon asin from the tenhow image name")
+        expect(AmazonPoster.directHQ(asin: "B0ABCDEFGH") == "https://m.media-amazon.com/images/P/B0ABCDEFGH.01.MAIN._SCRM_.jpg",
+               "amazon direct HQ from asin")
+
+        // Build 19: avbase catalogue identity + record parse.
+        expect(CatalogueIdentity.key("IPZZ-936") == "IPZZ-936", "catalogue identity key")
+        expect(CatalogueIdentity.queryForms("IPZZ-936") == ["IPZZ-936", "IPZZ936"], "catalogue query forms")
+        let avbaseHTML = """
+        <script id="__NEXT_DATA__" type="application/json">{"props":{"pageProps":{"works":[{"work_id":"IPZZ-936","title":"t","products":[{"product_id":"ipzz00936","url":"https://video.dmm.co.jp/av/content/?id=ipzz00936","thumbnail_url":"https://pics.dmm.co.jp/digital/video/ipzz00936/ipzz00936ps.jpg","image_url":"https://pics.dmm.co.jp/digital/video/ipzz00936/ipzz00936pl.jpg"}]}]}}}</script>
+        """
+        let avbaseRecord = AvbaseMetadata.parse(html: avbaseHTML, number: "IPZZ-936")
+        expect(avbaseRecord?.cover == "https://pics.dmm.co.jp/digital/video/ipzz00936/ipzz00936pl.jpg",
+               "avbase record cover is the pl jacket, got \(String(describing: avbaseRecord?.cover))")
+        expect(avbaseRecord?.images.first == avbaseRecord?.cover, "avbase images are HQ-first")
+
         let signedHTML = "<a href=\"/zh-CN/sign_out\">退出登录</a>"
         expect(HTMLParser.isSignedIn(html: signedHTML), "sign_out means signed in")
         expect(HTMLParser.signOutURL(in: signedHTML)?.contains("sign_out") == true, "sign_out url")
         expect(HTMLParser.containsSignInLink("<a href=\"/zh-CN/sign_in\">登录</a>"), "sign_in link")
 
-        print("PASS: home, detail magnets, ranking merge, hot casts, HQ cover sources, empty shell, block detection, cover policy, login signals, ranking tabs, pagination, news, series, detail cover identity, page map, cast cards, prefix links, filter form, homepage panel, auto-next, home main list, movie toolbar, tab hygiene, tab locale guard, drawer shortcuts")
+        print("PASS: home, detail magnets, ranking merge, hot casts, HQ cover sources, empty shell, block detection, cover policy, login signals, ranking tabs, pagination, news, series, detail cover identity, page map, cast cards, prefix links, filter form, homepage panel, auto-next, home main list, movie toolbar, tab hygiene, tab locale guard, drawer shortcuts, poster quality, javbus, tenhow, amazon, avbase catalogue")
     }
 }
 
