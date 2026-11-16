@@ -1,5 +1,8 @@
 import SwiftUI
 import UIKit
+import AVKit
+import Combine
+import WebKit
 
 struct MovieDetailView: View {
     let card: MovieCard
@@ -43,10 +46,15 @@ struct MovieDetailView: View {
     @State private var commentsBusy = false
     @State private var commentsLoaded = false
     @State private var commentsLoginNote = false
+    /// The fragment came back as a login gate even after one
+    /// session refresh (lock 1.3): prompt for login instead of
+    /// showing guest content or garbage.
+    @State private var commentsNeedLogin = false
     @State private var relatedRows: [RelatedListRow] = []
     @State private var listsNext: Int?
     @State private var listsBusy = false
     @State private var listsLoaded = false
+    @State private var listsNeedLogin = false
     /// Measured height of the hero's text stack (title block + controls).
     /// A long title with its expand button outgrows the slot the geometry
     /// planned, pushing the play row past the artwork and the gradient —
@@ -143,14 +151,12 @@ struct MovieDetailView: View {
         .onChange(of: showPlayer) { _, open in if !open { refreshResume() } }
         .onChange(of: showWatchPlayer) { _, open in if !open { refreshResume() } }
         .fullScreenCover(isPresented: $playTrailer) {
-            if let trailer = display.trailerURL, let url = URL(string: trailer) {
-                TrailerPlayerView(
-                    url: url,
-                    pageURL: model.pageURL,
-                    title: (display.displayCode) + " 预告片",
-                    poster: display.coverURL ?? card.coverURL
-                )
-            }
+            TrailerPlayerView(
+                url: display.trailerURL.flatMap { URL(string: $0) },
+                pageURL: model.pageURL,
+                title: (display.displayCode) + " 预告片",
+                poster: display.coverURL ?? card.coverURL
+            )
         }
         .sheet(isPresented: $showListPicker) {
             if let library = display.library {
@@ -714,14 +720,15 @@ struct MovieDetailView: View {
     @ViewBuilder
     private func mediaSection(_ detail: MovieDetail) -> some View {
         let gallery = galleryImages(detail)
-        if detail.trailerURL != nil || !gallery.isEmpty {
-            let trailerCells = detail.trailerURL != nil ? 1 : 0
+        let hasTrailer = detail.trailerURL != nil || detail.hasTrailerAffordance
+        if hasTrailer || !gallery.isEmpty {
+            let trailerCells = hasTrailer ? 1 : 0
             let cellCount = trailerCells + gallery.count
             let shown = mediaExpanded ? cellCount : min(cellCount, 8)
             VStack(alignment: .leading, spacing: 12) {
                 GlassSectionHeader(title: "预告与预览图", icon: "photo.on.rectangle.angled", trailingTitle: nil)
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 4), spacing: 8) {
-                    if detail.trailerURL != nil {
+                    if hasTrailer {
                         Button {
                             GlassHaptic.tap()
                             playTrailer = true
@@ -791,9 +798,13 @@ struct MovieDetailView: View {
                 .padding(5)
             }
         }
-        .aspectRatio(4.0 / 3.0, contentMode: .fill)
+        // Lock 1.3: fixed aspect, FIT (never .fill — .fill lets a
+        // cell outgrow its grid slot and overlap its neighbours,
+        // the build-25 masonry mess), always clipped.
+        .aspectRatio(4.0 / 3.0, contentMode: .fit)
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .clipped()
     }
 
     private func summarySection(_ summary: String) -> some View {
@@ -814,6 +825,9 @@ struct MovieDetailView: View {
             GlassSectionHeader(title: "评论", icon: "text.bubble", badge: detail.commentsCount.map { "\($0)" }, trailingTitle: nil)
             if commentsBusy && comments.isEmpty {
                 ProgressView().frame(maxWidth: .infinity)
+            } else if comments.isEmpty && commentsNeedLogin {
+                Button("登录后查看评论") { showLogin = true }
+                    .font(.footnote.weight(.semibold))
             } else if comments.isEmpty {
                 Text(commentsFallback ?? "暂无评论。")
                     .font(.footnote)
@@ -864,6 +878,9 @@ struct MovieDetailView: View {
             GlassSectionHeader(title: "相关清单", icon: "list.bullet.rectangle", trailingTitle: nil)
             if listsBusy && relatedRows.isEmpty {
                 ProgressView().frame(maxWidth: .infinity)
+            } else if relatedRows.isEmpty && listsLoaded && listsNeedLogin {
+                Button("登录后查看相关清单") { showLogin = true }
+                    .font(.footnote.weight(.semibold))
             } else if relatedRows.isEmpty && listsLoaded {
                 Text("暂无相关清单。")
                     .font(.footnote)
@@ -924,10 +941,18 @@ struct MovieDetailView: View {
         }
     }
 
+    /// Whether a fragment is really a login gate (sign-in markers,
+    /// no usable content) rather than content.
+    private func fragmentIsLoginGate(_ fragment: String) -> Bool {
+        fragment.contains("请登录") || fragment.contains("sign_in")
+    }
+
     /// Comments: first fetch uses the fragment URL the page itself
     /// declared; further batches follow the fragment's own cursor
     /// (sort_by/last_value/last_id — the comment controller's
-    /// loadMore, build 25; build 24 wrongly used page numbers).
+    /// loadMore). Lock 1.3: a gated fragment triggers ONE session
+    /// re-bridge + refetch; still gated → prompt login, never show
+    /// the gate's text or markup debris as comments.
     private func loadComments(_ detail: MovieDetail, cursor: (sortBy: String, lastValue: String, lastId: String)?) async {
         guard let base = detail.commentsURL, !commentsBusy else { return }
         commentsBusy = true
@@ -939,18 +964,29 @@ struct MovieDetailView: View {
                 + "sort_by=\(enc(cursor.sortBy))&last_value=\(enc(cursor.lastValue))&last_id=\(enc(cursor.lastId))"
         }
         do {
-            let fragment = try await SiteClient.shared.fragment(
+            var fragment = try await SiteClient.shared.fragment(
                 for: SiteClient.shared.catalogURL(path: path),
                 csrf: detail.library?.csrfToken
             )
-            let parsed = await HTMLParser.detached { HTMLParser.movieComments(in: fragment) }
+            var parsed = await HTMLParser.detached { HTMLParser.movieComments(in: fragment) }
+            if cursor == nil, parsed.isEmpty, fragmentIsLoginGate(fragment) {
+                await CookieBridge.exportWebKitToShared()
+                fragment = try await SiteClient.shared.fragment(
+                    for: SiteClient.shared.catalogURL(path: path),
+                    csrf: detail.library?.csrfToken
+                )
+                parsed = await HTMLParser.detached { HTMLParser.movieComments(in: fragment) }
+            }
             if cursor == nil {
+                commentsNeedLogin = parsed.isEmpty && fragmentIsLoginGate(fragment)
                 comments = parsed
-                if parsed.isEmpty {
-                    let text = HTMLParser.stripTags(fragment)
-                    commentsFallback = text.isEmpty ? nil : text
+                if parsed.isEmpty && !commentsNeedLogin {
+                    let text = HTMLParser.stripTagsQuoteAware(fragment)
+                    commentsFallback = (text.isEmpty || text.contains("data-") || text.contains("comment#")) ? nil : text
+                } else if !parsed.isEmpty {
+                    commentsFallback = nil
                 }
-                commentsLoginNote = fragment.contains("请登录")
+                commentsLoginNote = fragment.contains("请登录") && !commentsNeedLogin
             } else {
                 let known = Set(comments.map(\.id))
                 comments += parsed.filter { !known.contains($0.id) }
@@ -972,12 +1008,24 @@ struct MovieDetailView: View {
             path += (base.contains("?") ? "&" : "?") + "page=\(page)"
         }
         do {
-            let fragment = try await SiteClient.shared.fragment(
+            var fragment = try await SiteClient.shared.fragment(
                 for: SiteClient.shared.catalogURL(path: path),
                 csrf: detail.library?.csrfToken
             )
-            let parsed = await HTMLParser.detached { HTMLParser.relatedListRows(in: fragment) }
+            var parsed = await HTMLParser.detached { HTMLParser.relatedListRows(in: fragment) }
+            // Lock 1.3: an empty/gated first fragment gets ONE
+            // session re-bridge + refetch before anyone concludes
+            // there are no lists.
+            if page == nil, parsed.isEmpty, fragmentIsLoginGate(fragment) {
+                await CookieBridge.exportWebKitToShared()
+                fragment = try await SiteClient.shared.fragment(
+                    for: SiteClient.shared.catalogURL(path: path),
+                    csrf: detail.library?.csrfToken
+                )
+                parsed = await HTMLParser.detached { HTMLParser.relatedListRows(in: fragment) }
+            }
             if page == nil {
+                listsNeedLogin = parsed.isEmpty && fragmentIsLoginGate(fragment)
                 relatedRows = parsed
             } else {
                 let known = Set(relatedRows.map(\.id))
@@ -1278,14 +1326,31 @@ final class MovieDetailViewModel: ObservableObject {
         let url = SiteClient.shared.movieURL(pathID: card.pathID, locale: settings.locale, href: card.href)
         pageURL = url
         do {
-            let result = try await SiteClient.shared.html(
+            var result = try await SiteClient.shared.html(
                 for: url,
                 locale: settings.locale,
                 ageCookie: settings.legalAgeCookie,
                 allowWebViewFallback: true,
                 expectCatalog: true
             )
-            let html = result.html
+            var html = result.html
+            // Session self-check (lock 1.3): the app holds a login
+            // but the page came back signed out — the bridged
+            // cookies drifted. Re-bridge from the WebView store,
+            // drop the cached guest copy, and refetch ONCE. Never
+            // parse the guest copy for login-dependent features.
+            if SiteSession.shared.isSignedIn, !HTMLParser.isSignedIn(html: html) {
+                await CookieBridge.exportWebKitToShared()
+                await SiteClient.shared.clearCache()
+                result = try await SiteClient.shared.html(
+                    for: url,
+                    locale: settings.locale,
+                    ageCookie: settings.legalAgeCookie,
+                    allowWebViewFallback: true,
+                    expectCatalog: true
+                )
+                html = result.html
+            }
             var parsed = await HTMLParser.detached { HTMLParser.movieDetail(from: html, url: url) }
             if parsed.pathID.isEmpty { parsed.pathID = card.pathID }
             // Identity guard (build 11): the fetched page's own 番号 must
@@ -1454,31 +1519,57 @@ struct ListPickerSheet: View {
     }
 }
 
-/// Trailer playback in an embedded media view: a bare <video>
-/// element — the WebKit media stack is what the site's own trailer
-/// player uses, and the only one the DMM preview CDN accepts (the
-/// KSPlayer/ffmpeg stack and bare AVPlayer are both rejected).
-/// Presented fullscreen on black with the video's native controls;
-/// no site page is ever shown.
+/// Trailer playback, lock 1.3 order: (1) the media URL parsed from
+/// the signed-in movie page plays NATIVELY — AVPlayer carrying the
+/// Safari UA, the movie page as Referer, and the shared cookies
+/// for avfan hosts; (2) if the native player fails, the bare
+/// <video> WebView (same cookie store) takes over inside this same
+/// sheet; (3) only when the page shows a trailer but no media URL
+/// parsed out does the sheet fall back to the site's own in-page
+/// player in a WebView. The sheet never becomes the site page.
 struct TrailerPlayerView: View {
     @Environment(\.dismiss) private var dismiss
-    let url: URL
+    let url: URL?
     let pageURL: URL?
     let title: String
     let poster: String?
-    @State private var failed = false
+    @State private var stage: Stage = .native
     @State private var reloadTick = 0
     @State private var showLogin = false
+
+    private enum Stage { case native, webVideo, pageWeb, failed }
 
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
-            TrailerVideoWebView(url: url, poster: poster, baseURL: pageURL,
-                                onPlaybackError: { failed = true },
-                                onPlaybackReady: { failed = false })
-                .id(reloadTick)
-                .ignoresSafeArea()
-            if failed {
+            switch stage {
+            case .native:
+                if let url {
+                    NativeTrailerPlayer(url: url, pageURL: pageURL) {
+                        stage = .webVideo
+                    }
+                    .id(reloadTick)
+                    .ignoresSafeArea()
+                } else {
+                    Color.black.ignoresSafeArea()
+                }
+            case .webVideo:
+                if let url {
+                    TrailerVideoWebView(url: url, poster: poster, baseURL: pageURL,
+                                        onPlaybackError: { stage = .failed },
+                                        onPlaybackReady: {})
+                        .id(reloadTick)
+                        .ignoresSafeArea()
+                }
+            case .pageWeb:
+                if let pageURL {
+                    TrailerPageWebView(url: pageURL)
+                        .ignoresSafeArea()
+                }
+            case .failed:
+                Color.black.ignoresSafeArea()
+            }
+            if stage == .failed {
                 VStack(spacing: 14) {
                     Image(systemName: "exclamationmark.triangle")
                         .font(.system(size: 34))
@@ -1495,7 +1586,7 @@ struct TrailerPlayerView: View {
                         Button("登录") { showLogin = true }
                             .buttonStyle(.borderedProminent)
                         Button("重试") {
-                            failed = false
+                            stage = url != nil ? .native : .pageWeb
                             reloadTick += 1
                         }
                         .buttonStyle(.bordered)
@@ -1523,12 +1614,101 @@ struct TrailerPlayerView: View {
                 Spacer()
             }
         }
+        .onAppear {
+            if url == nil { stage = .pageWeb }
+        }
         .sheet(isPresented: $showLogin, onDismiss: {
-            // A fresh login may be exactly what the CDN needed.
-            failed = false
+            stage = url != nil ? .native : .pageWeb
             reloadTick += 1
         }) { SiteLoginView() }
     }
+}
+
+/// Native trailer playback via AVPlayer with the headers the
+/// media hosts check: Safari UA, the movie page as Referer, and
+/// the shared session cookies for avfan hosts (lock 1.3 step 3).
+struct NativeTrailerPlayer: View {
+    let url: URL
+    let pageURL: URL?
+    var onFailure: () -> Void
+    @State private var player: AVPlayer?
+    @State private var statusObserver: AnyCancellable?
+    @State private var failObserver: NSObjectProtocol?
+
+    var body: some View {
+        Group {
+            if let player {
+                VideoPlayer(player: player)
+            } else {
+                Color.black
+            }
+        }
+        .onAppear { start() }
+        .onDisappear {
+            player?.pause()
+            statusObserver?.cancel()
+            if let failObserver { NotificationCenter.default.removeObserver(failObserver) }
+        }
+    }
+
+    private func start() {
+        guard player == nil else { return }
+        var headers: [String: String] = ["User-Agent": SiteClient.mobileSafariUA]
+        if let pageURL { headers["Referer"] = pageURL.absoluteString }
+        if let host = url.host?.lowercased(), host.hasSuffix("avfan.com") {
+            let cookies = HTTPCookieStorage.shared.cookies(for: url) ?? []
+            if !cookies.isEmpty {
+                headers["Cookie"] = cookies.map { "\($0.name)=\($0.value)" }.joined(separator: "; ")
+            }
+        }
+        let asset = AVURLAsset(url: url, options: [AVURLAssetHTTPHeaderFieldKey: headers])
+        let item = AVPlayerItem(asset: asset)
+        let p = AVPlayer(playerItem: item)
+        player = p
+        statusObserver = item.publisher(for: \.status)
+            .receive(on: DispatchQueue.main)
+            .sink { status in
+                if status == .failed { onFailure() }
+            }
+        failObserver = NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemFailedToPlayToEndTime, object: item, queue: .main
+        ) { _ in onFailure() }
+        p.play()
+    }
+}
+
+/// Last-resort trailer playback (lock 1.3 step 4): the movie page
+/// itself in a WebView on the shared cookie store, auto-opening
+/// the site's own trailer player. Used only when the page shows a
+/// trailer but no media URL could be parsed.
+struct TrailerPageWebView: UIViewRepresentable {
+    let url: URL
+
+    func makeUIView(context: Context) -> WKWebView {
+        let config = WKWebViewConfiguration()
+        config.websiteDataStore = .default()
+        config.allowsInlineMediaPlayback = true
+        config.mediaTypesRequiringUserActionForPlayback = []
+        let script = WKUserScript(
+            source: """
+            setTimeout(function(){
+              var el = document.querySelector('[data-trailer-player-src-value]')
+                    || document.querySelector('[data-action*="trailer"]')
+                    || document.querySelector('a[href*="/trailer"]');
+              if (el) { el.click(); }
+            }, 1500);
+            """,
+            injectionTime: .atDocumentEnd,
+            forMainFrameOnly: true
+        )
+        config.userContentController.addUserScript(script)
+        let view = WKWebView(frame: .zero, configuration: config)
+        view.customUserAgent = SiteClient.mobileSafariUA
+        view.load(URLRequest(url: url))
+        return view
+    }
+
+    func updateUIView(_ uiView: WKWebView, context: Context) {}
 }
 
 /// Full-screen viewer for the detail page's sample stills.

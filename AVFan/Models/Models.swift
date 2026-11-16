@@ -106,6 +106,10 @@ struct MovieDetail: Hashable {
     /// contentUrl / DMM preview mp4). Distinct from watchStreams: the
     /// site shows it as the first cell of the media strip.
     var trailerURL: String? = nil
+    /// The page shows a trailer affordance (player trigger) even
+    /// when no direct media URL could be parsed — the WebView
+    /// player fallback's entry condition (lock 1.3, step 4).
+    var hasTrailerAffordance: Bool = false
     /// Sample stills shown on the detail page (DMM jp-N images and
     /// avfan-hosted samples), in page order, cover excluded.
     var previewImages: [String] = []

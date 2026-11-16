@@ -1173,11 +1173,13 @@ enum HTMLParser {
             magnets: magnets(in: html),
             watchStreams: watchStreams(in: html, pageURL: pageURL),
             trailerURL: trailerURL(in: html),
+            hasTrailerAffordance: hasTrailerAffordance(in: html),
             previewImages: previewImages(in: html, cover: preferredCover),
             library: libraryState(in: html),
             commentsURL: firstMatch("data-comments-url=\"([^\"]+)\"", in: html).map(unescape),
             relatedListsURL: firstMatch("<div[^>]*id=\"related-lists\"[^>]*data-url=\"([^\"]+)\"", in: html).map(unescape)
-                ?? firstMatch("data-url=\"([^\"]+)\"[^>]*id=\"related-lists\"", in: html).map(unescape),
+                ?? firstMatch("data-url=\"([^\"]+)\"[^>]*id=\"related-lists\"", in: html).map(unescape)
+                ?? firstMatch("(/?[A-Za-z-]+/lists/related\\?movie_id=[A-Za-z0-9]+)", in: html).map(unescape),
             commentsCount: firstMatch("tabComments\"[^>]*>[\\s\\S]*?评论[\\s\\S]*?>(\\d+)<", in: html).flatMap { Int($0) },
             alsoStarred: sectionCards(in: html, heading: "还出演过"),
             relatedWorks: sectionCards(in: html, heading: "相关作品")
@@ -1210,6 +1212,44 @@ enum HTMLParser {
         return movieCards(in: slice).filter { seen.insert($0.pathID).inserted }.prefix(12).map { $0 }
     }
 
+    /// Whether the page carries a trailer player trigger at all
+    /// (the trailer-player Stimulus component or its src value),
+    /// regardless of whether a direct media URL parsed out.
+    static func hasTrailerAffordance(in html: String) -> Bool {
+        html.contains("trailer-player") || html.contains("data-trailer")
+    }
+
+    /// Tag stripping that respects quoted attribute values: a `>`
+    /// or quote inside an attribute (the reply button's
+    /// data-placeholder carries quoted text with both) must not end
+    /// the tag early — the naive `<[^>]+>` regex breaks exactly
+    /// there and leaks the attribute tail into the text (the
+    /// owner's build-25 screenshots). Character scanner, no regex.
+    static func stripTagsQuoteAware(_ html: String) -> String {
+        var out = ""
+        out.reserveCapacity(html.count)
+        var inTag = false
+        var quote: Character? = nil
+        for ch in html {
+            if inTag {
+                if let q = quote {
+                    if ch == q { quote = nil }
+                } else if ch == "\"" || ch == "'" {
+                    quote = ch
+                } else if ch == ">" {
+                    inTag = false
+                }
+            } else if ch == "<" {
+                inTag = true
+            } else {
+                out.append(ch)
+            }
+        }
+        return unescape(out)
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     /// Movie comments from the comments fragment (build 25,
     /// rewritten against the real markup the owner's screenshots
     /// exposed): each top-level comment is a
@@ -1238,13 +1278,30 @@ enum HTMLParser {
                 if !name.isEmpty { author = name }
             }
             let commentID = firstMatch("data-comment-comment-id-value=\"(\\d+)\"", in: block)
-            let text = stripTags(block)
+            let text = stripTagsQuoteAware(block)
             let date = firstMatch(#"(?<!\d)(\d{4}-\d{2}-\d{2}|\d{1,2}-\d{1,2})(?!\d)"#, in: text)
-            var body = text
-            if author != "匿名", let r = body.range(of: author) { body.removeSubrange(r) }
-            if let date, let r = body.range(of: date) { body.removeSubrange(r) }
+            // Layer 1 (lock 1.3): the body comes from the item's
+            // content element — the longest <p> in the block — not
+            // from the whole item (which includes the action/menu
+            // subtree that leaked attribute text in build 25).
+            var body = ""
+            for p in allMatches("<p[^>]*>([\\s\\S]*?)</p>", in: block) {
+                let candidate = stripTagsQuoteAware(p)
+                if candidate.count > body.count { body = candidate }
+            }
+            if body.isEmpty {
+                body = text
+                if author != "匿名", let r = body.range(of: author) { body.removeSubrange(r) }
+                if let date, let r = body.range(of: date) { body.removeSubrange(r) }
+            }
             for cut in ["回复", "加载更多", "查看回复", "收起回复", "举报"] {
                 if let r = body.range(of: cut) { body = String(body[..<r.lowerBound]) }
+            }
+            // Layer 3: residue guard — attribute debris in the body
+            // means the cleaning missed a spot; truncate there
+            // rather than show markup to the user.
+            for marker in ["data-", "comment#", "openCommentModal", "href=", "class="] {
+                if let r = body.range(of: marker) { body = String(body[..<r.lowerBound]) }
             }
             body = body.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !body.isEmpty else { continue }
@@ -1312,6 +1369,34 @@ enum HTMLParser {
                 moviesCount: firstMatch(#"(\d+)\s*部作品"#, in: tail).flatMap { Int($0) },
                 viewsCount: firstMatch(#"被查看\s*(\d+)\s*次"#, in: tail).flatMap { Int($0) }
             ))
+        }
+        if rows.isEmpty {
+            // Fallback (lock 1.3): the fragment's rows may use
+            // single-quoted hrefs or non-anchor carriers. Scan for
+            // any /lists/ href, then read the name and counts from
+            // the text segment that follows it.
+            let loose = allMatches("href=['\"]([^'\"]*/lists/[^'\"/]+)['\"]", in: fragment)
+            var seenLoose = Set<String>()
+            for href in loose {
+                let clean = unescape(href)
+                guard seenLoose.insert(clean).inserted,
+                      let anchorRange = fragment.range(of: href) else { continue }
+                let tail = stripTags(String(fragment[anchorRange.lowerBound...].prefix(600)))
+                var name = ""
+                var candidate = tail
+                for pattern in [#"\d+\s*部作品"#, #"被查看\s*\d+\s*次"#] {
+                    candidate = candidate.replacingOccurrences(of: pattern, with: "", options: .regularExpression)
+                }
+                candidate = candidate.trimmingCharacters(in: CharacterSet(charactersIn: " ，,·・"))
+                if candidate.count >= 2 { name = String(candidate.prefix(60)) }
+                guard !name.isEmpty else { continue }
+                rows.append(RelatedListRow(
+                    name: name,
+                    href: clean,
+                    moviesCount: firstMatch(#"(\d+)\s*部作品"#, in: tail).flatMap { Int($0) },
+                    viewsCount: firstMatch(#"被查看\s*(\d+)\s*次"#, in: tail).flatMap { Int($0) }
+                ))
+            }
         }
         return rows
     }

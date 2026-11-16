@@ -112,6 +112,26 @@ enum ParserTests {
         let collectState = HTMLParser.listCollectState(in: listPageFragment)
         expect(collectState.collectURL == "/zh-CN/lists/xYz-123_/collect" && collectState.modelName == "List" && collectState.modelID == "42", "list collect wiring, got \(String(describing: collectState.collectURL))")
         expect(collectState.isCollected == false && collectState.csrfToken == "tok123", "list collect state")
+        // Build 26 (lock 1.3): quote-aware stripping — a > inside a
+        // quoted attribute must not end the tag early.
+        let quotedTag = #"<a href="javascript:;" data-action="comment#openCommentModal" data-placeholder="回复 > wangbibby: 有点儿神似">回复</a>正文内容"#
+        let strippedQuoted = HTMLParser.stripTagsQuoteAware(quotedTag)
+        expect(strippedQuoted == "回复正文内容", "quote-aware strip, got \(strippedQuoted)")
+        // Build 26: comment whose reply placeholder carries a quote
+        // must come out clean (the build-25 residue bug).
+        let residueFragment = """
+        <div class="comment-list-item" data-comment-comment-id-value="641800" data-controller="comment"><span class="username">frozen_head_927</span><p>黑丝长筒袜巨乳熟女中出</p><span>11-03</span><a href="javascript:;" data-action="comment#openCommentModal" data-placeholder="回复 > frozen_head_927 的评论">回复</a></div>
+        """
+        let residueComments = HTMLParser.movieComments(in: residueFragment)
+        expect(residueComments.count == 1 && residueComments.first?.body == "黑丝长筒袜巨乳熟女中出", "residue-free body, got \(residueComments.first?.body ?? "nil")")
+        // Build 26: related rows with single-quoted hrefs (fallback).
+        let singleQuoteLists = """
+        <div class='row'><a href='/zh-CN/lists/QwErTy12'>ntrr</a><span>14部作品</span><span>被查看0次</span></div>
+        """
+        let singleRows = HTMLParser.relatedListRows(in: singleQuoteLists)
+        expect(singleRows.count == 1 && singleRows.first?.name == "ntrr" && singleRows.first?.moviesCount == 14, "single-quote list rows, got \(singleRows.map(\\.name))")
+        expect(HTMLParser.hasTrailerAffordance(in: "<div data-controller=\"trailer-player\"></div>") == true, "trailer affordance")
+        expect(HTMLParser.hasTrailerAffordance(in: "<div class=\"plain\"></div>") == false, "no trailer affordance")
         let typeFragment = """
         <a href="/zh-CN/search?q=JUR&st=movie">影片</a><a href="/zh-CN/search?q=JUR&st=cast">演员</a><a href="/zh-CN/search?q=JUR&st=series">系列</a>
         """
