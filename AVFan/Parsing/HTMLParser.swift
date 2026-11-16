@@ -1537,7 +1537,7 @@ enum HTMLParser {
     static func listCollectState(in html: String) -> ListCollectState {
         var state = ListCollectState()
         state.csrfToken = firstMatch("<meta[^>]*name=\"csrf-token\"[^>]*content=\"([^\"]+)\"", in: html)
-        state.signedIn = isSignedIn(html)
+        state.signedIn = isSignedIn(html: html)
         func modelTag(_ target: String) -> String? {
             firstMatch("(<[^>]*data-model-target=\"\(target)\"[^>]*>)", in: html)
         }
