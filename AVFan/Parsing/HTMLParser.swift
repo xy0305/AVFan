@@ -1381,7 +1381,12 @@ enum HTMLParser {
                 let clean = unescape(href)
                 guard seenLoose.insert(clean).inserted,
                       let anchorRange = fragment.range(of: href) else { continue }
-                let tail = stripTags(String(fragment[anchorRange.lowerBound...].prefix(600)))
+                // Start AFTER the href and skip the rest of the
+                // opening tag, so the URL itself never leaks into
+                // the row's name.
+                let afterHref = fragment[anchorRange.upperBound...]
+                guard let tagEnd = afterHref.firstIndex(of: ">") else { continue }
+                let tail = stripTagsQuoteAware(String(afterHref[afterHref.index(after: tagEnd)...].prefix(600)))
                 var name = ""
                 var candidate = tail
                 for pattern in [#"\d+\s*部作品"#, #"被查看\s*\d+\s*次"#] {
