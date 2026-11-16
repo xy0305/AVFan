@@ -85,10 +85,11 @@ actor SiteClient {
         locale: SiteLocale,
         ageCookie: String?,
         allowWebViewFallback: Bool,
-        expectCatalog: Bool
+        expectCatalog: Bool,
+        bypassCache: Bool = false
     ) async throws -> (html: String, source: FetchSource) {
         let key = url.absoluteString
-        if let cached = cachedValue(for: key) {
+        if !bypassCache, let cached = cachedValue(for: key) {
             return cached
         }
 

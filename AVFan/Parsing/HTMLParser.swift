@@ -1281,13 +1281,15 @@ enum HTMLParser {
             let text = stripTagsQuoteAware(block)
             let date = firstMatch(#"(?<!\d)(\d{4}-\d{2}-\d{2}|\d{1,2}-\d{1,2})(?!\d)"#, in: text)
             // Layer 1 (lock 1.3): the body comes from the item's
-            // content element — the longest <p> in the block — not
-            // from the whole item (which includes the action/menu
+            // content area — blockquote quotes plus <p> nodes —
+            // not the whole item (which includes the action/menu
             // subtree that leaked attribute text in build 25).
             var body = ""
-            for p in allMatches("<p[^>]*>([\\s\\S]*?)</p>", in: block) {
-                let candidate = stripTagsQuoteAware(p)
-                if candidate.count > body.count { body = candidate }
+            let quotes = allMatches("<blockquote[^>]*>([\\s\\S]*?)</blockquote>", in: block).map { stripTagsQuoteAware($0) }
+            let paragraphs = allMatches("<p[^>]*>([\\s\\S]*?)</p>", in: block).map { stripTagsQuoteAware($0) }
+            let parts = (quotes + paragraphs).filter { !$0.isEmpty }
+            if !parts.isEmpty {
+                body = parts.joined(separator: " ")
             }
             if body.isEmpty {
                 body = text
@@ -1346,11 +1348,22 @@ enum HTMLParser {
         let matches = regex.matches(in: fragment, range: NSRange(location: 0, length: ns.length))
         var rows: [RelatedListRow] = []
         var seen = Set<String>()
+        var indexByKey: [String: Int] = [:]
         for (index, match) in matches.enumerated() {
             let href = unescape(ns.substring(with: match.range(at: 1)))
+            let stripped = stripLocale(href)
+            if stripped.hasPrefix("lists/related") { continue }
+            let idPart = stripped.split(separator: "?", maxSplits: 1).first.map(String.init) ?? stripped
+            let last = idPart.split(separator: "/").last.map(String.init) ?? ""
+            if last.isEmpty || last == "lists" || last == "related" { continue }
             var name = stripTags(ns.substring(with: match.range(at: 2)))
             let end = index + 1 < matches.count ? matches[index + 1].range.location : ns.length
-            let tail = stripTags(ns.substring(with: NSRange(location: match.range.location, length: end - match.range.location)))
+            let extra = min(400, max(0, ns.length - end))
+            let windowStart = match.range.location
+            let windowLen = max(0, (end - windowStart) + extra)
+            let tail = stripTags(ns.substring(with: NSRange(location: windowStart, length: min(windowLen, ns.length - windowStart))))
+            let movies = firstMatch(#"(\d+)\s*部作品"#, in: tail).flatMap { Int($0) }
+            let views = firstMatch(#"被查看\s*(\d+)\s*次"#, in: tail).flatMap { Int($0) }
             if name.count < 2 {
                 // The name may sit outside the anchor (block-style
                 // rows): stripTags flattens the row to one line, so
@@ -1362,14 +1375,25 @@ enum HTMLParser {
                 candidate = candidate.trimmingCharacters(in: CharacterSet(charactersIn: " ，,·・"))
                 if candidate.count >= 2 { name = candidate }
             }
-            guard !name.isEmpty, seen.insert(href).inserted else { continue }
-            rows.append(RelatedListRow(
-                name: name,
-                href: href,
-                moviesCount: firstMatch(#"(\d+)\s*部作品"#, in: tail).flatMap { Int($0) },
-                viewsCount: firstMatch(#"被查看\s*(\d+)\s*次"#, in: tail).flatMap { Int($0) }
-            ))
+            let lowerName = name.lowercased()
+            if lowerName.contains("cover.jpg") || lowerName.hasSuffix(" cover") || name.hasPrefix("http") {
+                name = ""
+            }
+            if let existing = indexByKey[idPart] {
+                var row = rows[existing]
+                if name.count >= 2, (row.name.count < 2 || (row.name.count > 40 && name.count < row.name.count)) {
+                    row.name = name
+                }
+                if row.moviesCount == nil { row.moviesCount = movies }
+                if row.viewsCount == nil { row.viewsCount = views }
+                rows[existing] = row
+            } else {
+                indexByKey[idPart] = rows.count
+                seen.insert(href)
+                rows.append(RelatedListRow(name: name, href: href, moviesCount: movies, viewsCount: views))
+            }
         }
+        rows = rows.filter { !$0.name.isEmpty }
         if rows.isEmpty {
             // Fallback (lock 1.3): the fragment's rows may use
             // single-quoted hrefs or non-anchor carriers. Scan for
@@ -1796,10 +1820,28 @@ enum HTMLParser {
             let isAvfanSample = host == "c1.avfan.com" && lower.contains("/samples/")
             guard isDMMSample || isAvfanSample else { continue }
             if let cover, value == cover { continue }
+            if value.contains("/s_") {
+                let large = value.replacingOccurrences(of: "/s_", with: "/l_")
+                if text.contains(large) {
+                    if seen.insert(large).inserted {
+                        results.append(large)
+                        if results.count >= 24 { break }
+                    }
+                    continue
+                }
+            }
             if seen.insert(value).inserted {
                 results.append(value)
                 if results.count >= 24 { break }
             }
+        }
+        let largePresent = Set(results.filter { !$0.contains("/s_") })
+        results = results.filter { url in
+            if url.contains("/s_") {
+                let large = url.replacingOccurrences(of: "/s_", with: "/l_")
+                return !largePresent.contains(large)
+            }
+            return true
         }
         return results
     }

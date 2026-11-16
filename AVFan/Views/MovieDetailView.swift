@@ -116,6 +116,18 @@ struct MovieDetailView: View {
             await model.load(card: card, settings: settings)
             refreshResume()
         }
+        .onChange(of: session.isSignedIn) { _, signedIn in
+            if signedIn {
+                commentsLoaded = false
+                listsLoaded = false
+                comments = []
+                relatedRows = []
+                Task {
+                    await model.load(card: card, settings: settings)
+                    refreshResume()
+                }
+            }
+        }
         .navigationDestination(item: $openCard) { MovieDetailView(card: $0) }
         .sheet(isPresented: $showWeb) {
             if let url = model.pageURL { InAppWebView(url: url, title: card.displayCode) }
@@ -712,37 +724,44 @@ struct MovieDetailView: View {
         .buttonStyle(.plain)
     }
 
-    /// 预告片 + 预览图 — mirrors the site's media grid under the library
-    /// buttons: a 4-column grid whose first cell is the trailer, then
-    /// the cover, then the samples; collapsed to 8 cells with a chevron
-    /// that expands in place. Stills (cover first, like the site's
-    /// gallery) open in a swipeable full-screen viewer; the trailer
-    /// plays in the same online player.
+    /// 预告与预览图: trailer tile first with a play control, then
+    /// preview stills only. Fixed-aspect equal-height grid — no
+    /// masonry, no overlap, no ad banners.
     @ViewBuilder
     private func mediaSection(_ detail: MovieDetail) -> some View {
         let gallery = galleryImages(detail)
-        let hasTrailer = detail.trailerURL != nil || detail.hasTrailerAffordance
-        if hasTrailer || !gallery.isEmpty {
-            let trailerCells = hasTrailer ? 1 : 0
-            let cellCount = trailerCells + gallery.count
-            let shown = mediaExpanded ? cellCount : min(cellCount, 8)
+        let showTrailer = detail.trailerURL != nil || detail.hasTrailerAffordance
+        if showTrailer || !gallery.isEmpty {
+            let items: [MediaGridItem] = {
+                var list: [MediaGridItem] = []
+                if showTrailer { list.append(.trailer) }
+                list.append(contentsOf: gallery.map { MediaGridItem.still($0) })
+                return list
+            }()
+            let shown = mediaExpanded ? items : Array(items.prefix(8))
             VStack(alignment: .leading, spacing: 12) {
                 GlassSectionHeader(title: "预告与预览图", icon: "photo.on.rectangle.angled", trailingTitle: nil)
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 4), spacing: 8) {
-                    if hasTrailer {
-                        Button {
-                            GlassHaptic.tap()
-                            playTrailer = true
-                        } label: {
-                            mediaCell(url: detail.coverURL, badge: "预告片", play: true)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    ForEach(Array(gallery.enumerated()), id: \.offset) { index, url in
-                        if trailerCells + index < shown {
+                    ForEach(Array(shown.enumerated()), id: \.offset) { _, item in
+                        switch item {
+                        case .trailer:
                             Button {
                                 GlassHaptic.tap()
-                                stillBox = IndexBox(value: index)
+                                if detail.trailerURL == nil && !session.isSignedIn {
+                                    showLogin = true
+                                } else {
+                                    playTrailer = true
+                                }
+                            } label: {
+                                mediaCell(url: detail.coverURL ?? gallery.first, badge: "预告片", play: true)
+                            }
+                            .buttonStyle(.plain)
+                        case .still(let url):
+                            Button {
+                                GlassHaptic.tap()
+                                if let stillIndex = gallery.firstIndex(of: url) {
+                                    stillBox = IndexBox(value: stillIndex)
+                                }
                             } label: {
                                 mediaCell(url: url, badge: nil, play: false)
                             }
@@ -750,7 +769,7 @@ struct MovieDetailView: View {
                         }
                     }
                 }
-                if cellCount > 8 {
+                if items.count > 8 {
                     Button {
                         withAnimation(.easeInOut(duration: 0.2)) { mediaExpanded.toggle() }
                     } label: {
@@ -767,45 +786,49 @@ struct MovieDetailView: View {
         }
     }
 
-    /// The site's gallery order: the cover is image 1, samples follow.
+    private enum MediaGridItem {
+        case trailer
+        case still(String)
+    }
+
+    /// Samples / preview sources only. The cover is not mixed into
+    /// the stills grid; the trailer is a separate first tile.
     private func galleryImages(_ detail: MovieDetail) -> [String] {
-        var images: [String] = []
-        if let cover = detail.coverURL, !cover.isEmpty { images.append(cover) }
-        images.append(contentsOf: detail.previewImages)
-        return images
+        detail.previewImages
     }
 
     private func mediaCell(url: String?, badge: String?, play: Bool) -> some View {
-        ZStack {
-            RemoteImage(url: url)
-            if play {
-                Image(systemName: "play.circle.fill")
-                    .font(.system(size: 30))
-                    .foregroundStyle(.white, .black.opacity(0.35))
-            }
-            if let badge {
-                VStack {
-                    Spacer()
-                    HStack {
-                        Text(badge)
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(.black.opacity(0.55), in: Capsule())
-                        Spacer()
+        Color.clear
+            .aspectRatio(4.0 / 3.0, contentMode: .fit)
+            .frame(maxWidth: .infinity)
+            .overlay {
+                ZStack {
+                    RemoteImage(url: url, contentMode: .fill)
+                    if play {
+                        Image(systemName: "play.circle.fill")
+                            .font(.system(size: 30))
+                            .foregroundStyle(.white, .black.opacity(0.35))
+                    }
+                    if let badge {
+                        VStack {
+                            Spacer()
+                            HStack {
+                                Text(badge)
+                                    .font(.caption2.weight(.semibold))
+                                    .foregroundStyle(.white)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(.black.opacity(0.55), in: Capsule())
+                                Spacer()
+                            }
+                        }
+                        .padding(5)
                     }
                 }
-                .padding(5)
             }
-        }
-        // Lock 1.3: fixed aspect, FIT (never .fill — .fill lets a
-        // cell outgrow its grid slot and overlap its neighbours,
-        // the build-25 masonry mess), always clipped.
-        .aspectRatio(4.0 / 3.0, contentMode: .fit)
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .clipped()
+            .clipped()
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 
     private func summarySection(_ summary: String) -> some View {
@@ -938,7 +961,26 @@ struct MovieDetailView: View {
     private func cardStripSection(_ title: String, _ cards: [MovieCard]) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             GlassSectionHeader(title: title, icon: "film.stack", trailingTitle: nil)
-            MovieGrid(cards: cards, onSelect: { openCard = $0 })
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(alignment: .top, spacing: 10) {
+                    ForEach(cards) { card in
+                        Button { openCard = card } label: {
+                            VStack(alignment: .leading, spacing: 6) {
+                                CoverImage(url: card.coverURL, code: card.code)
+                                    .frame(width: 110, height: 165)
+                                    .clipped()
+                                    .liquidCover(cornerRadius: AVFanTheme.cardRadius)
+                                Text(card.displayCode)
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.primary)
+                                    .lineLimit(1)
+                                    .frame(width: 110, alignment: .leading)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
         }
     }
 
@@ -1348,7 +1390,8 @@ final class MovieDetailViewModel: ObservableObject {
                     locale: settings.locale,
                     ageCookie: settings.legalAgeCookie,
                     allowWebViewFallback: true,
-                    expectCatalog: true
+                    expectCatalog: true,
+                    bypassCache: true
                 )
                 html = result.html
             }
@@ -1520,47 +1563,53 @@ struct ListPickerSheet: View {
     }
 }
 
-/// Trailer playback, lock 1.3 order: (1) the media URL parsed from
-/// the signed-in movie page plays NATIVELY — AVPlayer carrying the
-/// Safari UA, the movie page as Referer, and the shared cookies
-/// for avfan hosts; (2) if the native player fails, the bare
-/// <video> WebView (same cookie store) takes over inside this same
-/// sheet; (3) only when the page shows a trailer but no media URL
-/// parsed out does the sheet fall back to the site's own in-page
-/// player in a WebView. The sheet never becomes the site page.
+/// Trailer playback, locked 1.3 order:
+/// (1) KSPlayer with Referer + avfan cookies;
+/// (2) system AVPlayer if the preview CDN rejects ffmpeg;
+/// (3) in-app official-player WebView only when a trailer is visible
+/// but no media URL exists in the HTML. WebView is not a fallback
+/// after a native failure when a URL was parsed.
 struct TrailerPlayerView: View {
     @Environment(\.dismiss) private var dismiss
     let url: URL?
     let pageURL: URL?
     let title: String
     let poster: String?
-    @State private var stage: Stage = .native
+    @State private var stage: Stage = .ksPlayer
     @State private var reloadTick = 0
     @State private var showLogin = false
 
-    private enum Stage { case native, webVideo, pageWeb, failed }
+    private enum Stage { case ksPlayer, avPlayer, pageWeb, failed }
+
+    private var headers: [String: String] {
+        guard let url else { return [:] }
+        return MediaRequestHeaders.headers(for: url, pageURL: pageURL)
+    }
 
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
             switch stage {
-            case .native:
+            case .ksPlayer:
+                if let url {
+                    KSChromePlayer(
+                        url: url,
+                        title: title,
+                        subtitle: "预告片",
+                        headers: headers,
+                        onPlaybackFailure: { stage = .avPlayer },
+                        publicSubtitleQuery: ""
+                    )
+                    .id("ks-\(reloadTick)")
+                    .ignoresSafeArea()
+                }
+            case .avPlayer:
                 if let url {
                     NativeTrailerPlayer(url: url, pageURL: pageURL) {
-                        stage = .webVideo
+                        stage = .failed
                     }
-                    .id(reloadTick)
+                    .id("av-\(reloadTick)")
                     .ignoresSafeArea()
-                } else {
-                    Color.black.ignoresSafeArea()
-                }
-            case .webVideo:
-                if let url {
-                    TrailerVideoWebView(url: url, poster: poster, baseURL: pageURL,
-                                        onPlaybackError: { stage = .failed },
-                                        onPlaybackReady: {})
-                        .id(reloadTick)
-                        .ignoresSafeArea()
                 }
             case .pageWeb:
                 if let pageURL {
@@ -1578,7 +1627,7 @@ struct TrailerPlayerView: View {
                     Text("预告片加载失败")
                         .font(.headline)
                         .foregroundStyle(.white)
-                    Text("这部片在网站上可能本身没有可播的预告，或视频源暂时不可用。已登录仍失败时，先在网站上确认这部片有预告。")
+                    Text("已用原生播放器尝试打开预告片。若浏览器里可以观看，请确认已登录后再试。")
                         .font(.footnote)
                         .foregroundStyle(.white.opacity(0.75))
                         .multilineTextAlignment(.center)
@@ -1587,7 +1636,7 @@ struct TrailerPlayerView: View {
                         Button("登录") { showLogin = true }
                             .buttonStyle(.borderedProminent)
                         Button("重试") {
-                            stage = url != nil ? .native : .pageWeb
+                            stage = url != nil ? .ksPlayer : .pageWeb
                             reloadTick += 1
                         }
                         .buttonStyle(.bordered)
@@ -1619,7 +1668,7 @@ struct TrailerPlayerView: View {
             if url == nil { stage = .pageWeb }
         }
         .sheet(isPresented: $showLogin, onDismiss: {
-            stage = url != nil ? .native : .pageWeb
+            stage = url != nil ? .ksPlayer : .pageWeb
             reloadTick += 1
         }) { SiteLoginView() }
     }
@@ -1654,15 +1703,8 @@ struct NativeTrailerPlayer: View {
 
     private func start() {
         guard player == nil else { return }
-        var headers: [String: String] = ["User-Agent": SiteClient.mobileSafariUA]
-        if let pageURL { headers["Referer"] = pageURL.absoluteString }
-        if let host = url.host?.lowercased(), host.hasSuffix("avfan.com") {
-            let cookies = HTTPCookieStorage.shared.cookies(for: url) ?? []
-            if !cookies.isEmpty {
-                headers["Cookie"] = cookies.map { "\($0.name)=\($0.value)" }.joined(separator: "; ")
-            }
-        }
-        let asset = AVURLAsset(url: url, options: [AVURLAssetHTTPHeaderFieldKey: headers])
+        let headers = MediaRequestHeaders.headers(for: url, pageURL: pageURL)
+        let asset = AVURLAsset(url: url, options: ["AVURLAssetHTTPHeaderFieldsKey": headers])
         let item = AVPlayerItem(asset: asset)
         let p = AVPlayer(playerItem: item)
         player = p
@@ -1746,5 +1788,28 @@ struct StillViewer: View {
                 Spacer()
             }
         }
+    }
+}
+
+
+/// Request headers for native trailer playback: Referer is the movie
+/// page, or the media's own site for DMM/FANZA samples. CookieBridge
+/// cookies are sent only when the host is avfan.
+enum MediaRequestHeaders {
+    static func headers(for url: URL, pageURL: URL?) -> [String: String] {
+        var headers: [String: String] = ["User-Agent": SiteClient.mobileSafariUA]
+        let host = url.host?.lowercased() ?? ""
+        if host.contains("dmm.co.jp") || host.contains("dmm.com") || host.contains("awsimgsrc") || host.contains("fanza") {
+            headers["Referer"] = "https://www.dmm.co.jp/"
+        } else if host.contains("avfan.com") {
+            headers["Referer"] = pageURL?.absoluteString ?? "https://avfan.com/"
+            let cookies = HTTPCookieStorage.shared.cookies(for: url) ?? []
+            if !cookies.isEmpty {
+                headers["Cookie"] = cookies.map { "\($0.name)=\($0.value)" }.joined(separator: "; ")
+            }
+        } else if let pageURL {
+            headers["Referer"] = pageURL.absoluteString
+        }
+        return headers
     }
 }

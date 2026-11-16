@@ -694,7 +694,58 @@ enum ParserTests {
                "review item parsed, got \(reviewItems)")
         expect(HTMLParser.castReviews(in: "<p>nothing</p>").isEmpty, "no like blocks means no review items")
 
-        print("PASS: home, detail magnets, ranking merge, hot casts, HQ cover sources, empty shell, block detection, cover policy, login signals, ranking tabs, pagination, news, series, detail cover identity, page map, cast cards, prefix links, filter form, homepage panel, auto-next, home main list, movie toolbar, tab hygiene, tab locale guard, drawer shortcuts, poster quality, javbus, tenhow, amazon, avbase catalogue, trailer and stills, library sync parsing, cast profile")
+        // 1.3 fixtures: Stimulus leftovers must never appear in comment
+        // bodies; JUR-875 related lists merge a cover anchor with the
+        // ntrr title row; preview stills drop ad CDNs and thumbs when a
+        // large sibling is already on the page; filmography is front-cover only.
+        let comments13 = try fixture("comments-fragment.html")
+        let parsed13 = HTMLParser.movieComments(in: comments13)
+        expect(parsed13.count == 2, "1.3 comments count, got \(parsed13.count)")
+        expect(parsed13[0].author == "common_pitch_112", "1.3 comment author, got \(parsed13[0].author)")
+        expect(parsed13[0].body.contains("wochovy") == true, "1.3 comment body, got \(parsed13[0].body)")
+        expect(parsed13[0].dateText == "11-03", "1.3 comment date, got \(String(describing: parsed13[0].dateText))")
+        for item in parsed13 {
+            expect(!item.body.contains("comment#"), "comment body has no comment# leftover, got \(item.body)")
+            expect(!item.body.contains("data-placeholder"), "comment body has no data-placeholder leftover, got \(item.body)")
+            expect(!item.body.contains("data-action"), "comment body has no data-action leftover, got \(item.body)")
+            expect(!item.body.contains("openCommentModal"), "comment body has no Stimulus leftover, got \(item.body)")
+        }
+        expect(parsed13[1].body.contains("黑丝长筒袜") == true, "quote-reply body keeps the reply, got \(parsed13[1].body)")
+        expect(parsed13[1].body.contains("乱拍的就是比麦吉") == true, "quote-reply body keeps the quoted text, got \(parsed13[1].body)")
+        let cursor13 = HTMLParser.commentsCursor(in: comments13)
+        expect(cursor13?.lastId == "700002", "1.3 comments cursor, got \(String(describing: cursor13))")
+        let shellComments = HTMLParser.movieComments(in: movieHTML)
+        expect(shellComments.isEmpty, "empty #comments shell is not parsed as comments, got \(shellComments)")
+
+        let lists13 = try fixture("related-lists-jur875.html")
+        let rows13 = HTMLParser.relatedListRows(in: lists13)
+        expect(rows13.count == 2, "1.3 related lists count, got \(rows13.count) \(rows13)")
+        expect(rows13[0].name == "ntrr", "JUR-875 list name, got \(rows13[0].name)")
+        expect(rows13[0].moviesCount == 14 && rows13[0].viewsCount == 0, "JUR-875 ntrr is 14部作品 被查看0次, got \(rows13[0])")
+        expect(rows13[0].href.contains("/lists/") && !rows13[0].href.contains("/api/"), "list link is not an /api/ path")
+
+        let preview13 = try fixture("preview-with-ad.html")
+        let stills13 = HTMLParser.previewImages(in: preview13, cover: "https://c1.avfan.com/covers/jr/jur875.jpg")
+        expect(!stills13.contains(where: { $0.contains("gdario.com") }), "ad CDN excluded, got \(stills13)")
+        expect(stills13.contains("https://c1.avfan.com/samples/jr/jur875/l_1.jpg"), "large sample kept, got \(stills13)")
+        expect(!stills13.contains("https://c1.avfan.com/samples/jr/jur875/s_1.jpg"), "thumb dropped when large sibling is on the page, got \(stills13)")
+        expect(stills13.contains("https://pics.dmm.co.jp/digital/video/jur00875/jur00875jp-1.jpg"), "DMM jp still kept, got \(stills13)")
+        expect(HTMLParser.trailerURL(in: preview13) == "https://cc3001.dmm.co.jp/pv/abc/jur00875mmb.mp4",
+               "preview trailer URL, got \(String(describing: HTMLParser.trailerURL(in: preview13)))")
+        expect(HTMLParser.trailerURL(in: "<video src=\"https://avfan.com/api/play.mp4\"></video>") == nil,
+               "trailer parser rejects /api/ media URLs")
+        expect(HTMLParser.watchStreams(in: "https://avfan.com/api/stream.m3u8", pageURL: "https://avfan.com/zh-CN/movies/x").isEmpty,
+               "watch streams reject /api/ paths")
+
+        let filo = try fixture("filmography-cards.html")
+        let filoCards = HTMLParser.sectionCards(in: filo, heading: "还出演过")
+        expect(filoCards.count == 3, "filmography count, got \(filoCards.count)")
+        expect(filoCards.map(\.displayCode) == ["DLDSS-478", "SONE-346", "SONE-297"],
+               "filmography codes, got \(filoCards.map(\.displayCode))")
+        expect(filoCards.allSatisfy { ($0.coverURL ?? "").contains("/covers/") },
+               "filmography uses front covers only, got \(filoCards.map { $0.coverURL ?? "nil" })")
+
+        print("PASS: home, detail magnets, ranking merge, hot casts, HQ cover sources, empty shell, block detection, cover policy, login signals, ranking tabs, pagination, news, series, detail cover identity, page map, cast cards, prefix links, filter form, homepage panel, auto-next, home main list, movie toolbar, tab hygiene, tab locale guard, drawer shortcuts, poster quality, javbus, tenhow, amazon, avbase catalogue, trailer and stills, library sync parsing, cast profile, comments sanitize, related lists, preview whitelist, filmography")
     }
 }
 
