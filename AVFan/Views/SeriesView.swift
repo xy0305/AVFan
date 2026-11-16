@@ -39,16 +39,26 @@ struct SeriesView: View {
                         HStack(spacing: 8) {
                             ForEach(tabs) { tab in
                                 Button {
-                                    currentPath = tab.href
-                                    activePath = tab.href
-                                    filterForm = nil
-                                    selections = [:]
-                                    // Drop the old tab's rows at once:
-                                    // leaving them in place while the
-                                    // new list loads painted both lists
-                                    // over each other mid-switch.
-                                    items = []
-                                    nextPage = nil
+                                    // No animation on a tab switch
+                                    // (build 17): the identity rebuild
+                                    // below otherwise cross-fades the
+                                    // old rows into the new ones, which
+                                    // reads as garbled overlapping text.
+                                    var txn = Transaction()
+                                    txn.disablesAnimations = true
+                                    withTransaction(txn) {
+                                        currentPath = tab.href
+                                        activePath = tab.href
+                                        filterForm = nil
+                                        selections = [:]
+                                        // Drop the old tab's rows at
+                                        // once: leaving them in place
+                                        // while the new list loads
+                                        // painted both lists over each
+                                        // other mid-switch.
+                                        items = []
+                                        nextPage = nil
+                                    }
                                     Task { await load() }
                                 } label: {
                                     Text(tab.name)
@@ -68,7 +78,7 @@ struct SeriesView: View {
                     .padding(.horizontal, AdaptiveLayout.horizontalPadding)
                 if !prefixes.isEmpty {
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("番号前缀")
+                        Text("快捷分类")
                             .font(.subheadline.weight(.bold))
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 76), spacing: 8)], alignment: .leading, spacing: 8) {
                             ForEach(prefixes) { prefix in
@@ -127,8 +137,11 @@ struct SeriesView: View {
             }
             .padding(.vertical, 6)
             // A tab switch rebuilds the stack instead of diffing two
-            // unrelated lists into the same cells.
+            // unrelated lists into the same cells, and never animates
+            // the swap (build 17: the cross-fade looked like garbled
+            // overlapping rows).
             .id(currentPath)
+            .animation(nil, value: currentPath)
         }
         .background(AVFanTheme.pageBackground)
         .navigationTitle("系列")
@@ -205,6 +218,7 @@ struct SeriesView: View {
                  tabs: HTMLParser.rankingTabs(in: html, basePath: "series", currentPath: "series?__none"),
                  form: HTMLParser.listFilterForm(in: html),
                  prefixes: HTMLParser.prefixLinks(in: html),
+                 drawer: HTMLParser.drawerSeriesLinks(in: html),
                  next: HTMLParser.autoNextPath(in: html, page: pageNo, path: fetchPath))
             }
             if append {
@@ -226,7 +240,13 @@ struct SeriesView: View {
                 }
             }
             loadedPage = pageNo
-            if prefixes.isEmpty { prefixes = parsed.prefixes }
+            if prefixes.isEmpty {
+                // The drawer's own series-group shortcuts first (they
+                // include Blacked and the 麻豆傳媒映畫 maker page,
+                // which are not number-letter prefixes); the plain
+                // prefix scan remains the fallback.
+                prefixes = parsed.drawer.isEmpty ? parsed.prefixes : parsed.drawer
+            }
             source = result.source
         } catch {
             if append {

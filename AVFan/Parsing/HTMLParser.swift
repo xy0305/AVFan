@@ -95,38 +95,31 @@ enum HTMLParser {
     /// currently shown variant is excluded too.
     /// Visible names of the site's locales, as rendered in its
     /// language menu; links with these labels are never tabs.
-    static let languageNames: Set<String> = ["English", "简体中文", "繁體中文", "日本語", "한국어", "ภาษาไทย"]
+    static let languageNames: Set<String> = ["English", "简体中文", "繁體中文", "日本語", "한국어", "ภาษาไทย", "ไทย"]
 
     static func rankingTabs(in html: String, basePath: String, currentPath: String) -> [NamedLink] {
         let base = stripLocale(basePath)
         let current = stripLocale(currentPath)
-        var results: [NamedLink] = []
-        var seen = Set<String>()
-        func consider(href rawHref: String, label rawLabel: String) {
-            let href = unescape(rawHref).trimmingCharacters(in: .whitespacesAndNewlines)
-            let label = stripTags(rawLabel)
-            guard !label.isEmpty, label.count <= 14 else { return }
-            // The site's language menu links to this same page in other
-            // locales; its entries are language names, not tabs (build
-            // 16: an "English" chip appeared among the series tabs).
-            guard !languageNames.contains(label) else { return }
-            // A bare link to the section root (the drawer entry, e.g.
-            // 系列 on the series page) is not a tab variant either —
-            // except a deliberate 全部 tab, which the news page keeps.
-            if stripLocale(href) == base, label != "全部" { return }
-            guard stripLocale(href) != current else { return }
-            guard stripLocale(href).split(separator: "?").first.map(String.init) == base else { return }
-            guard !href.contains("page=") else { return }
-            guard seen.insert(stripLocale(href)).inserted else { return }
-            results.append(NamedLink(name: label, href: href, kind: "ranktab"))
-        }
+        // Collect every anchor / option candidate first (build 17).
+        // The site's language menu links to this same page — path AND
+        // query included — in every other locale, and it sits in the
+        // header BEFORE the real tabs. Keyed by locale-stripped href,
+        // a variant steals the real tab's dedupe slot: on the series
+        // page the ไทย variant of ?t=asian arrived first and the
+        // genuine 亚洲 tab was deduped away, leaving a ไทย chip in
+        // its place. A name list cannot cover every language label,
+        // so the page's own locale is derived from the candidates
+        // themselves: it is the locale most base-matching candidates
+        // use, and candidates in any other locale are language-menu
+        // variants, never tabs.
+        var pairs: [(href: String, label: String)] = []
         if let regex = try? NSRegularExpression(
             pattern: "<a[^>]+href=\"([^\"]+)\"[^>]*>([\\s\\S]*?)</a>",
             options: [.caseInsensitive]
         ) {
             let ns = html as NSString
             for match in regex.matches(in: html, range: NSRange(location: 0, length: ns.length)) {
-                consider(href: ns.substring(with: match.range(at: 1)), label: ns.substring(with: match.range(at: 2)))
+                pairs.append((href: ns.substring(with: match.range(at: 1)), label: ns.substring(with: match.range(at: 2))))
             }
         }
         if let regex = try? NSRegularExpression(
@@ -135,10 +128,78 @@ enum HTMLParser {
         ) {
             let ns = html as NSString
             for match in regex.matches(in: html, range: NSRange(location: 0, length: ns.length)) {
-                consider(href: ns.substring(with: match.range(at: 1)), label: ns.substring(with: match.range(at: 2)))
+                pairs.append((href: ns.substring(with: match.range(at: 1)), label: ns.substring(with: match.range(at: 2))))
             }
         }
+        func localePrefix(of href: String) -> String? {
+            var p = href
+            if p.hasPrefix("https://avfan.com") { p = String(p.dropFirst("https://avfan.com".count)) }
+            if p.hasPrefix("/") { p.removeFirst() }
+            for prefix in localePrefixes where p.hasPrefix(prefix + "/") { return prefix }
+            return nil
+        }
+        var localeVotes: [String: Int] = [:]
+        for pair in pairs {
+            let href = unescape(pair.href).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard stripLocale(href).split(separator: "?").first.map(String.init) == base,
+                  let prefix = localePrefix(of: href) else { continue }
+            localeVotes[prefix, default: 0] += 1
+        }
+        // Only a locale with at least two candidates is trusted as
+        // the page's own; a lone candidate proves nothing.
+        let pageLocale = localeVotes.filter { $0.value >= 2 }.max(by: { $0.value < $1.value })?.key
+        var results: [NamedLink] = []
+        var seen = Set<String>()
+        for pair in pairs {
+            let href = unescape(pair.href).trimmingCharacters(in: .whitespacesAndNewlines)
+            let label = stripTags(pair.label)
+            guard !label.isEmpty, label.count <= 14 else { continue }
+            // Language-menu entries are not tabs (build 16: an
+            // "English" chip appeared among the series tabs).
+            guard !languageNames.contains(label) else { continue }
+            if let pageLocale, let prefix = localePrefix(of: href), prefix != pageLocale { continue }
+            // A bare link to the section root (the search-type
+            // selector's 系列 option, say) is not a tab variant
+            // either — except a deliberate 全部 tab, which the
+            // news page keeps.
+            if stripLocale(href) == base, label != "全部" { continue }
+            guard stripLocale(href) != current else { continue }
+            guard stripLocale(href).split(separator: "?").first.map(String.init) == base else { continue }
+            guard !href.contains("page=") else { continue }
+            guard seen.insert(stripLocale(href)).inserted else { continue }
+            results.append(NamedLink(name: label, href: href, kind: "ranktab"))
+        }
         return results
+    }
+
+    /// The drawer's series-group shortcuts beyond the three t= tabs
+    /// (build 17): number-letter prefixes, the Blacked series page
+    /// and the 麻豆傳媒映畫 maker page, in the site's own order.
+    /// Drawer sub-items carry the sidebar-sub-item class; the main
+    /// list's own rows do not, so they cannot leak in.
+    static func drawerSeriesLinks(in html: String) -> [NamedLink] {
+        var out: [NamedLink] = []
+        var seen = Set<String>()
+        guard let regex = try? NSRegularExpression(
+            pattern: "<a([^>]+)>([\\s\\S]*?)</a>",
+            options: [.caseInsensitive]
+        ) else { return out }
+        let ns = html as NSString
+        for match in regex.matches(in: html, range: NSRange(location: 0, length: ns.length)) {
+            let attrs = ns.substring(with: match.range(at: 1))
+            guard attrs.contains("sidebar-sub-item"),
+                  let rawHref = attribute("href", in: attrs) else { continue }
+            let href = unescape(rawHref).trimmingCharacters(in: .whitespacesAndNewlines)
+            let stripped = stripLocale(href)
+            let isPrefix = stripped.hasPrefix("number_letters/")
+            let isSeries = firstMatch("^series/([A-Za-z0-9]{8})$", in: stripped) != nil
+            let isMaker = firstMatch("^makers/([A-Za-z0-9]{8})", in: stripped) != nil
+            guard isPrefix || isSeries || isMaker else { continue }
+            let name = stripTags(ns.substring(with: match.range(at: 2)))
+            guard !name.isEmpty, seen.insert(stripped).inserted else { continue }
+            out.append(NamedLink(name: name, href: href, kind: "serieslink"))
+        }
+        return out
     }
 
     /// The site paginates catalog/search/ranking lists with page= links; the

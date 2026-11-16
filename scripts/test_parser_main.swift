@@ -405,12 +405,43 @@ enum ParserTests {
         expect(newsTabs.map(\.name) == ["全部", "新片情報"],
                "news keeps its 全部 tab and drops the drawer entry, got \(newsTabs.map(\.name))")
 
+        // Build 17: language-menu variants carry the page's own
+        // path+query in other locales and precede the real tabs; one
+        // must not steal the real tab's slot (the ไทย chip case).
+        // "JP" is deliberately not a known language name — only the
+        // page-locale rule can drop it.
+        let theftHTML = """
+        <a href="/en/series?t=asian">English</a>
+        <a href="/th/series?t=asian">ไทย</a>
+        <a href="/ja/series?t=asian">JP</a>
+        <a href="/zh-CN/series?t=asian">亚洲</a>
+        <a href="/zh-CN/series?t=western">欧美</a>
+        <a href="/zh-CN/series?t=anime">动漫</a>
+        """
+        let theftTabs = HTMLParser.rankingTabs(in: theftHTML, basePath: "series", currentPath: "series?__none")
+        expect(theftTabs.map(\.name) == ["亚洲", "欧美", "动漫"],
+               "locale variants cannot steal a tab slot, got \(theftTabs.map(\.name))")
+
+        // Build 17: the drawer's series-group shortcuts (prefixes,
+        // the Blacked series page, the 麻豆 maker page) in site
+        // order; plain list rows without the drawer class stay out.
+        let drawerHTML = """
+        <a href="/zh-CN/series?t=asian" class="sidebar-sub-item">亚洲</a>
+        <a class="sidebar-sub-item" href="/zh-CN/number_letters/SNOS">SNOS</a>
+        <a href="/zh-CN/series/4XzOv7kL" class="sidebar-sub-item">Blacked</a>
+        <a class="sidebar-sub-item" href="/zh-CN/makers/B6IdQSz0?mfilter=has_magnets">麻豆傳媒映畫</a>
+        <a href="/zh-CN/series/AbCdEfGh">列表里的系列</a>
+        """
+        let drawerLinks = HTMLParser.drawerSeriesLinks(in: drawerHTML)
+        expect(drawerLinks.map(\.name) == ["SNOS", "Blacked", "麻豆傳媒映畫"],
+               "drawer series shortcuts, got \(drawerLinks.map(\.name))")
+
         let signedHTML = "<a href=\"/zh-CN/sign_out\">退出登录</a>"
         expect(HTMLParser.isSignedIn(html: signedHTML), "sign_out means signed in")
         expect(HTMLParser.signOutURL(in: signedHTML)?.contains("sign_out") == true, "sign_out url")
         expect(HTMLParser.containsSignInLink("<a href=\"/zh-CN/sign_in\">登录</a>"), "sign_in link")
 
-        print("PASS: home, detail magnets, ranking merge, hot casts, HQ cover sources, empty shell, block detection, cover policy, login signals, ranking tabs, pagination, news, series, detail cover identity, page map, cast cards, prefix links, filter form, homepage panel, auto-next, home main list, movie toolbar, tab hygiene")
+        print("PASS: home, detail magnets, ranking merge, hot casts, HQ cover sources, empty shell, block detection, cover policy, login signals, ranking tabs, pagination, news, series, detail cover identity, page map, cast cards, prefix links, filter form, homepage panel, auto-next, home main list, movie toolbar, tab hygiene, tab locale guard, drawer shortcuts")
     }
 }
 
