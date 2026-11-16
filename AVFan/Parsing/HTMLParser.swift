@@ -1240,7 +1240,7 @@ enum HTMLParser {
                 if !name.isEmpty { author = name }
             }
             let text = stripTags(block)
-            let date = firstMatch(#"(\d{4}-\d{2}-\d{2}|\d{1,2}-\d{1,2}(?=\s|$))"#, in: text)
+            let date = firstMatch(#"(?<!\d)(\d{4}-\d{2}-\d{2}|\d{1,2}-\d{1,2})(?!\d)"#, in: text)
             var body = text
             if author != "匿名", let r = body.range(of: author) { body.removeSubrange(r) }
             if let date, let r = body.range(of: date) { body.removeSubrange(r) }
