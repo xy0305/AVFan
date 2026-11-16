@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import AVFoundation
 import AVKit
 import Combine
 import WebKit
@@ -1665,7 +1666,7 @@ struct NativeTrailerPlayer: View {
         let item = AVPlayerItem(asset: asset)
         let p = AVPlayer(playerItem: item)
         player = p
-        statusObserver = item.publisher(for: \.status)
+        statusObserver = item.publisher(for: \AVPlayerItem.status)
             .receive(on: DispatchQueue.main)
             .sink { status in
                 if status == .failed { onFailure() }
