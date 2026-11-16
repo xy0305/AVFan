@@ -1208,6 +1208,7 @@ enum HTMLParser {
             watchStreams: watchStreams(in: html, pageURL: pageURL),
             trailerURL: trailerURL(in: html),
             hasTrailerAffordance: hasTrailerAffordance(in: html),
+            codePrefixPath: codePrefixPath(in: html),
             previewImages: previewImages(in: html, cover: preferredCover),
             library: libraryState(in: html),
             commentsURL: firstMatch("data-comments-url=\"([^\"]+)\"", in: html).map(unescape),
@@ -1215,7 +1216,6 @@ enum HTMLParser {
                 ?? firstMatch("data-url=\"([^\"]+)\"[^>]*id=\"related-lists\"", in: html).map(unescape)
                 ?? firstMatch("(/?[A-Za-z-]+/lists/related\\?movie_id=[A-Za-z0-9]+)", in: html).map(unescape),
             commentsCount: firstMatch("tabComments\"[^>]*>[\\s\\S]*?评论[\\s\\S]*?>(\\d+)<", in: html).flatMap { Int($0) },
-            codePrefixPath: codePrefixPath(in: html),
             alsoStarred: sectionCards(in: html, heading: "还出演过"),
             relatedWorks: sectionCards(in: html, heading: "相关作品")
         )
