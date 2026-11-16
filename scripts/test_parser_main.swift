@@ -347,12 +347,48 @@ enum ParserTests {
         expect(HTMLParser.autoNextPath(in: "<p>no paging</p>", page: 1, path: "/x") == nil,
                "autoNext is nil without pagination")
 
+        // Build 15: the real movie-toolbar on the captured homepage.
+        // Its type/filter checkboxes carry no name attribute, which is
+        // why the generic parse produced a partial panel on device.
+        let homeHTML = try fixture("home.html")
+        let toolbar = HTMLParser.listFilterForm(in: homeHTML)
+        expect(toolbar?.toolbar != nil, "movie-toolbar detected on the homepage")
+        expect(toolbar!.groups.map(\.title) == ["影片类型", "筛选", "排序", "布局", "布局"],
+               "toolbar group titles, got \(toolbar!.groups.map(\.title))")
+        expect(toolbar!.groups[0].options.count == 7,
+               "type options incl. 全部类型, got \(toolbar!.groups[0].options.count)")
+        expect(toolbar!.groups[1].options.count == 8,
+               "filter options incl. 全部综合, got \(toolbar!.groups[1].options.count)")
+        expect(toolbar!.groups[2].options.map(\.label) == ["最新磁链", "最新发行", "最新可播"],
+               "sort options complete, got \(toolbar!.groups[2].options.map(\.label))")
+        expect(toolbar!.defaultSelections["msort"] == ["sort_by_magnet"], "sort default is 最新磁链")
+        expect(toolbar!.defaultSelections["mfilter"] == ["has_magnets"], "filter default is 有磁链")
+        expect(HTMLParser.applyingFilters("/zh-CN", form: toolbar!, selections: toolbar!.defaultSelections) == "/zh-CN",
+               "toolbar defaults produce the bare homepage path")
+        var oneType = toolbar!.defaultSelections
+        oneType["tfilter"] = ["censored"]
+        expect(HTMLParser.applyingFilters("/zh-CN", form: toolbar!, selections: oneType) == "/zh-CN/censored",
+               "a single category type moves into the path")
+        var twoTypes = toolbar!.defaultSelections
+        twoTypes["tfilter"] = ["censored", "western"]
+        expect(HTMLParser.applyingFilters("/zh-CN", form: toolbar!, selections: twoTypes) == "/zh-CN?tfilter=censored,western",
+               "two types ride as the tfilter parameter")
+        var allFilters = toolbar!.defaultSelections
+        allFilters["mfilter"] = []
+        expect(HTMLParser.applyingFilters("/zh-CN", form: toolbar!, selections: allFilters) == "/zh-CN?mfilter=all",
+               "全部综合 applies as mfilter=all")
+        var combo = toolbar!.defaultSelections
+        combo["mfilter"] = ["has_magnets", "can_play"]
+        combo["msort"] = ["sort_by_release"]
+        expect(HTMLParser.applyingFilters("/zh-CN", form: toolbar!, selections: combo) == "/zh-CN?mfilter=has_magnets,can_play&msort=sort_by_release",
+               "combined filter and sort parameters")
+
         let signedHTML = "<a href=\"/zh-CN/sign_out\">退出登录</a>"
         expect(HTMLParser.isSignedIn(html: signedHTML), "sign_out means signed in")
         expect(HTMLParser.signOutURL(in: signedHTML)?.contains("sign_out") == true, "sign_out url")
         expect(HTMLParser.containsSignInLink("<a href=\"/zh-CN/sign_in\">登录</a>"), "sign_in link")
 
-        print("PASS: home, detail magnets, ranking merge, hot casts, HQ cover sources, empty shell, block detection, cover policy, login signals, ranking tabs, pagination, news, series, detail cover identity, page map, cast cards, prefix links, filter form, homepage panel, auto-next, home main list")
+        print("PASS: home, detail magnets, ranking merge, hot casts, HQ cover sources, empty shell, block detection, cover policy, login signals, ranking tabs, pagination, news, series, detail cover identity, page map, cast cards, prefix links, filter form, homepage panel, auto-next, home main list, movie toolbar")
     }
 }
 

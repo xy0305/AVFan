@@ -102,7 +102,11 @@ struct SearchView: View {
     }
 
     private func loadFirstPage() async {
-        guard let url = URL(string: activePath) else { return }
+        // Toolbar-applied filters come back as site paths, not the
+        // absolute search URL this view starts from.
+        guard let url = activePath.hasPrefix("http")
+            ? URL(string: activePath)
+            : SiteClient.shared.catalogURL(path: activePath) else { return }
         loading = true
         errorMessage = nil
         cards = []

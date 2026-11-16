@@ -284,12 +284,142 @@ enum HTMLParser {
         return out
     }
 
+    /// id → visible text for every <label for="…"> on the page.
+    private static func labelTexts(in html: String) -> [String: String] {
+        var map: [String: String] = [:]
+        if let regex = try? NSRegularExpression(
+            pattern: "<label[^>]+for=\"([^\"]+)\"[^>]*>(.*?)</label>",
+            options: [.caseInsensitive, .dotMatchesLineSeparators]) {
+            let ns = html as NSString
+            for match in regex.matches(in: html, range: NSRange(location: 0, length: ns.length)) {
+                let key = ns.substring(with: match.range(at: 1))
+                let text = stripTags(unescape(ns.substring(with: match.range(at: 2))))
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if !text.isEmpty { map[key] = text }
+            }
+        }
+        return map
+    }
+
+    /// The site's movie-toolbar filter component (build 15): its type
+    /// and filter checkboxes have NO name attribute — they are keyed by
+    /// data-movie-toolbar-target and labelled via <label for>, so the
+    /// generic form parse only ever saw the named sort/grid radios and
+    /// produced a partial panel （排序 missing 最新磁链， no 影片类型 or
+    /// 筛选 groups at all). Groups are keyed by the query parameters
+    /// the controller applies with (tfilter / mfilter / msort); grid
+    /// groups keep their input names and never reach the URL.
+    static func movieToolbar(in html: String) -> ListFilterForm? {
+        guard html.contains("movie-toolbar") else { return nil }
+        func controllerValue(_ key: String) -> String? {
+            firstMatch("data-movie-toolbar-\(key)-value=\"([^\"]*)\"", in: html).map(unescape)
+        }
+        let labels = labelTexts(in: html)
+        struct Input {
+            var target: String
+            var value: String
+            var label: String
+            var checked: Bool
+        }
+        var inputs: [Input] = []
+        let pattern = "<input[^>]*data-movie-toolbar-target=\"(typeAll|typeOption|filterAll|filterOption|sortOption|gridDesktopOption|gridMobileOption)\"[^>]*>"
+        if let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) {
+            let ns = html as NSString
+            for match in regex.matches(in: html, range: NSRange(location: 0, length: ns.length)) {
+                let tag = ns.substring(with: match.range)
+                guard let id = attribute("id", in: tag), let label = labels[id] else { continue }
+                inputs.append(Input(
+                    target: ns.substring(with: match.range(at: 1)),
+                    value: unescape(attribute("value", in: tag) ?? ""),
+                    label: label,
+                    checked: tag.range(of: "\\bchecked(\\s|>|=)", options: .regularExpression) != nil))
+            }
+        }
+        func options(_ targets: [String]) -> [ListFilterOption] {
+            inputs.filter { targets.contains($0.target) }
+                .map { ListFilterOption(value: $0.value, label: $0.label, selected: $0.checked) }
+        }
+        var groups: [ListFilterGroup] = []
+        let typeOptions = options(["typeAll", "typeOption"])
+        if typeOptions.count >= 2 {
+            groups.append(ListFilterGroup(name: "tfilter", isRadio: false, title: "影片类型", options: typeOptions))
+        }
+        let filterOptions = options(["filterAll", "filterOption"])
+        if filterOptions.count >= 2 {
+            groups.append(ListFilterGroup(name: "mfilter", isRadio: false, title: "筛选", options: filterOptions))
+        }
+        let sortOptions = options(["sortOption"])
+        if sortOptions.count >= 2 {
+            groups.append(ListFilterGroup(name: "msort", isRadio: true, title: "排序", options: sortOptions))
+        }
+        let desktopOptions = options(["gridDesktopOption"])
+        if desktopOptions.count >= 2 {
+            groups.append(ListFilterGroup(name: "movie-toolbar-grid-desktop", isRadio: true, title: "布局", options: desktopOptions))
+        }
+        let mobileOptions = options(["gridMobileOption"])
+        if mobileOptions.count >= 2 {
+            groups.append(ListFilterGroup(name: "movie-toolbar-grid-mobile", isRadio: true, title: "布局", options: mobileOptions))
+        }
+        guard groups.contains(where: { ["tfilter", "mfilter", "msort"].contains($0.name) }) else { return nil }
+        let categories = controllerValue("category-paths")
+            .map { allMatches("\"([^\"]+)\"", in: $0) } ?? []
+        return ListFilterForm(groups: groups, toolbar: ListFilterForm.ToolbarMeta(
+            basePath: controllerValue("base-path") ?? "",
+            categoryPaths: categories,
+            defaultType: controllerValue("default-type") ?? "all",
+            defaultFilter: controllerValue("default-filter") ?? "",
+            defaultSort: controllerValue("default-sort") ?? ""))
+    }
+
+    /// Port of the movie-toolbar controller's apply(): a single chosen
+    /// category type moves into the path (basePath/<type>) instead of a
+    /// parameter; everything else rides as tfilter / mfilter / msort,
+    /// parameters at their default values are omitted, page= is
+    /// dropped, and unrelated parameters are kept. Grid layout groups
+    /// never reach the URL (the site persists them in cookies; the app
+    /// applies them locally through layoutColumns).
+    static func applyingToolbar(_ path: String, form: ListFilterForm, selections: [String: Set<String>]) -> String {
+        guard let meta = form.toolbar else { return path }
+        func chosen(_ groupName: String) -> [String] {
+            guard let group = form.groups.first(where: { $0.name == groupName }) else { return [] }
+            let selected = selections[groupName] ?? []
+            return group.options.map(\.value).filter { !$0.isEmpty && selected.contains($0) }
+        }
+        let types = chosen("tfilter")
+        let filters = chosen("mfilter")
+        let sort = chosen("msort").first
+        let parts = path.split(separator: "?", maxSplits: 1).map(String.init)
+        var pairs: [(String, String)] = []
+        if parts.count == 2 {
+            for pair in parts[1].split(separator: "&") {
+                let kv = pair.split(separator: "=", maxSplits: 1).map(String.init)
+                guard let key = kv.first,
+                      !["page", "tfilter", "mfilter", "msort"].contains(key) else { continue }
+                pairs.append((key, kv.count == 2 ? kv[1] : ""))
+            }
+        }
+        var base = meta.basePath.isEmpty ? (parts.first ?? path) : meta.basePath
+        if types.count == 1, meta.categoryPaths.contains(types[0]) {
+            base = base.hasSuffix("/") ? base + types[0] : base + "/" + types[0]
+        } else {
+            let joined = types.isEmpty ? "all" : types.joined(separator: ",")
+            if joined != meta.defaultType { pairs.append(("tfilter", joined)) }
+        }
+        let filterJoined = filters.isEmpty ? "all" : filters.joined(separator: ",")
+        if filterJoined != meta.defaultFilter { pairs.append(("mfilter", filterJoined)) }
+        if let sort, sort != meta.defaultSort { pairs.append(("msort", sort)) }
+        guard !pairs.isEmpty else { return base }
+        return base + "?" + pairs.map { "\($0.0)=\($0.1)" }.joined(separator: "&")
+    }
+
     /// The list filter/sort form a catalog page carries (the JUR prefix
     /// page's 筛选 panel: feature checkboxes + sort radios). Parsed from
     /// the page's own checkbox/radio inputs and their labels — names,
     /// values and pre-selected options all come from the site. Returns
-    /// nil when the page has no such form.
+    /// nil when the page has no such form. The movie-toolbar
+    /// component, when present, is parsed by movieToolbar instead.
     static func listFilterForm(in html: String) -> ListFilterForm? {
+        if let toolbar = movieToolbar(in: html) { return toolbar }
         struct RawOption { var name: String; var value: String; var label: String; var radio: Bool; var selected: Bool }
         var raw: [RawOption] = []
         var capturedIDs = Set<String>()
@@ -363,7 +493,8 @@ enum HTMLParser {
             // vocabulary headed by 全部类型 (the homepage panel carries
             // both alongside 筛选 and 排序).
             let isLayout = !labels.isEmpty && labels.allSatisfy {
-                $0.range(of: "^\\d+列$", options: .regularExpression) != nil
+                $0.replacingOccurrences(of: " ", with: "")
+                    .range(of: "^\\d+列$", options: .regularExpression) != nil
             }
             let typeLabels: Set<String> = ["全部类型", "有码", "无码", "欧美", "FC2", "动漫", "华语"]
             let isType = labels.contains("全部类型")
@@ -385,6 +516,7 @@ enum HTMLParser {
     /// form's own parameters are replaced, pagination resets (page=
     /// dropped), unrelated parameters are kept.
     static func applyingFilters(_ path: String, form: ListFilterForm, selections: [String: Set<String>]) -> String {
+        if form.toolbar != nil { return applyingToolbar(path, form: form, selections: selections) }
         let parts = path.split(separator: "?", maxSplits: 1).map(String.init)
         let base = parts.first ?? path
         let formNames = Set(form.groups.map(\.name))

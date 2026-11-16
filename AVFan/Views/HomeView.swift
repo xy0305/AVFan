@@ -841,29 +841,44 @@ struct FilterSheet: View {
         _draft = State(initialValue: selections)
     }
 
+    @Environment(\.horizontalSizeClass) private var sizeClass
+
+    /// The toolbar form carries two layout groups (desktop 3–6 列 and
+    /// mobile 1–2 列）; like the site, show only the one for this
+    /// device class.
+    private var shownGroups: [ListFilterGroup] {
+        let layouts = form.groups.filter(\.isLayoutGroup)
+        guard layouts.count > 1 else { return form.groups }
+        func maxColumns(_ group: ListFilterGroup) -> Int {
+            group.options.map { Int($0.label.filter(\.isNumber)) ?? 0 }.max() ?? 0
+        }
+        let mobile = layouts.first { maxColumns($0) <= 2 }
+        let desktop = layouts.first { maxColumns($0) >= 3 }
+        let keep = sizeClass == .regular ? (desktop ?? mobile) : (mobile ?? desktop)
+        return form.groups.filter { !$0.isLayoutGroup || $0.name == keep?.name }
+    }
+
     var body: some View {
         NavigationStack {
-            List {
-                ForEach(form.groups) { group in
-                    Section(group.title) {
-                        ForEach(group.options) { option in
-                            Button {
-                                toggle(group: group, option: option)
-                            } label: {
-                                HStack {
-                                    Text(option.label)
-                                        .foregroundStyle(.primary)
-                                    Spacer()
-                                    if (draft[group.name] ?? []).contains(option.value) {
-                                        Image(systemName: "checkmark")
-                                            .foregroundStyle(AVFanTheme.accent)
-                                    }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    ForEach(shownGroups) { group in
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text(group.title)
+                                .font(.subheadline.weight(.bold))
+                                .foregroundStyle(.secondary)
+                            FlowLayout(spacing: 8) {
+                                ForEach(group.options) { option in
+                                    chip(group: group, option: option)
                                 }
                             }
                         }
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(20)
             }
+            .background(AVFanTheme.pageBackground)
             .navigationTitle("筛选 · 排序")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -879,6 +894,23 @@ struct FilterSheet: View {
                 }
             }
         }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+    }
+
+    private func chip(group: ListFilterGroup, option: ListFilterOption) -> some View {
+        let selected = (draft[group.name] ?? []).contains(option.value)
+        return Button {
+            toggle(group: group, option: option)
+        } label: {
+            Text(option.label)
+                .font(.subheadline.weight(selected ? .semibold : .regular))
+                .padding(.horizontal, 13)
+                .padding(.vertical, 7)
+                .background(selected ? AVFanTheme.accent : Color.primary.opacity(0.07), in: Capsule())
+                .foregroundStyle(selected ? .white : .primary)
+        }
+        .buttonStyle(.plain)
     }
 
     private func toggle(group: ListFilterGroup, option: ListFilterOption) {

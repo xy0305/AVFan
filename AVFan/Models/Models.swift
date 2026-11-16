@@ -296,13 +296,26 @@ struct ListFilterGroup: Identifiable, Hashable {
     /// locally to the grid as well as sent with the form.
     var isLayoutGroup: Bool {
         !options.isEmpty && options.allSatisfy {
-            $0.label.range(of: "^\\d+列$", options: .regularExpression) != nil
+            $0.label.replacingOccurrences(of: " ", with: "")
+                .range(of: "^\\d+列$", options: .regularExpression) != nil
         }
     }
 }
 
 struct ListFilterForm: Hashable {
     var groups: [ListFilterGroup]
+    /// Set when this form is the site's movie-toolbar component
+    /// (build 15): applying it follows the toolbar controller's own
+    /// URL rules instead of plain form parameters.
+    var toolbar: ToolbarMeta? = nil
+
+    struct ToolbarMeta: Hashable {
+        var basePath: String
+        var categoryPaths: [String]
+        var defaultType: String
+        var defaultFilter: String
+        var defaultSort: String
+    }
 
     /// The selections the page itself shipped (its checked inputs).
     var defaultSelections: [String: Set<String>] {
@@ -314,7 +327,10 @@ struct ListFilterForm: Hashable {
     /// Column count chosen in the 布局 group, when the form has one and
     /// an option is selected; nil keeps the grid's adaptive default.
     func layoutColumns(selections: [String: Set<String>]) -> Int? {
-        for group in groups where group.isLayoutGroup {
+        let layouts = groups.filter(\.isLayoutGroup)
+        let ordered = layouts.filter { $0.name == "movie-toolbar-grid-mobile" }
+            + layouts.filter { $0.name != "movie-toolbar-grid-mobile" }
+        for group in ordered {
             guard let value = selections[group.name]?.first,
                   let option = group.options.first(where: { $0.value == value }) else { continue }
             let digits = option.label.filter(\.isNumber)
