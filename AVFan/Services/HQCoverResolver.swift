@@ -100,7 +100,10 @@ actor HQCoverResolver {
         let head = Array(baseline.prefix(4))
         pool += await Self.decode(head, discovered: false, deadline: deadline)
 
-        let discovered = await tenhowFound + await avbaseFound + await javbusFound
+        let tenhowURLs = await tenhowFound
+        let avbaseURLs = await avbaseFound
+        let javbusURLs = await javbusFound
+        let discovered = tenhowURLs + avbaseURLs + javbusURLs
         var queue: [String] = []
         for url in discovered + Array(baseline.dropFirst(4)) where !queue.contains(url) && !head.contains(url) {
             queue.append(url)
