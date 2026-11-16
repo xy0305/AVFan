@@ -498,10 +498,35 @@ private struct HomeHeroPage: View {
     let metrics: HomeMetrics
     var active: Bool
 
+    @StateObject private var model = PosterImageModel()
+
     var body: some View {
         ZStack(alignment: .bottom) {
-            CoverImage(url: card.coverURL, code: card.code, anchorY: 0.22, allowUpscale: true)
-                .frame(width: metrics.width, height: metrics.heroHeight)
+            Rectangle().fill(Color.secondary.opacity(0.14))
+            if let image = model.image {
+                // Backdrop: the same cover blown up to fill the
+                // whole hero frame, blurred and darkened — the
+                // frame is always covered, with no sharp crop.
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: metrics.width, height: metrics.heroHeight)
+                    .clipped()
+                    .blur(radius: 28)
+                    .overlay(Color.black.opacity(0.16))
+                    .allowsHitTesting(false)
+                // The cover itself COMPLETE (build 33): aspect-fit,
+                // nothing cropped — the anchored fill of builds
+                // 18-32 zoomed landscape covers into a centre slice
+                // and the owner kept reporting the size as wrong.
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: metrics.width, height: metrics.heroHeight)
+                    .allowsHitTesting(false)
+            } else if !model.failed {
+                ProgressView().tint(.secondary)
+            }
             LinearGradient(
                 stops: [
                     .init(color: .clear, location: 0.42),
@@ -515,6 +540,14 @@ private struct HomeHeroPage: View {
         }
         .frame(width: metrics.width, height: metrics.heroHeight)
         .clipped()
+        .onAppear { reload() }
+        .onChange(of: card.coverURL) { _, _ in reload() }
+    }
+
+    private func reload() {
+        model.load(url: card.coverURL, code: card.code,
+                   displayPoints: CGSize(width: metrics.width, height: metrics.heroHeight),
+                   allowUpscale: true)
     }
 }
 

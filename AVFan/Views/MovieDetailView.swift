@@ -1005,11 +1005,6 @@ struct MovieDetailView: View {
                     .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                 }
                 .buttonStyle(.plain)
-                .onAppear {
-                    if row.id == relatedRows.last?.id && listsNext != nil {
-                        Task { await loadRelatedLists(detail, page: listsNext) }
-                    }
-                }
             }
             if listsNext != nil && !relatedRows.isEmpty {
                 Button("加载更多") {
@@ -1023,6 +1018,7 @@ struct MovieDetailView: View {
                 ProgressView().frame(maxWidth: .infinity)
             }
         }
+        .animation(nil, value: relatedRows)
         .task(id: detail.relatedListsURL) {
             if !listsLoaded { await loadRelatedLists(detail, page: nil) }
         }
