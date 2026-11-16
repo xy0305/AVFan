@@ -64,31 +64,13 @@ struct MoviePosterCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            ZStack(alignment: .topLeading) {
-                CoverImage(url: card.coverURL, code: card.code)
-                    .aspectRatio(2.0/3.0, contentMode: .fill)
-                    .clipped()
-                    .liquidCover(cornerRadius: AVFanTheme.cardRadius)
-                HStack(spacing: 4) {
-                    if let badge = card.badges.first {
-                        Text(badge)
-                            .font(.caption2.weight(.semibold))
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(.black.opacity(0.62), in: Capsule())
-                            .foregroundStyle(.white)
-                    }
-                    if card.canPlay && card.badges.first != "可播放" {
-                        Text("可播放")
-                            .font(.caption2.weight(.semibold))
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(AVFanTheme.accent.opacity(0.92), in: Capsule())
-                            .foregroundStyle(.white)
-                    }
-                }
-                .padding(8)
-            }
+            // No text overlays on the cover (build 14, owner's call):
+            // the site's badge pills （可播放 / 24小时磁链 …) covered the
+            // artwork on every small card.
+            CoverImage(url: card.coverURL, code: card.code)
+                .aspectRatio(2.0/3.0, contentMode: .fill)
+                .clipped()
+                .liquidCover(cornerRadius: AVFanTheme.cardRadius)
             Text(card.displayCode)
                 .font(AVFanTheme.codeFont)
                 .foregroundStyle(.primary)
