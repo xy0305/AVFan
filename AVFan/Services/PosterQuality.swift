@@ -53,14 +53,14 @@ struct PosterQuality: Equatable, Sendable {
     }
 
     static func winner(_ values: [PosterQuality]) -> PosterQuality? {
-        let eligible = values.filter { eligible(width: $0.width, height: $0.height) }
-        guard let maximum = eligible.map(\.score).max() else { return nil }
+        let pool = values.filter { PosterQuality.eligible(width: $0.width, height: $0.height) }
+        guard let maximum = pool.map(\.score).max() else { return nil }
         // An untouched portrait within 5% of the maximum linear
         // resolution is preferable to a derived front.
-        let originals = eligible.filter { $0.originalPortrait && $0.score >= maximum * 0.95 }
+        let originals = pool.filter { $0.originalPortrait && $0.score >= maximum * 0.95 }
         // Among derived fronts within 5% (e.g. the same jacket cropped
         // from DMM at 0.69 vs a re-host at 0.70), the official source wins.
-        let near = eligible.filter { $0.score >= maximum * 0.95 }
+        let near = pool.filter { $0.score >= maximum * 0.95 }
         return (originals.isEmpty ? near : originals).sorted {
             if $0.officialRank != $1.officialRank { return $0.officialRank < $1.officialRank }
             if $0.score != $1.score { return $0.score > $1.score }
