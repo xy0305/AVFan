@@ -144,14 +144,21 @@ struct AudioOwnedKSVideoPlayer: UIViewRepresentable {
 @MainActor
 final class TrailerPlayback: ObservableObject {
     let player: AVPlayer
+    /// Invoked when the item fails to load, so the host can fall back.
+    var onFailed: (() -> Void)?
     private let audio = PlaybackAudioLease()
     private var observation: NSKeyValueObservation?
     private var itemObservation: NSKeyValueObservation?
     private var endObserver: NSObjectProtocol?
     private var failureObserver: NSObjectProtocol?
 
-    init(url: URL) {
-        player = AVPlayer(url: url)
+    init(url: URL, headers: [String: String] = [:]) {
+        if headers.isEmpty {
+            player = AVPlayer(url: url)
+        } else {
+            let asset = AVURLAsset(url: url, options: [AVURLAssetHTTPHeaderFieldsKey: headers])
+            player = AVPlayer(playerItem: AVPlayerItem(asset: asset))
+        }
         observation = player.observe(\.timeControlStatus, options: [.new]) { [weak self] player, _ in
             // Waiting is already a real play request. Pause retains ownership for instant resume.
             guard player.timeControlStatus != .paused else { return }
@@ -163,7 +170,11 @@ final class TrailerPlayback: ObservableObject {
         }
         itemObservation = player.currentItem?.observe(\.status, options: [.new]) { [weak self] item, _ in
             guard item.status == .failed else { return }
-            Task { @MainActor [weak self] in self?.finish() }
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.onFailed?()
+                self.finish()
+            }
         }
         endObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime,
             object: player.currentItem, queue: .main) { [weak self] _ in
@@ -171,7 +182,11 @@ final class TrailerPlayback: ObservableObject {
             }
         failureObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemFailedToPlayToEndTime,
             object: player.currentItem, queue: .main) { [weak self] _ in
-                Task { @MainActor in self?.finish() }
+                Task { @MainActor in
+                    guard let self else { return }
+                    self.onFailed?()
+                    self.finish()
+                }
             }
     }
     func finish() {

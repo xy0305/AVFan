@@ -126,11 +126,10 @@ struct MovieDetailView: View {
         .onChange(of: showWatchPlayer) { _, open in if !open { refreshResume() } }
         .fullScreenCover(isPresented: $playTrailer) {
             if let trailer = display.trailerURL, let url = URL(string: trailer) {
-                WatchOnlinePlayerView(
-                    title: (display.displayCode) + " 预告片",
+                TrailerPlayerView(
                     url: url,
-                    resumeKey: PlaybackResumeKey.make(number: display.displayCode, source: "avfan-trailer"),
-                    startFromBeginning: true
+                    pageURL: model.pageURL,
+                    title: (display.displayCode) + " 预告片"
                 )
             }
         }
@@ -1238,6 +1237,66 @@ struct ListPickerSheet: View {
             showLogin = true
         } else {
             message = outcome.message ?? "新建失败"
+        }
+    }
+}
+
+/// Trailer playback. The DMM preview CDN (CloudFront) rejects the
+/// KSPlayer/ffmpeg stack outright, so the trailer plays in the system
+/// AVPlayer with a browser user agent and the movie page as referer;
+/// if that still fails, it falls back to the site's own trailer page
+/// (page URL + "/trailer"), whose player runs in its own context.
+struct TrailerPlayerView: View {
+    @Environment(\.dismiss) private var dismiss
+    let pageURL: URL?
+    let title: String
+    @StateObject private var playback: TrailerPlayback
+    @State private var webFallback = false
+
+    init(url: URL, pageURL: URL?, title: String) {
+        self.pageURL = pageURL
+        self.title = title
+        let headers = [
+            "User-Agent": SiteClient.mobileSafariUA,
+            "Referer": pageURL?.absoluteString ?? "https://avfan.com/",
+        ]
+        _playback = StateObject(wrappedValue: TrailerPlayback(url: url, headers: headers))
+    }
+
+    var body: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+            if webFallback, let pageURL {
+                InAppWebView(url: pageURL.appendingPathComponent("trailer"), title: title)
+                    .padding(.top, 52)
+            } else {
+                AudioOwnedTrailerPlayer(playback: playback)
+            }
+            VStack {
+                HStack(spacing: 14) {
+                    Button { dismiss() } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .frame(width: 36, height: 36)
+                            .background(.white.opacity(0.16), in: Circle())
+                    }
+                    Text(title)
+                        .font(.headline)
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                    Spacer()
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 10)
+                Spacer()
+            }
+        }
+        .onAppear {
+            playback.onFailed = {
+                if pageURL != nil { webFallback = true }
+            }
+            playback.player.play()
         }
     }
 }
