@@ -534,6 +534,11 @@ struct CatalogListView: View {
     @State private var currentPage = 1
     @State private var pagePaths: [Int: String] = [:]
     @State private var totalPages = 1
+    /// 在线观看 (/watch) auto-pages on scroll instead of the manual
+    /// pager (build 12, owner's call); every other list keeps the
+    /// website-style PagerBar from build 11.
+    private var autoPaging: Bool { HTMLParser.stripLocale(path) == "watch" }
+    @State private var nextPage: String?
     /// The path with any applied filters; starts as the given path.
     @State private var activePath = ""
     /// The site's own filter/sort form, parsed from the page (build 11).
@@ -553,19 +558,23 @@ struct CatalogListView: View {
                     FetchStatusBanner(source: source, error: errorMessage, webURL: pageURL) { showWeb = true }
                         .id("catalogTop")
                     if loading && cards.isEmpty { ProgressView().frame(maxWidth: .infinity, minHeight: 180) }
-                    MovieGrid(cards: cards, onSelect: { openCard = $0 })
+                    MovieGrid(cards: cards, onSelect: { openCard = $0 }, onReachEnd: autoPaging ? { Task { await loadNext() } } : nil)
                     if loading && !cards.isEmpty {
                         ProgressView().frame(maxWidth: .infinity).padding(.vertical, 8)
                     }
-                    PagerBar(currentPage: currentPage, totalPages: totalPages, isLoading: loading) { page in
-                        Task { await goPage(page) }
+                    if !autoPaging {
+                        PagerBar(currentPage: currentPage, totalPages: totalPages, isLoading: loading) { page in
+                            Task { await goPage(page) }
+                        }
                     }
                 }
                 .padding(.horizontal, AdaptiveLayout.horizontalPadding)
                 .padding(.vertical, 12)
             }
             .onChange(of: currentPage) { _, _ in
-                withAnimation(.none) { proxy.scrollTo("catalogTop", anchor: .top) }
+                if !autoPaging {
+                    withAnimation(.none) { proxy.scrollTo("catalogTop", anchor: .top) }
+                }
             }
         }
         .background(AVFanTheme.pageBackground)
@@ -611,7 +620,12 @@ struct CatalogListView: View {
         await loadPage(target, page: page)
     }
 
-    private func loadPage(_ fetchPath: String, page: Int) async {
+    private func loadNext() async {
+        guard autoPaging, !loading, let target = nextPage else { return }
+        await loadPage(target, page: currentPage + 1, append: true)
+    }
+
+    private func loadPage(_ fetchPath: String, page: Int, append: Bool = false) async {
         loading = true
         defer { loading = false }
         let url = SiteClient.shared.catalogURL(path: fetchPath)
@@ -628,9 +642,26 @@ struct CatalogListView: View {
             let parsed = await HTMLParser.detached {
                 (cards: HTMLParser.movieCards(in: html),
                  pages: HTMLParser.pageMap(in: html),
-                 form: HTMLParser.listFilterForm(in: html))
+                 form: HTMLParser.listFilterForm(in: html),
+                 next: HTMLParser.nextPagePath(in: html, currentPage: page))
             }
-            cards = parsed.cards
+            // Next-page href for auto paging: the page's own next link
+            // first, then its numbered link for page + 1, then — when the
+            // page carries a pagination bar at all — the same path with
+            // page= bumped. An empty or all-duplicate page stops appends.
+            var next = parsed.next ?? parsed.pages[page + 1]
+            if next == nil, !parsed.pages.isEmpty {
+                next = HTMLParser.withPage(fetchPath, page: page + 1)
+            }
+            if append {
+                let known = Set(cards.map(\.pathID))
+                let fresh = parsed.cards.filter { !known.contains($0.pathID) }
+                cards += fresh
+                nextPage = fresh.isEmpty ? nil : next
+            } else {
+                cards = parsed.cards
+                nextPage = next
+            }
             currentPage = page
             for (number, href) in parsed.pages { pagePaths[number] = href }
             totalPages = max(totalPages, pagePaths.keys.max() ?? page, page)
@@ -644,8 +675,14 @@ struct CatalogListView: View {
             errorMessage = nil
             if cards.isEmpty { showWeb = true }
         } catch {
-            errorMessage = error.localizedDescription
-            if cards.isEmpty { showWeb = true }
+            if append {
+                // A failed auto-append just ends paging; the pages
+                // already on screen stay usable, no error banner.
+                nextPage = nil
+            } else {
+                errorMessage = error.localizedDescription
+                if cards.isEmpty { showWeb = true }
+            }
         }
     }
 }
