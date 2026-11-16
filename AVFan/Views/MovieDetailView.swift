@@ -487,7 +487,9 @@ struct MovieDetailView: View {
             linkRow("制作商", detail.makers)
             linkRow("发行商", detail.publishers)
             linkRow("导演", detail.directors)
-            linkRow("系列", detail.series)
+            // No series row (owner instruction, build 10): the parser's
+            // series links are collected page-wide and surface unrelated
+            // names (a TMA title showed "Blacked").
         }
         .padding(16)
         .liquidGlassRect(cornerRadius: 18)

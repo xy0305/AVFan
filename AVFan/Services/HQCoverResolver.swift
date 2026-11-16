@@ -38,6 +38,17 @@ actor HQCoverResolver {
         winners = (UserDefaults.standard.dictionary(forKey: Self.winnersKey) as? [String: String]) ?? [:]
     }
 
+    /// Synchronous read of the persisted winner cache. Cover decisions
+    /// are made from this at load time (see PosterImageModel): a winner
+    /// recorded by any earlier probe is used from the first frame in
+    /// every view, so the grid and the detail page agree.
+    nonisolated static func cachedWinner(for code: String?) -> String? {
+        guard let raw = code?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty,
+              let key = DMMLabelPrefixes.numberKey(raw) else { return nil }
+        let persisted = (UserDefaults.standard.dictionary(forKey: winnersKey) as? [String: String]) ?? [:]
+        return persisted[key]
+    }
+
     /// The validated HQ cover URL for a catalog number, or nil when no
     /// source validated (the caller keeps the page cover).
     func winner(for code: String?, pageCover: String?) async -> String? {

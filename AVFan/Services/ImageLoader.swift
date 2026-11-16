@@ -156,8 +156,9 @@ struct HomeAnchoredFill: View {
 final class PosterImageModel: ObservableObject {
     @Published var image: UIImage?
     @Published var failed = false
-    /// The URL whose bitmap is currently shown (page cover, or the validated
-    /// HQ source after an upgrade). Crop policy keys off this, not the request.
+    /// The URL whose bitmap is currently shown (the page cover, or the
+    /// cached HQ winner chosen at load time). Crop policy keys off this,
+    /// not the request.
     @Published var resolvedURL: String?
     private var token = 0
 
@@ -176,26 +177,45 @@ final class PosterImageModel: ObservableObject {
         // Never request more pixels than needed, but keep HQ jackets sharp.
         // Small thumbs stay at their native size (no invented HQ source).
         let cap = allowUpscale ? max(longest, 1200) : min(max(longest, 400), 900)
+
+        // AVDB HQ cover sources (DMM / MGS), on by default. The cover for
+        // a number is decided ONCE, here at load time, from the shared
+        // winner cache: a cached winner is the cover from the first frame
+        // in every view, grid and detail alike. With no winner cached yet
+        // the page cover is shown, and a background probe warms the cache
+        // for the next appearance — it must NOT swap the image when it
+        // finishes. The old swap landed in the detail page (which stays
+        // on screen) but not in the grid cell (whose probe dies with the
+        // cell), so the tapped cover and the detail cover disagreed.
+        var displayURL = url
+        var displayCap = cap
+        if let code, !code.isEmpty, HQCoverResolver.enabled {
+            if let cached = HQCoverResolver.cachedWinner(for: code), cached != url {
+                displayURL = cached
+                displayCap = max(cap, 1200)
+            } else {
+                Task { _ = await HQCoverResolver.shared.winner(for: code, pageCover: url) }
+            }
+        }
+        resolvedURL = displayURL
         Task {
-            let loaded = await ImageLoader.shared.load(url, maxPixelSize: cap)
+            let loaded = await ImageLoader.shared.load(displayURL, maxPixelSize: displayCap)
             guard current == token else { return }
             if let loaded {
                 image = loaded
+            } else if displayURL != url {
+                // The cached winner failed to load; fall back to the
+                // page cover rather than showing nothing.
+                resolvedURL = url
+                let fallback = await ImageLoader.shared.load(url, maxPixelSize: cap)
+                guard current == token else { return }
+                if let fallback {
+                    image = fallback
+                } else {
+                    failed = true
+                }
             } else {
                 failed = true
-            }
-        }
-        // AVDB HQ cover sources (DMM / MGS), on by default: probe in the
-        // background and swap in the validated winner when one exists.
-        if let code, !code.isEmpty, HQCoverResolver.enabled {
-            Task {
-                guard let winner = await HQCoverResolver.shared.winner(for: code, pageCover: url),
-                      winner != url else { return }
-                let upgraded = await ImageLoader.shared.load(winner, maxPixelSize: max(cap, 1200))
-                guard current == token, let upgraded else { return }
-                resolvedURL = winner
-                image = upgraded
-                failed = false
             }
         }
     }
