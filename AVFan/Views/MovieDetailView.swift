@@ -469,12 +469,13 @@ struct MovieDetailView: View {
                     allowUpscale: true,
                     fitWholeImage: pin.wholeImage,
                     actors: [],
-                    pinned: pin
+                    pinned: pin,
+                    paintOnce: true
                 )
             }
-            return CoverImage(url: card.coverURL, code: nil, anchorY: 0.18, allowUpscale: true, fitWholeImage: false, actors: [])
+            return CoverImage(url: card.coverURL, code: nil, anchorY: 0.18, allowUpscale: true, fitWholeImage: false, actors: [], paintOnce: true)
         }
-        return CoverImage(url: detail.coverURL ?? card.coverURL, code: detail.code ?? card.code, anchorY: 0.18, allowUpscale: true, fitWholeImage: true, actors: detail.casts.map(\.name), pinned: frozenPin)
+        return CoverImage(url: detail.coverURL ?? card.coverURL, code: detail.code ?? card.code, anchorY: 0.18, allowUpscale: true, fitWholeImage: true, actors: detail.casts.map(\.name), pinned: frozenPin, paintOnce: true)
     }
 
     private func portraitHero(_ detail: MovieDetail, geometry: DetailPortraitGeometry) -> some View {

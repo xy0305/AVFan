@@ -340,7 +340,27 @@ final class PosterImageModel: ObservableObject {
         image = nil
     }
 
-    func load(url: String?, code: String? = nil, displayPoints: CGSize, allowUpscale: Bool, actors: [String] = [], pinnedURL: String? = nil, probeDisplaysWinner: Bool = false) {
+    /// Longest pixel dimension of a bitmap, for comparing decodes
+    /// of the same file against each other.
+    private func pixelLongest(_ image: UIImage) -> Int {
+        if let cg = image.cgImage { return max(cg.width, cg.height) }
+        return Int(max(image.size.width, image.size.height) * image.scale)
+    }
+
+    /// The single landing point for async decodes (session-store
+    /// write + `show`). Paint-once callers (build 50, detail hero):
+    /// a decode that is not strictly larger than the bitmap
+    /// already on screen must neither repaint it — the small-then-
+    /// sharp swap is the visible hero flicker — nor evict the
+    /// larger bitmap from the session store.
+    private func land(_ loaded: UIImage, from source: String, code: String?, key: String, paintOnce: Bool) {
+        if paintOnce, let current = image,
+           pixelLongest(loaded) <= pixelLongest(current) { return }
+        Self.retained.setObject(loaded, forKey: key as NSString)
+        show(loaded, from: source, code: code)
+    }
+
+    func load(url: String?, code: String? = nil, displayPoints: CGSize, allowUpscale: Bool, actors: [String] = [], pinnedURL: String? = nil, probeDisplaysWinner: Bool = false, paintOnce: Bool = false) {
         token += 1
         let current = token
         let sameMovie = code != nil && code == shownCode && image != nil
@@ -389,15 +409,15 @@ final class PosterImageModel: ObservableObject {
             // back only when `url` is the same file (build 45
             // isSameFile) — never to a winner or a different cover.
             resolvedURL = pinnedURL
-            if !sameMovie, let seeded = Self.retained.object(forKey: pinnedURL as NSString) {
+            if !sameMovie, let seeded = Self.retained.object(forKey: pinnedURL as NSString),
+               !paintOnce || pixelLongest(seeded) >= cap {
                 show(seeded, from: pinnedURL, code: code)
             }
             Task {
                 let loaded = await ImageLoader.shared.load(pinnedURL, maxPixelSize: cap)
                 guard current == token else { return }
                 if let loaded {
-                    Self.retained.setObject(loaded, forKey: pinnedURL as NSString)
-                    show(loaded, from: pinnedURL, code: code)
+                    land(loaded, from: pinnedURL, code: code, key: pinnedURL, paintOnce: paintOnce)
                 } else if CoverURLPolicy.isSameFile(pinnedURL, url), pinnedURL != url {
                     // Fall back only to the same file (build 45
                     // isSameFile) — never a different cover.
@@ -405,8 +425,7 @@ final class PosterImageModel: ObservableObject {
                     let fallback = await ImageLoader.shared.load(url, maxPixelSize: cap)
                     guard current == token else { return }
                     if let fallback {
-                        Self.retained.setObject(fallback, forKey: url as NSString)
-                        show(fallback, from: url, code: code)
+                        land(fallback, from: url, code: code, key: url, paintOnce: paintOnce)
                     } else {
                         failed = true
                     }
@@ -456,15 +475,15 @@ final class PosterImageModel: ObservableObject {
             }
         }
         resolvedURL = displayURL
-        if !sameMovie, let seeded = Self.retained.object(forKey: displayURL as NSString) {
+        if !sameMovie, let seeded = Self.retained.object(forKey: displayURL as NSString),
+           !paintOnce || pixelLongest(seeded) >= displayCap {
             show(seeded, from: displayURL, code: code)
         }
         Task {
             let loaded = await ImageLoader.shared.load(displayURL, maxPixelSize: displayCap)
             guard current == token else { return }
             if let loaded {
-                Self.retained.setObject(loaded, forKey: displayURL as NSString)
-                show(loaded, from: displayURL, code: code)
+                land(loaded, from: displayURL, code: code, key: displayURL, paintOnce: paintOnce)
             } else if displayURL != url {
                 // The cached winner failed to load; fall back to the
                 // page cover rather than showing nothing.
@@ -472,8 +491,7 @@ final class PosterImageModel: ObservableObject {
                 let fallback = await ImageLoader.shared.load(url, maxPixelSize: cap)
                 guard current == token else { return }
                 if let fallback {
-                    Self.retained.setObject(fallback, forKey: url as NSString)
-                    show(fallback, from: url, code: code)
+                    land(fallback, from: url, code: code, key: url, paintOnce: paintOnce)
                 } else {
                     failed = true
                 }
@@ -550,6 +568,11 @@ struct CoverImage: View {
     /// copy — the detail strips freeze it at tap time instead of
     /// consulting the shared registry.
     var onDisplayed: ((DisplayedCoverSnapshot) -> Void)? = nil
+    /// Paint-once surfaces (build 50, detail hero only): never
+    /// paint a session-store bitmap below this view's decode cap,
+    /// and never repaint with a decode that is not larger than
+    /// what is already on screen — the hero paints once, at size.
+    var paintOnce: Bool = false
 
     @StateObject private var model = PosterImageModel()
     @State private var lastURL: String?
@@ -621,7 +644,7 @@ struct CoverImage: View {
         if lastURL != url || lastPinURL != pinned?.url || model.image == nil {
             lastURL = url
             lastPinURL = pinned?.url
-            model.load(url: url, code: code, displayPoints: size, allowUpscale: allowUpscale, actors: actors, pinnedURL: pinned?.url, probeDisplaysWinner: probeDisplaysWinner)
+            model.load(url: url, code: code, displayPoints: size, allowUpscale: allowUpscale, actors: actors, pinnedURL: pinned?.url, probeDisplaysWinner: probeDisplaysWinner, paintOnce: paintOnce)
         }
     }
 
