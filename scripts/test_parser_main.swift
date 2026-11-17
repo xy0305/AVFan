@@ -723,8 +723,8 @@ enum ParserTests {
         let collectionLinks = HTMLParser.collectionLinks(in: collectionsHTML)
         expect(collectionLinks.map(\.name) == ["系列甲", "制作商乙", "导演丙", "发行商丁"],
                "collection links parsed and deduped, got \(collectionLinks.map(\.name))")
-        expect(collectionLinks.map(\.kind) == ["series", "makers", "directors", "labels"],
-               "collection link kinds, got \(collectionLinks.map(\.kind ?? "-"))")
+        expect(collectionLinks.map { $0.kind ?? "-" } == ["series", "makers", "directors", "labels"],
+               "collection link kinds, got \(collectionLinks.map { $0.kind ?? "-" })")
 
         // Cast details fragment rows: table first, then definitions.
         let tableRows = HTMLParser.infoRows(in: "<table><tr><th>生日</th><td>1999-01-01</td></tr><tr><th>身高</th><td>160cm</td></tr></table>")
