@@ -436,29 +436,34 @@ final class PosterImageModel: ObservableObject {
             return
         }
 
-        // AVDB HQ cover sources (DMM / MGS), on by default. The cover for
-        // a number is decided ONCE, here at load time, from the shared
-        // winner cache: a cached winner is the cover from the first frame
-        // in every view, grid and detail alike. With no winner cached yet
-        // the page cover is shown, and a background probe warms the cache
-        // for the next appearance — it must NOT swap the image when it
-        // finishes. The old swap landed in the detail page (which stays
-        // on screen) but not in the grid cell (whose probe dies with the
-        // cell), so the tapped cover and the detail cover disagreed.
+        // AVDB HQ cover sources (DMM / MGS), on by default. The cover
+        // for a number is first decided here at load time, from the
+        // shared winner cache: a cached winner is the cover from the
+        // first frame in every view, grid and detail alike. With no
+        // winner cached yet the page cover shows first, and a
+        // background probe swaps the HQ winner in when it lands
+        // (build 51: swap-in on every surface, not just the rankings
+        // grid — displayedURL follows the swap, so the displayed-
+        // cover registry and the strip snapshots keep a tap pinned
+        // to exactly what is on screen at tap time). Two loads never
+        // swap: pinned ones (the tapped file, handled above) and
+        // paintOnce ones (the detail hero paints its pinned file
+        // once at target size; its probe only warms the cache).
         var displayURL = url
         var displayCap = cap
         if let code, !code.isEmpty, HQCoverResolver.enabled {
             if let cached = HQCoverResolver.cachedWinner(for: code), cached != url {
                 displayURL = cached
                 displayCap = max(cap, 1200)
-            } else if probeDisplaysWinner {
-                // Probe-display mode (build 46, rankings grid only):
-                // the given URL shows first; when the probe finds an
-                // HQ winner, swap it in. This surface's identity is
-                // its code, and the displayed-cover registry
-                // re-records on the swap, so a tap still pins
-                // exactly what is on screen at tap time. Every other
-                // surface keeps the no-swap rule below.
+            } else if probeDisplaysWinner || !paintOnce {
+                // Probe-display mode (build 46 on the rankings grid,
+                // build 51 on every non-paintOnce surface): the given
+                // URL shows first; when the probe finds an HQ winner,
+                // swap it in. This surface's identity is its code,
+                // and the displayed-cover registry re-records on the
+                // swap, so a tap still pins exactly what is on screen
+                // at tap time. paintOnce surfaces (the detail hero)
+                // skip this branch and only warm the cache below.
                 Task {
                     let winner = await HQCoverResolver.shared.winner(for: code, pageCover: url, actors: actors)
                     guard current == token, let winner, !winner.isEmpty, winner != displayURL else { return }
@@ -556,11 +561,12 @@ struct CoverImage: View {
     /// pathID or a code records what it actually displayed.
     var registryPathID: String? = nil
     var registryCode: String? = nil
-    /// Build 46 (rankings grid only): let an HQ probe's winner
-    /// become the displayed cover — immediately when there is no
-    /// URL to show, or as a swap-in when there is. Everywhere else
-    /// the probe only warms the cache and never swaps (build 45's
-    /// identity rule); pinned views ignore this entirely.
+    /// Build 46: let an HQ probe's winner become the displayed
+    /// cover — immediately when there is no URL to show, or as a
+    /// swap-in when there is. Since build 51 every non-paintOnce
+    /// load swaps a winner in anyway; this flag additionally
+    /// covers the no-URL probe-only path. Pinned views ignore
+    /// this entirely, and paintOnce views never swap.
     var probeDisplaysWinner: Bool = false
     /// Build 47 (LOCK-1.3-build47 B): reports the snapshot this
     /// view actually put on screen (same value, same moments as
