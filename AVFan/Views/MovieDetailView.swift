@@ -32,7 +32,12 @@ private struct FilmographyStripCell: View {
             onOpen(StripTarget(card: card, snapshot: displayed ?? Self.unlandedSnapshot(for: card)))
         } label: {
             VStack(alignment: .leading, spacing: 6) {
-                CoverImage(url: card.coverURL, code: card.code, registryPathID: card.pathID, onDisplayed: { displayed = $0 })
+                CoverImage(
+                    url: card.coverURL,
+                    code: card.code,
+                    probeDisplaysWinner: false,
+                    onDisplayed: { displayed = $0 }
+                )
                     .frame(width: 110, height: 165)
                     .clipped()
                     .liquidCover(cornerRadius: AVFanTheme.cardRadius)
@@ -58,40 +63,35 @@ private struct FilmographyStripCell: View {
 
 struct MovieDetailView: View {
     let card: MovieCard
-    /// The cover snapshot captured ONCE, here at creation, from the
-    /// displayed-cover registry (build 45, LOCK-1.3-build45 B): the
-    /// exact file and presentation the tapped surface was showing.
-    /// Falls back to the card's own cover (front window) when no
-    /// surface recorded one. Never re-read during the visit, so a
-    /// probe finishing or a cell remounting elsewhere cannot change
-    /// this visit's hero. Strip entries (build 47) do NOT use this:
-    /// they carry their own snapshot, frozen in `frozenStripPin`.
-    let entryPin: DisplayedCoverSnapshot?
     /// True when this view was opened from an also-starred /
     /// related-works strip with an explicit snapshot (build 47).
+    /// That path never consults DisplayedCoverRegistry.
     let isStripEntry: Bool
 
     init(card: MovieCard) {
         self.card = card
         self.isStripEntry = false
+        let pin: DisplayedCoverSnapshot?
         if let hit = DisplayedCoverRegistry.shared.snapshot(pathID: card.pathID, code: card.code) {
-            self.entryPin = hit
+            pin = hit
         } else if let cover = card.coverURL, !cover.isEmpty {
-            self.entryPin = DisplayedCoverSnapshot(url: cover, wholeImage: false, anchorY: 0.18)
+            pin = DisplayedCoverSnapshot(url: cover, wholeImage: false, anchorY: 0.18)
         } else {
-            self.entryPin = nil
+            pin = nil
         }
+        // Freeze the init-time pin in @State so a destination
+        // rebuild cannot re-read the registry mid-visit.
+        _frozenPin = State(initialValue: pin)
     }
 
-    /// Strip entry (build 47, LOCK-1.3-build47 B12/B13): the
+    /// Strip entry (build 47/48, LOCK-1.3-build47 B12/B13): the
     /// registry is never consulted on this path — not by pathID,
     /// not by code. The tapped cell's snapshot is frozen into
     /// @State here, once, and the whole visit honors only it.
     init(stripTarget: StripTarget) {
         self.card = stripTarget.card
-        self.entryPin = nil
         self.isStripEntry = true
-        _frozenStripPin = State(initialValue: stripTarget.snapshot)
+        _frozenPin = State(initialValue: stripTarget.snapshot)
     }
 
     @EnvironmentObject private var settings: AppSettings
@@ -135,9 +135,10 @@ struct MovieDetailView: View {
     /// navigate via StripTarget, carrying the tapped cell's own
     /// displayed-cover snapshot).
     @State private var stripTarget: StripTarget?
-    /// The strip snapshot frozen at entry (build 47); only set on
-    /// the strip-entry path, via init(stripTarget:).
-    @State private var frozenStripPin: DisplayedCoverSnapshot?
+    /// Cover pin frozen at creation for the whole stay. Strip
+    /// entries use the cell snapshot; other entries use the
+    /// registry (or the card cover) captured once at init.
+    @State private var frozenPin: DisplayedCoverSnapshot?
     @State private var comments: [MovieComment] = []
     @State private var commentsFallback: String?
     /// Cursor for the comments load-more (sort_by/last_value/last_id),
@@ -442,13 +443,29 @@ struct MovieDetailView: View {
     /// window, and nothing else.
     private func heroCover(_ detail: MovieDetail) -> CoverImage {
         if isStripEntry {
-            if let pin = frozenStripPin {
-                let fallback = (card.coverURL == pin.url) ? card.coverURL : pin.url
-                return CoverImage(url: fallback, code: detail.code ?? card.code, anchorY: pin.anchorY, allowUpscale: true, fitWholeImage: false, actors: detail.casts.map(\.name), pinned: pin)
+            if let pin = frozenPin {
+                // Failure fallback is only the same-file card cover
+                // (build 45 isSameFile). A different file must not
+                // replace the pin; ImageLoader also enforces this.
+                let fallback: String?
+                if CoverURLPolicy.isSameFile(pin.url, card.coverURL) {
+                    fallback = card.coverURL
+                } else {
+                    fallback = pin.url
+                }
+                return CoverImage(
+                    url: fallback,
+                    code: nil,
+                    anchorY: pin.anchorY,
+                    allowUpscale: true,
+                    fitWholeImage: pin.wholeImage,
+                    actors: [],
+                    pinned: pin
+                )
             }
-            return CoverImage(url: card.coverURL, code: nil, anchorY: 0.18, allowUpscale: true, fitWholeImage: false, actors: detail.casts.map(\.name))
+            return CoverImage(url: card.coverURL, code: nil, anchorY: 0.18, allowUpscale: true, fitWholeImage: false, actors: [])
         }
-        return CoverImage(url: detail.coverURL ?? card.coverURL, code: detail.code ?? card.code, anchorY: 0.18, allowUpscale: true, fitWholeImage: true, actors: detail.casts.map(\.name), pinned: entryPin)
+        return CoverImage(url: detail.coverURL ?? card.coverURL, code: detail.code ?? card.code, anchorY: 0.18, allowUpscale: true, fitWholeImage: true, actors: detail.casts.map(\.name), pinned: frozenPin)
     }
 
     private func portraitHero(_ detail: MovieDetail, geometry: DetailPortraitGeometry) -> some View {

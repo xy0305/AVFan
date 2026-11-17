@@ -123,6 +123,43 @@ enum CoverURLPolicy {
         URL(string: value)?.host?.lowercased() ?? ""
     }
 
+    /// Build 45 “same file”: the same artwork URL, or a higher-resolution
+    /// fetch of that same file (pics.dmm.co.jp ↔ awsimgsrc.dmm.co.jp with
+    /// the same path and the same ps/pl kind). A ps portrait and a pl
+    /// jacket are different files. Different avfan cover hashes are
+    /// different files.
+    static func isSameFile(_ a: String?, _ b: String?) -> Bool {
+        guard let a, !a.isEmpty, let b, !b.isEmpty else { return false }
+        if a == b { return true }
+        guard let ia = fileIdentity(a), let ib = fileIdentity(b) else { return false }
+        return ia == ib
+    }
+
+    /// Normalized identity for “is this the same artwork file?”.
+    static func fileIdentity(_ urlString: String) -> String? {
+        let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        var value = trimmed
+        if value.hasPrefix("//") { value = "https:" + value }
+        guard let url = URL(string: value), let host = url.host?.lowercased() else {
+            return value.lowercased()
+        }
+        var path = url.path
+        if path.count > 1, path.hasSuffix("/") {
+            path.removeLast()
+        }
+        let family: String
+        if host == "pics.dmm.co.jp" || host == "awsimgsrc.dmm.co.jp" {
+            family = "dmm"
+            if host == "awsimgsrc.dmm.co.jp", path.hasPrefix("/pics_dig") {
+                path = String(path.dropFirst("/pics_dig".count))
+            }
+        } else {
+            family = host
+        }
+        return family + ":" + path.lowercased()
+    }
+
     private static func uniqued(_ values: [String]) -> [String] {
         var seen = Set<String>()
         var out: [String] = []

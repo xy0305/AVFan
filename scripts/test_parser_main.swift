@@ -968,6 +968,21 @@ enum ParserTests {
         expect(HTMLParser.canonicalPathID(in: "<html><head><title>x</title></head>") == nil,
                "no canonical link, no id")
 
+        // Build 47/48: same-file identity (build 45 definition).
+        let picsPL = "https://pics.dmm.co.jp/digital/video/abc00001/abc00001pl.jpg"
+        let awsPL = "https://awsimgsrc.dmm.co.jp/pics_dig/digital/video/abc00001/abc00001pl.jpg"
+        let awsPS = "https://awsimgsrc.dmm.co.jp/pics_dig/digital/video/abc00001/abc00001ps.jpg"
+        let avfanA = "https://c1.avfan.com/covers/np/NPlstW.jpg"
+        let avfanB = "https://c1.avfan.com/covers/io/IoD5hv.jpg"
+        expect(CoverURLPolicy.isSameFile(picsPL, picsPL), "identical URLs are the same file")
+        expect(CoverURLPolicy.isSameFile(picsPL, awsPL), "pics.dmm pl and awsimgsrc pl are the same file")
+        expect(CoverURLPolicy.isSameFile(awsPL, picsPL), "same-file check is symmetric")
+        expect(!CoverURLPolicy.isSameFile(awsPS, awsPL), "ps portrait and pl jacket are different files")
+        expect(!CoverURLPolicy.isSameFile(avfanA, avfanB), "different avfan cover hashes are different files")
+        expect(!CoverURLPolicy.isSameFile(avfanA, picsPL), "avfan cover and DMM jacket are different files")
+        expect(!CoverURLPolicy.isSameFile(nil, picsPL), "nil is not the same file")
+        expect(!CoverURLPolicy.isSameFile("", picsPL), "empty URL is not the same file")
+
         // Build 31: hot searches come from the site's
         // /hot_searches JSON ({keywords: [...]}) — the panel
         // renders them client-side; they are in no page's HTML.
@@ -978,7 +993,7 @@ enum ParserTests {
         expect(HTMLParser.hotSearchKeywords(["other": 1]).isEmpty, "missing keywords key, no keywords")
 
 
-        print("PASS: home, detail magnets, ranking merge, hot casts, HQ cover sources, empty shell, block detection, cover policy, login signals, ranking tabs, pagination, news, series, detail cover identity, page map, cast cards, prefix links, filter form, homepage panel, auto-next, home main list, movie toolbar, tab hygiene, tab locale guard, drawer shortcuts, poster quality, javbus, tenhow, amazon, avbase catalogue, trailer and stills, library sync parsing, cast profile, comments sanitize, related lists, preview whitelist, filmography, real list fragments, number prefix, avfan trailer preference, hot searches, strip splice guard, real-page strip triples, canonical identity")
+        print("PASS: home, detail magnets, ranking merge, hot casts, HQ cover sources, empty shell, block detection, cover policy, login signals, ranking tabs, pagination, news, series, detail cover identity, page map, cast cards, prefix links, filter form, homepage panel, auto-next, home main list, movie toolbar, tab hygiene, tab locale guard, drawer shortcuts, poster quality, javbus, tenhow, amazon, avbase catalogue, trailer and stills, library sync parsing, cast profile, comments sanitize, related lists, preview whitelist, filmography, real list fragments, number prefix, avfan trailer preference, hot searches, strip splice guard, real-page strip triples, canonical identity, same-file identity")
     }
 }
 

@@ -295,8 +295,14 @@ final class PosterImageModel: ObservableObject {
     @Published var failed = false
     /// The URL whose bitmap is currently shown (the page cover, or the
     /// cached HQ winner chosen at load time). Crop policy keys off this,
-    /// not the request.
+    /// not the request. This may move to a probe/HQ target *before* the
+    /// matching bitmap has been assigned.
     @Published var resolvedURL: String?
+    /// The URL that produced the bitmap currently in `image`. Assigned
+    /// only in the same places `image` is assigned (build 48 / LOCK
+    /// 1.3-build47 B10), never when a load merely picks a new target.
+    /// Cover surfaces snapshot this, not a leading `resolvedURL`.
+    private(set) var displayedURL: String?
     private var token = 0
     /// Code of the movie whose bitmap is currently on screen.
     /// A reload for the SAME movie (grid cover → detail cover)
@@ -317,11 +323,22 @@ final class PosterImageModel: ObservableObject {
     /// image, no visible change).
     private static let retained = NSCache<NSString, UIImage>()
 
+    private func show(_ loaded: UIImage, from source: String, code: String?) {
+        displayedURL = source
+        image = loaded
+        shownCode = code
+    }
+
+    private func clearShownImage() {
+        displayedURL = nil
+        image = nil
+    }
+
     func load(url: String?, code: String? = nil, displayPoints: CGSize, allowUpscale: Bool, actors: [String] = [], pinnedURL: String? = nil, probeDisplaysWinner: Bool = false) {
         token += 1
         let current = token
         let sameMovie = code != nil && code == shownCode && image != nil
-        if !sameMovie { image = nil }
+        if !sameMovie { clearShownImage() }
         failed = false
         resolvedURL = url
         let scale = UIScreen.main.scale
@@ -345,8 +362,7 @@ final class PosterImageModel: ObservableObject {
                     guard current == token else { return }
                     if let loaded {
                         Self.retained.setObject(loaded, forKey: winner as NSString)
-                        image = loaded
-                        shownCode = code
+                        show(loaded, from: winner, code: code)
                     } else {
                         failed = true
                     }
@@ -364,28 +380,27 @@ final class PosterImageModel: ObservableObject {
             // The fetch still runs at this view's pixel cap, so the
             // SAME file may arrive sharper; a different file may not
             // arrive at all. If the pinned file itself fails, fall
-            // back to the page cover (usually the same file) — never
-            // to a winner.
+            // back only when `url` is the same file (build 45
+            // isSameFile) — never to a winner or a different cover.
             resolvedURL = pinnedURL
             if !sameMovie, let seeded = Self.retained.object(forKey: pinnedURL as NSString) {
-                image = seeded
-                shownCode = code
+                show(seeded, from: pinnedURL, code: code)
             }
             Task {
                 let loaded = await ImageLoader.shared.load(pinnedURL, maxPixelSize: cap)
                 guard current == token else { return }
                 if let loaded {
                     Self.retained.setObject(loaded, forKey: pinnedURL as NSString)
-                    image = loaded
-                    shownCode = code
-                } else if pinnedURL != url {
+                    show(loaded, from: pinnedURL, code: code)
+                } else if let url, CoverURLPolicy.isSameFile(pinnedURL, url), pinnedURL != url {
+                    // Fall back only to the same file (build 45
+                    // isSameFile) — never a different cover.
                     resolvedURL = url
                     let fallback = await ImageLoader.shared.load(url, maxPixelSize: cap)
                     guard current == token else { return }
                     if let fallback {
                         Self.retained.setObject(fallback, forKey: url as NSString)
-                        image = fallback
-                        shownCode = code
+                        show(fallback, from: url, code: code)
                     } else {
                         failed = true
                     }
@@ -427,8 +442,7 @@ final class PosterImageModel: ObservableObject {
                     guard current == token else { return }
                     if let loaded {
                         Self.retained.setObject(loaded, forKey: winner as NSString)
-                        image = loaded
-                        shownCode = code
+                        show(loaded, from: winner, code: code)
                     }
                 }
             } else {
@@ -437,16 +451,14 @@ final class PosterImageModel: ObservableObject {
         }
         resolvedURL = displayURL
         if !sameMovie, let seeded = Self.retained.object(forKey: displayURL as NSString) {
-            image = seeded
-            shownCode = code
+            show(seeded, from: displayURL, code: code)
         }
         Task {
             let loaded = await ImageLoader.shared.load(displayURL, maxPixelSize: displayCap)
             guard current == token else { return }
             if let loaded {
                 Self.retained.setObject(loaded, forKey: displayURL as NSString)
-                image = loaded
-                shownCode = code
+                show(loaded, from: displayURL, code: code)
             } else if displayURL != url {
                 // The cached winner failed to load; fall back to the
                 // page cover rather than showing nothing.
@@ -455,8 +467,7 @@ final class PosterImageModel: ObservableObject {
                 guard current == token else { return }
                 if let fallback {
                     Self.retained.setObject(fallback, forKey: url as NSString)
-                    image = fallback
-                    shownCode = code
+                    show(fallback, from: url, code: code)
                 } else {
                     failed = true
                 }
@@ -543,10 +554,10 @@ struct CoverImage: View {
             ZStack {
                 placeholder
                 if let image = model.image {
-                    if (pinned?.wholeImage ?? fitWholeImage), Self.shouldShowWhole(image: image, source: model.resolvedURL ?? url) {
+                    if (pinned?.wholeImage ?? fitWholeImage), Self.shouldShowWhole(image: image, source: displayedSource) {
                         NativeFitImage(image: image, size: proxy.size)
                     } else {
-                        HomeAnchoredFill(image: image, size: proxy.size, source: model.resolvedURL ?? url,
+                        HomeAnchoredFill(image: image, size: proxy.size, source: displayedSource,
                                          anchorY: pinned?.anchorY ?? anchorY, allowUpscale: allowUpscale)
                     }
                 } else if !model.failed {
@@ -555,32 +566,36 @@ struct CoverImage: View {
             }
             .onAppear {
                 reload(size: proxy.size)
-                // A bitmap seeded synchronously from the retained
-                // store is already on screen at this point and may
-                // never pass through the onChange below — report
-                // the displayed snapshot here as well (build 47).
-                if pinned == nil, let image = model.image, let shown = model.resolvedURL {
-                    let whole = fitWholeImage && Self.shouldShowWhole(image: image, source: shown)
-                    onDisplayed?(DisplayedCoverSnapshot(url: shown, wholeImage: whole, anchorY: anchorY))
+                if let image = model.image {
+                    emitDisplayed(image)
                 }
             }
             .onChange(of: url) { _, _ in reload(size: proxy.size) }
             .onChange(of: model.image) { _, newImage in
-                // Record what this surface ACTUALLY displays (the
-                // resolved URL and the presentation branch taken),
-                // so a tap can snapshot it. Pinned views never
-                // record — they display another surface's snapshot.
-                guard let newImage, pinned == nil else { return }
-                guard let shown = model.resolvedURL else { return }
-                let whole = fitWholeImage && Self.shouldShowWhole(image: newImage, source: shown)
-                let snapshot = DisplayedCoverSnapshot(url: shown, wholeImage: whole, anchorY: anchorY)
-                let recordCode = registryCode ?? code
-                if registryPathID != nil || recordCode != nil {
-                    DisplayedCoverRegistry.shared.record(
-                        pathID: registryPathID, code: recordCode, snapshot: snapshot)
-                }
-                onDisplayed?(snapshot)
+                guard let newImage else { return }
+                emitDisplayed(newImage)
             }
+        }
+    }
+
+    /// The URL of the bitmap already painted — never a leading probe
+    /// or HQ target that has not yet been assigned to `image`.
+    private var displayedSource: String? {
+        model.displayedURL ?? model.resolvedURL ?? url
+    }
+
+    private func emitDisplayed(_ image: UIImage) {
+        guard let shown = model.displayedURL else { return }
+        let whole = (pinned?.wholeImage ?? fitWholeImage) && Self.shouldShowWhole(image: image, source: shown)
+        let snapshot = DisplayedCoverSnapshot(url: shown, wholeImage: whole, anchorY: pinned?.anchorY ?? anchorY)
+        onDisplayed?(snapshot)
+        // Registry writes only when the caller opted in with
+        // registryPathID / registryCode. `code` alone is the HQ
+        // lookup key and must not record a 番号 from strip cells.
+        guard pinned == nil else { return }
+        if registryPathID != nil || registryCode != nil {
+            DisplayedCoverRegistry.shared.record(
+                pathID: registryPathID, code: registryCode ?? code, snapshot: snapshot)
         }
     }
 
