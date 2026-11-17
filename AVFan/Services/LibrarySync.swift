@@ -38,15 +38,20 @@ enum LibrarySync {
         if status == 401 || status == 403 {
             return Outcome(success: false, message: "请先登录 avfan 账号", needsLogin: true)
         }
-        let success = (json?["success"] as? Bool) ?? (200..<300).contains(status)
+        guard let json else {
+            // No JSON at all: a 2xx here is the sign-in page after
+            // a redirect — the write did NOT land.
+            return Outcome(success: false, message: "服务器未确认（登录可能已失效）", needsLogin: (200..<300).contains(status))
+        }
+        let success = (json["success"] as? Bool) == true
         var reviewID: String?
-        if let number = json?["id"] as? NSNumber { reviewID = number.stringValue }
-        if let text = json?["id"] as? String { reviewID = text }
+        if let number = json["id"] as? NSNumber { reviewID = number.stringValue }
+        if let text = json["id"] as? String { reviewID = text }
         return Outcome(
             success: success,
-            message: json?["message"] as? String,
-            removeURL: json?["remove_url"] as? String,
-            listFragment: json?["list"] as? String,
+            message: json["message"] as? String ?? (success ? nil : "服务器未确认"),
+            removeURL: json["remove_url"] as? String,
+            listFragment: json["list"] as? String,
             reviewID: reviewID
         )
     }
@@ -63,29 +68,10 @@ enum LibrarySync {
                 method: "POST", url: endpoint, csrf: csrf,
                 body: ["model": model ?? "", "model_id": modelID ?? ""]
             )
-            return modelOutcome(status: status, json: json)
+            return outcome(status: status, json: json)
         } catch {
             return Outcome(success: false, message: "同步失败：\(error.localizedDescription)")
         }
-    }
-
-    /// Success for a model action means what the site's own JS
-    /// means: the JSON says success == true. A 2xx with no JSON
-    /// is the sign-in page after a redirect — the write did NOT
-    /// land (build 34: list collects claimed success in the app
-    /// while the account never recorded them).
-    private static func modelOutcome(status: Int, json: [String: Any]?) -> Outcome {
-        if status == 401 || status == 403 {
-            return Outcome(success: false, message: "请先登录 avfan 账号", needsLogin: true)
-        }
-        guard let json else {
-            return Outcome(success: false, message: "服务器未确认（登录可能已失效）", needsLogin: (200..<300).contains(status))
-        }
-        let ok = (json["success"] as? Bool) == true
-        return Outcome(
-            success: ok,
-            message: json["message"] as? String ?? (ok ? nil : "服务器未确认收藏")
-        )
     }
 
     /// The undo of a model action （取消关注/取消收藏）: DELETE the
@@ -99,7 +85,7 @@ enum LibrarySync {
             let (status, json) = try await SiteClient.shared.jsonRequest(
                 method: "DELETE", url: endpoint, csrf: csrf, body: nil
             )
-            return modelOutcome(status: status, json: json)
+            return outcome(status: status, json: json)
         } catch {
             return Outcome(success: false, message: "同步失败：\(error.localizedDescription)")
         }

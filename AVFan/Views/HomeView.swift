@@ -480,10 +480,18 @@ private struct HomeHeroCarousel: View {
         idx == index ? 1 : (abs(idx - index) == 1 && (dragX != 0 || dragY != 0) ? 1 : 0)
     }
 
+    /// Prefetch the next two hero covers' bytes (build 35) so a
+    /// swipe lands on a local image instead of a download.
+    private func warmNeighbours() {
+        let upcoming = (1...2).compactMap { movies[safe: index + $0] }
+        CoverPrefetch.warm(cards: upcoming)
+    }
+
     private func page(by delta: Int, horizontal: Bool) {
         lastDragAt = Date()
         lastPageCommitAt = Date()
         let next = min(max(index + delta, 0), movies.count - 1)
+        defer { warmNeighbours() }
         withAnimation(.spring(response: HeroSwipePolicy.pageSpringResponse,
                               dampingFraction: HeroSwipePolicy.pageSpringDamping)) {
             index = next
@@ -638,6 +646,10 @@ final class HomeViewModel: ObservableObject {
             }
             page = parsed.page
             listCards = parsed.page.listCards
+            // Warm the disk cache with the home feed's covers
+            // (build 35): rails and the main list then decode
+            // from local bytes as they scroll into view.
+            CoverPrefetch.warm(cards: parsed.page.allCards)
             filterForm = parsed.form
             selections = parsed.form?.defaultSelections ?? [:]
             activeListPath = nil
@@ -922,6 +934,7 @@ struct CatalogListView: View {
                  next: HTMLParser.autoNextPath(in: html, page: page, path: fetchPath),
                  collect: HTMLParser.listCollectState(in: html))
             }
+            CoverPrefetch.warm(cards: parsed.cards)
             if append {
                 let known = Set(cards.map(\.pathID))
                 let fresh = parsed.cards.filter { !known.contains($0.pathID) }

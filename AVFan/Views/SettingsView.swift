@@ -6,6 +6,8 @@ struct SettingsView: View {
     @EnvironmentObject private var session: SiteSession
     @State private var showSiteLogin = false
     @State private var cleared = false
+    @State private var imageCleared = false
+    @State private var imageCacheSize = "计算中…"
     @State private var signingOut = false
 
     var body: some View {
@@ -83,6 +85,14 @@ struct SettingsView: View {
                         cleared = true
                     }
                 }
+                LabeledContent("图片缓存", value: imageCacheSize)
+                Button(imageCleared ? "图片缓存已清除" : "清除图片缓存") {
+                    Task {
+                        await ImageDiskCache.shared.clear()
+                        imageCleared = true
+                        imageCacheSize = "0 KB"
+                    }
+                }
             }
 
             Section("关于") {
@@ -93,6 +103,10 @@ struct SettingsView: View {
             }
         }
         .scrollContentBackground(.hidden)
+        .task {
+            let bytes = await ImageDiskCache.shared.totalSize()
+            imageCacheSize = ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+        }
         .background(AVFanTheme.pageBackground)
         .liquidGlassList()
         .navigationTitle("设置")

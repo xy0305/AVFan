@@ -1,6 +1,85 @@
 import SwiftUI
 import UIKit
 import ImageIO
+import CryptoKit
+
+/// Persistent disk cache for cover image DATA (build 35).
+/// The in-memory NSCache of decoded bitmaps dies with the app,
+/// and URLSession's own cache is small and header-dependent —
+/// so every cold launch used to re-download every cover,
+/// HD originals included. Here the downloaded bytes are kept
+/// as-is in the system Caches directory (purgeable by iOS),
+/// keyed by a hash of the URL, LRU-evicted past a size cap.
+/// Repeat views — hero, detail and grid thumbnails alike —
+/// decode from local bytes at whatever pixel cap the caller
+/// asks for, with no network round trip.
+actor ImageDiskCache {
+    static let shared = ImageDiskCache()
+
+    private let directory: URL
+    private let maxBytes: Int64 = 250 * 1024 * 1024
+
+    private init() {
+        let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        directory = base.appendingPathComponent("AVFanImageCache", isDirectory: true)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    }
+
+    private func fileURL(for urlString: String) -> URL {
+        let digest = SHA256.hash(data: Data(urlString.utf8))
+        let name = digest.map { String(format: "%02x", $0) }.joined()
+        return directory.appendingPathComponent(name + ".img")
+    }
+
+    func data(for urlString: String) -> Data? {
+        let url = fileURL(for: urlString)
+        guard let data = try? Data(contentsOf: url), !data.isEmpty else { return nil }
+        // Touch so LRU eviction keeps what is actually being viewed.
+        try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: url.path)
+        return data
+    }
+
+    func store(_ data: Data, for urlString: String) {
+        guard !data.isEmpty else { return }
+        try? data.write(to: fileURL(for: urlString), options: [.atomic])
+        evictIfNeeded()
+    }
+
+    func contains(_ urlString: String) -> Bool {
+        FileManager.default.fileExists(atPath: fileURL(for: urlString).path)
+    }
+
+    func totalSize() -> Int64 {
+        files().reduce(0) { $0 + $1.size }
+    }
+
+    func clear() {
+        for file in files() { try? FileManager.default.removeItem(at: file.url) }
+    }
+
+    private func files() -> [(url: URL, size: Int64, modified: Date)] {
+        let keys: [URLResourceKey] = [.fileSizeKey, .contentModificationDateKey]
+        let urls = (try? FileManager.default.contentsOfDirectory(
+            at: directory, includingPropertiesForKeys: keys)) ?? []
+        return urls.map { url in
+            let values = try? url.resourceValues(forKeys: Set(keys))
+            return (url, Int64(values?.fileSize ?? 0),
+                    values?.contentModificationDate ?? .distantPast)
+        }
+    }
+
+    private func evictIfNeeded() {
+        var all = files()
+        var total = all.reduce(0) { $0 + $1.size }
+        guard total > maxBytes else { return }
+        all.sort { $0.modified < $1.modified }
+        for file in all {
+            if total <= maxBytes { break }
+            try? FileManager.default.removeItem(at: file.url)
+            total -= file.size
+        }
+    }
+}
 
 /// Loads the original decoded bitmap. Crop is applied at display time
 /// (`HeroFrontWindow` / `HomeAnchoredFill`), never pre-baked into a new raster.
@@ -22,6 +101,9 @@ actor ImageLoader {
         if let existing = inFlight[key as String] { return await existing.value }
 
         let task = Task<UIImage?, Never> {
+            if let data = await ImageDiskCache.shared.data(for: urlString) {
+                return downsample(data, maxPixelSize: maxPixelSize)
+            }
             var request = URLRequest(url: url, timeoutInterval: timeout)
             request.setValue(SiteClient.mobileSafariUA, forHTTPHeaderField: "User-Agent")
             request.setValue("https://avfan.com/", forHTTPHeaderField: "Referer")
@@ -30,6 +112,7 @@ actor ImageLoader {
                 let (data, response) = try await URLSession.shared.data(for: request)
                 let status = (response as? HTTPURLResponse)?.statusCode ?? 0
                 guard (200..<400).contains(status), !data.isEmpty else { return nil }
+                await ImageDiskCache.shared.store(data, for: urlString)
                 return downsample(data, maxPixelSize: maxPixelSize)
             } catch {
                 return nil
@@ -42,6 +125,16 @@ actor ImageLoader {
             cache.setObject(image, forKey: key, cost: pixelCost(image))
         }
         return image
+    }
+
+    /// Prefetch the BYTES for a URL into the disk cache without
+    /// decoding anything (build 35). When the view that shows the
+    /// image appears, its load() decodes from local bytes at the
+    /// size it needs — the network wait is already gone.
+    func warm(_ urlString: String?) async {
+        guard let urlString, !urlString.isEmpty, URL(string: urlString) != nil else { return }
+        if await ImageDiskCache.shared.contains(urlString) { return }
+        _ = await load(urlString, maxPixelSize: 64)
     }
 
     private func pixelCost(_ image: UIImage) -> Int {
@@ -322,5 +415,22 @@ struct CoverImage: View {
                 Image(systemName: "photo")
                     .foregroundStyle(.secondary)
             }
+    }
+}
+
+/// Warms the disk cache with the covers a list of cards will
+/// display (build 35): the cached HQ winner when one is known,
+/// otherwise the page cover. Serial and quiet — bytes land
+/// before the user scrolls to them, and ImageLoader dedups
+/// against loads already in flight.
+enum CoverPrefetch {
+    static func warm(cards: [MovieCard]) {
+        guard !cards.isEmpty else { return }
+        Task {
+            for card in cards {
+                let winner = card.code.flatMap { HQCoverResolver.cachedWinner(for: $0) }
+                await ImageLoader.shared.warm(winner ?? card.coverURL)
+            }
+        }
     }
 }
