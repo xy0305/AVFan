@@ -23,6 +23,17 @@ enum LibrarySync {
         return SiteClient.shared.catalogURL(path: path)
     }
 
+    /// Bridge the WebView cookie store into the shared store
+    /// before every account write (build 34). The login lives in
+    /// WKWebsiteDataStore, which persists across launches; the
+    /// shared store's session cookies do not — after a relaunch
+    /// the page fetches can look signed in (cached or WebView
+    /// HTML) while these POSTs go out as a guest, get bounced to
+    /// the sign-in page, and record nothing on the account.
+    private static func prepare() async {
+        await CookieBridge.exportWebKitToShared()
+    }
+
     private static func outcome(status: Int, json: [String: Any]?) -> Outcome {
         if status == 401 || status == 403 {
             return Outcome(success: false, message: "请先登录 avfan 账号", needsLogin: true)
@@ -43,6 +54,7 @@ enum LibrarySync {
     /// A model action （关注/收藏）: POST {model, model_id} to the
     /// button's own data-url, exactly like the site's model controller.
     static func modelAction(url: String, model: String?, modelID: String?, csrf: String?) async -> Outcome {
+        await prepare()
         guard let endpoint = resolve(url) else {
             return Outcome(success: false, message: "页面没有给出同步地址")
         }
@@ -51,15 +63,35 @@ enum LibrarySync {
                 method: "POST", url: endpoint, csrf: csrf,
                 body: ["model": model ?? "", "model_id": modelID ?? ""]
             )
-            return outcome(status: status, json: json)
+            return modelOutcome(status: status, json: json)
         } catch {
             return Outcome(success: false, message: "同步失败：\(error.localizedDescription)")
         }
     }
 
+    /// Success for a model action means what the site's own JS
+    /// means: the JSON says success == true. A 2xx with no JSON
+    /// is the sign-in page after a redirect — the write did NOT
+    /// land (build 34: list collects claimed success in the app
+    /// while the account never recorded them).
+    private static func modelOutcome(status: Int, json: [String: Any]?) -> Outcome {
+        if status == 401 || status == 403 {
+            return Outcome(success: false, message: "请先登录 avfan 账号", needsLogin: true)
+        }
+        guard let json else {
+            return Outcome(success: false, message: "服务器未确认（登录可能已失效）", needsLogin: (200..<300).contains(status))
+        }
+        let ok = (json["success"] as? Bool) == true
+        return Outcome(
+            success: ok,
+            message: json["message"] as? String ?? (ok ? nil : "服务器未确认收藏")
+        )
+    }
+
     /// The undo of a model action （取消关注/取消收藏）: DELETE the
     /// button's data-url.
     static func modelUndo(url: String, csrf: String?) async -> Outcome {
+        await prepare()
         guard let endpoint = resolve(url) else {
             return Outcome(success: false, message: "页面没有给出同步地址")
         }
@@ -67,7 +99,7 @@ enum LibrarySync {
             let (status, json) = try await SiteClient.shared.jsonRequest(
                 method: "DELETE", url: endpoint, csrf: csrf, body: nil
             )
-            return outcome(status: status, json: json)
+            return modelOutcome(status: status, json: json)
         } catch {
             return Outcome(success: false, message: "同步失败：\(error.localizedDescription)")
         }
@@ -76,6 +108,7 @@ enum LibrarySync {
     /// Post a cast short review: POST {cast_id, score, body} to the
     /// review element's data-create-url (a score is required).
     static func createCastReview(url: String, castSqid: String, score: Int, body: String, csrf: String?) async -> Outcome {
+        await prepare()
         guard let endpoint = resolve(url) else {
             return Outcome(success: false, message: "页面没有给出同步地址")
         }
@@ -93,6 +126,7 @@ enum LibrarySync {
     /// Mark the movie 想看 or 看过 (the site's createReview call; it
     /// also switches an existing review to the other status).
     static func setReview(url: String, actionType: String, csrf: String?) async -> Outcome {
+        await prepare()
         guard let endpoint = resolve(url) else {
             return Outcome(success: false, message: "页面没有给出同步地址")
         }
@@ -109,6 +143,7 @@ enum LibrarySync {
 
     /// Remove the movie's review entirely (the site's removeReview).
     static func removeReview(url: String, csrf: String?) async -> Outcome {
+        await prepare()
         guard let endpoint = resolve(url) else {
             return Outcome(success: false, message: "页面没有给出同步地址")
         }
@@ -126,6 +161,7 @@ enum LibrarySync {
     /// "lists" field is an HTML fragment; further pages append the
     /// same way the site's infinite scroll does.
     static func fetchListOptions(listsURL: String, csrf: String?) async -> [SyncListOption] {
+        await prepare()
         var options: [SyncListOption] = []
         var page = 1
         while page <= 5 {
@@ -150,6 +186,7 @@ enum LibrarySync {
     /// Toggle this movie's membership in one list (the site's
     /// toggleList call: same POST adds or removes).
     static func toggleList(changeURL: String, listID: String, csrf: String?) async -> Outcome {
+        await prepare()
         guard let endpoint = resolve(changeURL) else {
             return Outcome(success: false, message: "页面没有给出同步地址")
         }
@@ -166,6 +203,7 @@ enum LibrarySync {
 
     /// Create a new list (the site's saveList call in "new" mode).
     static func createList(url: String, mode: String, name: String, csrf: String?) async -> Outcome {
+        await prepare()
         guard let endpoint = resolve(url) else {
             return Outcome(success: false, message: "页面没有给出同步地址")
         }

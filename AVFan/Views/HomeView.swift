@@ -876,8 +876,17 @@ struct CatalogListView: View {
             outcome = await LibrarySync.modelAction(url: url, model: state.modelName, modelID: state.modelID, csrf: state.csrfToken)
         }
         if outcome.success {
-            collectedOverride = !isOn
-            showToast(isOn ? "已取消收藏" : "已收藏到账号")
+            // Verify against the server before claiming anything
+            // (build 34): reload the list page and adopt ITS
+            // collect state. A write the account did not record
+            // must not toast success or flip the button.
+            let target = !isOn
+            await loadPage(activePath.isEmpty ? path : activePath, page: 1)
+            if let now = collectState, now.isCollected == target {
+                showToast(target ? "已收藏到账号" : "已取消收藏")
+            } else {
+                showToast("未同步到账号，请稍后再试")
+            }
         } else if outcome.needsLogin {
             showLogin = true
         } else {
