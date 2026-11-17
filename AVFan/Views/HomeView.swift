@@ -247,7 +247,9 @@ struct HomeMetrics {
         min(width * 1.58, max(600, UIScreen.main.bounds.height * 0.8))
     }
     /// Build 332: light rails overlap the hero bottom by 32 pt.
-    static let heroContentOverlap: CGFloat = 32
+    /// Build 53: raised to 52 so the rails sit inside the hero's
+    /// bottom fade into the page background (owner's scheme one).
+    static let heroContentOverlap: CGFloat = 52
     var contentWidth: CGFloat { min(width, AdaptiveLayout.contentMaxWidth) }
     var cardWidth: CGFloat {
         let usable = contentWidth - 2 * padding - 24
@@ -539,6 +541,22 @@ private struct HomeHeroPage: View {
                 endPoint: .bottom
             )
             .allowsHitTesting(false)
+            // Build 53 (owner's scheme one): a second gradient melts
+            // the hero's bottom edge into the page background, so the
+            // near-black tail above no longer cuts hard against the
+            // light page below. Over roughly the last quarter of the
+            // hero the picture washes out to systemBackground; the
+            // content rails overlap into this fade zone.
+            LinearGradient(
+                stops: [
+                    .init(color: .clear, location: 0.76),
+                    .init(color: Color(.systemBackground).opacity(0.45), location: 0.90),
+                    .init(color: Color(.systemBackground), location: 1),
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .allowsHitTesting(false)
         }
         .frame(width: metrics.width, height: metrics.heroHeight)
         .clipped()
@@ -555,8 +573,12 @@ private struct HomeHeroDots: View {
         HStack(spacing: 5) {
             ForEach(start..<(start + visible), id: \.self) { i in
                 Capsule()
-                    .fill(Color.white.opacity(i == index ? 1 : 0.45))
+                    // Build 53: the dots now sit in the hero's light
+                    // fade zone, so they are dark instead of white,
+                    // with a faint white shadow to keep their edge.
+                    .fill(Color.black.opacity(i == index ? 0.8 : 0.3))
                     .frame(width: i == index ? 18 : 6, height: 6)
+                    .shadow(color: .white.opacity(0.35), radius: 1)
             }
         }
         .animation(.spring(response: 0.32, dampingFraction: 0.82), value: index)
