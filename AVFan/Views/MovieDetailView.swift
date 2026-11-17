@@ -108,14 +108,35 @@ struct MovieDetailView: View {
         )
     }
 
+    /// Layout size for the hero geometry, frozen at first
+    /// measure (build 40). The live GeometryReader size jitters
+    /// by tens of points while a drag that starts on the cover
+    /// scrolls (safe-area re-measurement on iOS 27), and the
+    /// hero height derives from it — the cover visibly flashed
+    /// up and down mid-scroll. Only a real resize (rotation,
+    /// split view) may re-measure.
+    @State private var pageSize: CGSize?
+
     var body: some View {
         GeometryReader { proxy in
             ScrollView {
-                detailContent(display, width: proxy.size.width, height: proxy.size.height)
+                detailContent(display, width: (pageSize ?? proxy.size).width, height: (pageSize ?? proxy.size).height)
             }
             .scrollIndicators(.hidden)
             .ignoresSafeArea(.container, edges: .top)
             .background(AVFanTheme.pageBackground)
+            .onAppear {
+                if pageSize == nil { pageSize = proxy.size }
+            }
+            .onChange(of: proxy.size) { _, newSize in
+                guard let current = pageSize else {
+                    pageSize = newSize
+                    return
+                }
+                if abs(newSize.width - current.width) > 120 || abs(newSize.height - current.height) > 120 {
+                    pageSize = newSize
+                }
+            }
         }
         .toolbar(.hidden, for: .navigationBar)
         .task {

@@ -835,6 +835,23 @@ enum HTMLParser {
         return out
     }
 
+    /// Collection rows for the maker's / director's / label's /
+    /// series' account collections (build 40): plain anchors to
+    /// /<kind>/<8-char id>, the same shape as the series index.
+    static func collectionLinks(in html: String) -> [NamedLink] {
+        var out: [NamedLink] = []
+        var seen = Set<String>()
+        for anchor in anchorBlocks(in: html) {
+            let stripped = stripLocale(anchor.href)
+            guard let kind = ["series", "makers", "directors", "labels"].first(where: { stripped.hasPrefix("\($0)/") }),
+                  firstMatch("^\(kind)/([A-Za-z0-9]{8})(?:[?#].*)?$", in: stripped) != nil else { continue }
+            let name = stripTags(anchor.inner)
+            guard !name.isEmpty, name.count <= 80, seen.insert(anchor.href).inserted else { continue }
+            out.append(NamedLink(name: name, href: anchor.href, kind: kind))
+        }
+        return out
+    }
+
     static func isBlocked(_ html: String, status: Int?) -> Bool {
         if let status, status == 403 || status == 429 || status == 503 { return true }
         let lowered = html.lowercased()

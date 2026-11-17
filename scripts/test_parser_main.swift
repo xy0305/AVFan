@@ -710,6 +710,22 @@ enum ParserTests {
                "unfollow URL parsed and entity-decoded, got \(followProfile.unfollowURL ?? "nil")")
         expect(followProfile.isFollowing == false, "follow state parsed (unfollow hidden)")
 
+        // Build 40: account collection links for series / makers /
+        // directors / labels — plain anchors to /<kind>/<8-char id>.
+        let collectionsHTML = """
+        <a href="/zh-CN/series/Ab12Cd34">系列甲</a>
+        <a href="/zh-CN/makers/Xy99Zz88">制作商乙</a>
+        <a href="/zh-CN/directors/Qw12Er34">导演丙</a>
+        <a href="/zh-CN/labels/As34Df56">发行商丁</a>
+        <a href="/zh-CN/series/Ab12Cd34">系列甲（重复）</a>
+        <a href="/zh-CN/movies/Zz11Yy22">不该收的影片链接</a>
+        """
+        let collectionLinks = HTMLParser.collectionLinks(in: collectionsHTML)
+        expect(collectionLinks.map(\.name) == ["系列甲", "制作商乙", "导演丙", "发行商丁"],
+               "collection links parsed and deduped, got \(collectionLinks.map(\.name))")
+        expect(collectionLinks.map(\.kind) == ["series", "makers", "directors", "labels"],
+               "collection link kinds, got \(collectionLinks.map(\.kind ?? "-"))")
+
         // Cast details fragment rows: table first, then definitions.
         let tableRows = HTMLParser.infoRows(in: "<table><tr><th>生日</th><td>1999-01-01</td></tr><tr><th>身高</th><td>160cm</td></tr></table>")
         expect(tableRows.count == 2 && tableRows[0].label == "生日" && tableRows[0].value == "1999-01-01" && tableRows[1].label == "身高",

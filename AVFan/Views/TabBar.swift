@@ -13,7 +13,7 @@ enum AppTab: Int, CaseIterable, Identifiable, Hashable {
         case .news: return "资讯"
         case .series: return "系列"
         case .casts: return "演员"
-        case .library: return "收藏"
+        case .library: return "我的"
         case .settings: return "设置"
         }
     }
@@ -26,7 +26,7 @@ enum AppTab: Int, CaseIterable, Identifiable, Hashable {
         case .news: return "newspaper"
         case .series: return "rectangle.stack"
         case .casts: return "person.2"
-        case .library: return "bookmark"
+        case .library: return "person.circle"
         case .settings: return "gearshape"
         }
     }
