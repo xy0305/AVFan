@@ -36,6 +36,7 @@ private struct ExternalLinkEnvelope: Decodable {
 }
 
 enum ExternalLibraryError: LocalizedError {
+    case notConfigured
     case invalidURL
     case invalidToken
     case endpointNeedsToken
@@ -45,6 +46,7 @@ enum ExternalLibraryError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
+        case .notConfigured: return "外部数据库未启用或未填写令牌。"
         case .invalidURL: return "服务器根地址无效。"
         case .invalidToken: return "令牌含无效字符。"
         case .endpointNeedsToken: return "更换服务器须重新填写令牌，或先清除旧令牌。"
@@ -187,6 +189,77 @@ final class ExternalLibraryClient {
             return links
         } catch {
             if Task.isCancelled || generation != settings.revision || (error as? URLError)?.code == .cancelled {
+                throw CancellationError()
+            }
+            if let error = error as? ExternalLibraryError { throw error }
+            throw ExternalLibraryError.transport
+        }
+    }
+
+    // MARK: JAVLibrary rankings (build 42)
+
+    struct JAVLibraryRankingItem: Decodable {
+        let entityType: String
+        let rank: Int
+        let number: String?
+        let name: String?
+        let title: String?
+        enum CodingKeys: String, CodingKey {
+            case entityType = "entity_type"
+            case rank, number, name, title
+        }
+    }
+
+    struct JAVLibraryRankingSnapshot: Decodable {
+        let fetchedAt: String?
+        let stale: Bool?
+        let items: [JAVLibraryRankingItem]
+        enum CodingKeys: String, CodingKey {
+            case stale, items
+            case fetchedAt = "fetched_at"
+        }
+    }
+
+    private struct JAVLibraryRankingEnvelope: Decodable {
+        let code: Int
+        let data: JAVLibraryRankingSnapshot?
+    }
+
+    /// JAVLibrary ranking snapshot from the same VPS service the
+    /// detail-page torrents come from. kind: mostwanted | bestrated |
+    /// actors. Throws .notConfigured when the feature is off or no
+    /// token is saved.
+    func fetchJAVLibraryRankings(kind: String) async throws -> JAVLibraryRankingSnapshot {
+        let settings = ExternalLibrarySettings.shared
+        guard settings.enabled else { throw ExternalLibraryError.notConfigured }
+        guard let token = settings.token(), !token.isEmpty else {
+            throw ExternalLibraryError.notConfigured
+        }
+        let generation = settings.revision
+        let base = try ExternalLibrarySettings.normalizedURL(settings.baseURL)
+        var parts = URLComponents(string: base + "/api/v1/javlibrary/rankings")
+        parts?.queryItems = [URLQueryItem(name: "kind", value: kind)]
+        guard let url = parts?.url else { throw ExternalLibraryError.invalidURL }
+        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData,
+                                 timeoutInterval: 20)
+        request.setValue(token, forHTTPHeaderField: "X-API-Key")
+        do {
+            let (data, response) = try await transport().data(for: request)
+            try Task.checkCancellation()
+            guard generation == settings.revision else { throw CancellationError() }
+            guard let http = response as? HTTPURLResponse else {
+                throw ExternalLibraryError.transport
+            }
+            guard http.statusCode == 200 else { throw ExternalLibraryError.http(http.statusCode) }
+            guard let envelope = try? JSONDecoder().decode(JAVLibraryRankingEnvelope.self,
+                                                            from: data),
+                  envelope.code == 0, let snapshot = envelope.data else {
+                throw ExternalLibraryError.schema
+            }
+            return snapshot
+        } catch {
+            if Task.isCancelled || generation != settings.revision
+                || (error as? URLError)?.code == .cancelled {
                 throw CancellationError()
             }
             if let error = error as? ExternalLibraryError { throw error }

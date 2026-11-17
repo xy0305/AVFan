@@ -1,228 +1,375 @@
 import SwiftUI
 
+// Build 42: the rankings tab carries ONLY the five external boards the
+// owner picked — DMM, JAV Ranking, MissAV, 中指通, JAVLibrary — ported
+// from AVDB. AVFan's own ranking pages are gone. Entries are keyed by
+// code; tapping one resolves the code against AVFan's own search and
+// opens the AVFan detail page (RankingMatchStore caches resolutions
+// on disk and pre-resolves the visible list in the background).
+
+private struct RankingTerm: Identifiable, Hashable {
+    let id: String
+    let label: String
+}
+
+private enum RankingSource: String, CaseIterable, Identifiable {
+    case dmm, javranking, missav, zhongzhitong, javlibrary
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .dmm: return "DMM"
+        case .javranking: return "JAV Ranking"
+        case .missav: return "MissAV"
+        case .zhongzhitong: return "中指通"
+        case .javlibrary: return "JAVLibrary"
+        }
+    }
+
+    var terms: [RankingTerm] {
+        switch self {
+        case .dmm:
+            return [RankingTerm(id: "daily", label: "日榜"),
+                    RankingTerm(id: "weekly", label: "周榜")]
+        case .javranking:
+            return [RankingTerm(id: "explore", label: "精选")]
+        case .missav:
+            return [RankingTerm(id: "today-hot", label: "今日热门"),
+                    RankingTerm(id: "weekly-hot", label: "本周热门"),
+                    RankingTerm(id: "monthly-hot", label: "本月热门")]
+        case .zhongzhitong:
+            return [RankingTerm(id: "2026-10", label: "2026 年 10 月"),
+                    RankingTerm(id: "2026-09", label: "2026 年 9 月")]
+        case .javlibrary:
+            return [RankingTerm(id: "mostwanted", label: "最想要"),
+                    RankingTerm(id: "bestrated", label: "高评价"),
+                    RankingTerm(id: "actors", label: "女优收藏")]
+        }
+    }
+}
+
+private enum RankingTarget: Hashable, Identifiable {
+    case movie(RankingBoardEntry)
+    case actor(String)
+
+    var id: String {
+        switch self {
+        case .movie(let entry): return "movie|" + entry.id
+        case .actor(let name): return "actor|" + name
+        }
+    }
+}
+
 struct RankingsView: View {
     @EnvironmentObject private var settings: AppSettings
-    @State private var kind: RankingKind = .last24h
-    /// Path of the ranking variant currently shown: a RankingKind.path, or
-    /// one of the sub-category hrefs the ranking page itself carries
-    /// (FANZA/MGS tabs, TOP300 category/year, FC2 years — build 5).
-    @State private var currentPath: String = RankingKind.last24h.path
-    @State private var page: RankingPage?
-    @State private var tabs: [NamedLink] = []
+    @ObservedObject private var store = RankingMatchStore.shared
+    @ObservedObject private var external = ExternalLibrarySettings.shared
+    @State private var source: RankingSource = .dmm
+    @State private var term: String = "daily"
+    @State private var entries: [RankingBoardEntry] = []
+    @State private var updatedText: String?
     @State private var loading = false
     @State private var errorMessage: String?
-    @State private var source: FetchSource?
-    @State private var showWeb = false
-    @State private var pageURL: URL?
-    @State private var goSearch = false
-    /// Auto-loading (build 13): pages append on scroll instead of the
-    /// manual pager. currentPath stays the variant path (tab selection
-    /// state); activePath is what actually gets fetched and carries any
-    /// applied filter parameters. When a ranking page carries the
-    /// site's filter form, it is offered behind the 筛选 button.
-    @State private var loadedPage = 1
-    @State private var nextPage: String?
-    @State private var activePath: String = RankingKind.last24h.path
-    @State private var filterForm: ListFilterForm?
-    @State private var selections: [String: Set<String>] = [:]
-    @State private var showFilters = false
+    @State private var target: RankingTarget?
+    @State private var loadAttempt = 0
 
-    private var layoutColumns: Int? { filterForm?.layoutColumns(selections: selections) }
+    private var loadKey: String { "\(source.rawValue)|\(term)|\(loadAttempt)" }
 
-    private var peoplePrefetchID: String? {
-        guard let people = page?.people, !people.isEmpty else { return nil }
-        return people.dropFirst(max(0, people.count - 6)).first?.id
+    private var javlibraryConfigured: Bool {
+        external.enabled && !(external.token() ?? "").isEmpty
     }
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 14) {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
-                        ForEach(RankingKind.allCases) { item in
-                            Button {
-                                kind = item
-                                currentPath = item.path
-                                activePath = item.path
-                                tabs = []
-                                filterForm = nil
-                                selections = [:]
-                                Task { await load() }
-                            } label: {
-                                Text(item.title)
-                                    .font(.subheadline.weight(.semibold))
-                                    .padding(.horizontal, 14)
-                                    .padding(.vertical, 8)
-                            }
-                            .buttonStyle(.plain)
-                            .liquidGlass(tint: kind == item ? AVFanTheme.accent : nil, interactive: true)
-                        }
-                    }
-                }
-                if tabs.count >= 2 {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 8) {
-                            ForEach(tabs) { tab in
-                                Button {
-                                    currentPath = tab.href
-                                    activePath = tab.href
-                                    filterForm = nil
-                                    selections = [:]
-                                    Task { await load() }
-                                } label: {
-                                    Text(tab.name)
-                                        .font(.caption.weight(.semibold))
-                                        .padding(.horizontal, 12)
-                                        .padding(.vertical, 6)
-                                }
-                                .buttonStyle(.plain)
-                                .liquidGlass(tint: isSelected(tab) ? AVFanTheme.accent : nil, interactive: true)
+                        ForEach(RankingSource.allCases) { item in
+                            chip(title: item.title, selected: source == item) {
+                                source = item
+                                term = item.terms[0].id
                             }
                         }
                     }
                 }
-                FetchStatusBanner(source: source, error: errorMessage, webURL: pageURL) { showWeb = true }
-                if loading { ProgressView().frame(maxWidth: .infinity, minHeight: 180) }
-                if let page, !page.people.isEmpty && page.cards.isEmpty {
-                    LazyVGrid(columns: [GridItem(.flexible(), spacing: 12),
-                                        GridItem(.flexible(), spacing: 12),
-                                        GridItem(.flexible(), spacing: 12)], spacing: 14) {
-                        ForEach(page.people) { person in
-                            NavigationLink {
-                                CastProfileView(name: person.name, path: person.href)
-                            } label: {
-                                VStack(spacing: 6) {
-                                    CoverImage(url: person.imageURL)
-                                        .aspectRatio(3.0 / 4.0, contentMode: .fill)
-                                        .clipped()
-                                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                                    Text(person.name)
-                                        .font(.caption.weight(.semibold))
-                                        .foregroundStyle(.primary)
-                                        .lineLimit(1)
-                                }
-                            }
-                            .buttonStyle(.plain)
-                            .onAppear {
-                                if person.id == peoplePrefetchID {
-                                    Task { await loadNext() }
-                                }
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(source.terms) { item in
+                            chip(title: item.label, selected: term == item.id) {
+                                term = item.id
                             }
                         }
                     }
                 }
-                if let page {
-                    MovieGrid(cards: page.cards, columns: layoutColumns, onReachEnd: { Task { await loadNext() } })
+                if let updatedText {
+                    Text(updatedText)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
+                content
             }
-            .padding(.horizontal, AdaptiveLayout.horizontalPadding)
-            .padding(.vertical, 12)
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+            .padding(.bottom, 110)
         }
-        .background(AVFanTheme.pageBackground)
-        .navigationTitle("排行榜")
-        .navigationDestination(isPresented: $goSearch) { SearchView() }
-        .toolbar {
-            if filterForm != nil {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button { showFilters = true } label: {
-                        Image(systemName: "line.3.horizontal.decrease.circle")
+        .navigationTitle("排行")
+        .navigationBarTitleDisplayMode(.inline)
+        .navigationDestination(item: $target) { target in
+            switch target {
+            case .movie(let entry): RankingMovieTargetView(entry: entry)
+            case .actor(let name): RankingActorTargetView(name: name)
+            }
+        }
+        .task(id: loadKey) { await load() }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if source == .javlibrary && !javlibraryConfigured {
+            Text("JAVLibrary 排行走外部数据库服务。请先在「设置 → 外部数据库」填好服务器和令牌并启用，再回到这里。")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .padding(.vertical, 24)
+        } else if loading && entries.isEmpty {
+            HStack { Spacer(); ProgressView(); Spacer() }
+                .padding(.vertical, 40)
+        } else if let errorMessage, entries.isEmpty {
+            VStack(spacing: 12) {
+                Text(errorMessage)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                Button("重试") { loadAttempt += 1 }
+                    .buttonStyle(.bordered)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 32)
+        } else {
+            LazyVStack(spacing: 0) {
+                ForEach(entries) { entry in
+                    Button {
+                        target = entry.isActor
+                            ? .actor(entry.actorName ?? entry.title)
+                            : .movie(entry)
+                    } label: {
+                        RankingRow(entry: entry)
                     }
-                    .accessibilityLabel("筛选")
+                    .buttonStyle(.plain)
+                    Divider()
                 }
             }
-            ToolbarItem(placement: .topBarTrailing) {
-                Button { goSearch = true } label: { Image(systemName: "magnifyingglass") }
-                    .accessibilityLabel("搜索")
-            }
-        }
-        .navigationDestination(for: MovieCard.self) { MovieDetailView(card: $0) }
-        .task { await load() }
-        .refreshable { await load() }
-        .sheet(isPresented: $showWeb) {
-            if let pageURL { InAppWebView(url: pageURL, title: kind.title) }
-        }
-        .sheet(isPresented: $showFilters) {
-            if let filterForm {
-                FilterSheet(form: filterForm, selections: selections) { newSelections in
-                    selections = newSelections
-                    activePath = HTMLParser.applyingFilters(
-                        activePath, form: filterForm, selections: newSelections)
-                    Task { await load() }
-                }
-            }
-        }
-        .onChange(of: settings.locale) { _, _ in
-            Task { await load() }
         }
     }
 
-    private func isSelected(_ tab: NamedLink) -> Bool {
-        HTMLParser.stripLocale(tab.href) == HTMLParser.stripLocale(currentPath)
+    private func chip(title: String, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.subheadline.weight(selected ? .semibold : .regular))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 7)
+                .background(selected ? Color.accentColor : Color.secondary.opacity(0.15),
+                            in: Capsule())
+                .foregroundStyle(selected ? Color.white : Color.primary)
+        }
+        .buttonStyle(.plain)
     }
 
     private func load() async {
-        await load(path: activePath, append: false)
-    }
-
-    private func loadNext() async {
-        guard !loading, let target = nextPage else { return }
-        await load(path: target, append: true)
-    }
-
-    private func load(path fetchPath: String, append: Bool) async {
+        if source == .javlibrary && !javlibraryConfigured {
+            entries = []
+            updatedText = nil
+            errorMessage = nil
+            return
+        }
         loading = true
-        if !append { errorMessage = nil }
+        errorMessage = nil
         defer { loading = false }
-        let url = SiteClient.shared.rankingURL(path: fetchPath, locale: settings.locale)
-        pageURL = url
-        let pageNo = append ? loadedPage + 1
-            : (Int(HTMLParser.firstMatch("[?&]page=(\\d+)", in: fetchPath) ?? "") ?? 1)
         do {
-            let result = try await SiteClient.shared.html(
-                for: url,
-                locale: settings.locale,
-                ageCookie: settings.legalAgeCookie,
-                allowWebViewFallback: true,
-                expectCatalog: true
-            )
-            let html = result.html
-            let base = String(currentPath.split(separator: "?").first ?? "")
-            let shown = currentPath
-            let parsed = await HTMLParser.detached {
-                (page: HTMLParser.ranking(from: html),
-                 tabs: HTMLParser.rankingTabs(in: html, basePath: base, currentPath: shown),
-                 form: HTMLParser.listFilterForm(in: html),
-                 next: HTMLParser.autoNextPath(in: html, page: pageNo, path: fetchPath))
-            }
-            if append, let existing = page {
-                let knownCards = Set(existing.cards.map(\.pathID))
-                let freshCards = parsed.page.cards.filter { !knownCards.contains($0.pathID) }
-                let knownPeople = Set(existing.people.map(\.id))
-                let freshPeople = parsed.page.people.filter { !knownPeople.contains($0.id) }
-                page = RankingPage(title: existing.title,
-                                   cards: existing.cards + freshCards,
-                                   people: existing.people + freshPeople)
-                nextPage = (freshCards.isEmpty && freshPeople.isEmpty) ? nil : parsed.next
-            } else {
-                page = parsed.page
-                tabs = parsed.tabs
-                nextPage = parsed.next
-                if filterForm == nil, let form = parsed.form {
-                    filterForm = form
-                    selections = form.defaultSelections
+            switch source {
+            case .dmm, .javranking, .zhongzhitong:
+                let result = try await RankingFeedLoader.load(board: source.rawValue, term: term)
+                entries = result.entries
+                updatedText = result.generatedAt.map { "数据更新于 \(String($0.prefix(10)))" }
+            case .missav:
+                entries = try await MissAVRankings.load(term: term)
+                updatedText = "实时抓取自 MissAV"
+            case .javlibrary:
+                let snapshot = try await ExternalLibraryClient.shared
+                    .fetchJAVLibraryRankings(kind: term)
+                entries = snapshot.items.map { item in
+                    if item.entityType == "actor" {
+                        return RankingBoardEntry(rank: item.rank, code: nil,
+                                                 title: item.name ?? "",
+                                                 coverURL: nil, actresses: [],
+                                                 actorName: item.name)
+                    }
+                    return RankingBoardEntry(rank: item.rank, code: item.number,
+                                             title: item.title ?? item.number ?? "",
+                                             coverURL: nil, actresses: [],
+                                             actorName: nil)
                 }
-                if parsed.page.cards.isEmpty && parsed.page.people.isEmpty {
-                    errorMessage = "没有解析到排行条目，可改用应用内网页。"
+                var text = snapshot.fetchedAt.map { "快照时间 \(String($0.prefix(10)))" }
+                if snapshot.stale == true {
+                    text = (text ?? "快照") + " · 可能已过期"
                 }
+                updatedText = text
             }
-            loadedPage = pageNo
-            source = result.source
+            await store.preResolve(entries: entries, locale: settings.locale,
+                                   ageCookie: settings.legalAgeCookie)
+        } catch is CancellationError {
+            return
         } catch {
-            if append {
-                nextPage = nil
+            errorMessage = (error as? LocalizedError)?.errorDescription
+                ?? "榜单加载失败，请稍后重试。"
+        }
+    }
+}
+
+private struct RankingRow: View {
+    let entry: RankingBoardEntry
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Text("\(entry.rank)")
+                .font(.headline)
+                .foregroundStyle(entry.rank <= 3 ? Color.accentColor : Color.secondary)
+                .frame(width: 30, alignment: .center)
+            if entry.isActor {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 6).fill(Color.secondary.opacity(0.15))
+                    Image(systemName: "person.fill")
+                        .foregroundStyle(.secondary)
+                }
+                .frame(width: 54, height: 72)
             } else {
-                errorMessage = error.localizedDescription
+                CoverImage(url: entry.coverURL, code: entry.code)
+                    .frame(width: 54, height: 72)
+                    .clipped()
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
             }
+            VStack(alignment: .leading, spacing: 4) {
+                if let code = entry.code {
+                    Text(code)
+                        .font(.subheadline.weight(.semibold))
+                }
+                Text(entry.title)
+                    .font(.subheadline)
+                    .lineLimit(2)
+                if !entry.actresses.isEmpty {
+                    Text(entry.actresses.joined(separator: " · "))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+            Spacer()
+            Image(systemName: "chevron.right")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+        }
+        .padding(.vertical, 8)
+        .contentShape(Rectangle())
+    }
+}
+
+// MARK: - Tap targets: resolve, then show the real page
+
+private struct RankingMovieTargetView: View {
+    let entry: RankingBoardEntry
+    @EnvironmentObject private var settings: AppSettings
+    @ObservedObject private var store = RankingMatchStore.shared
+    @State private var card: MovieCard?
+    @State private var failed = false
+    @State private var attempt = 0
+    @State private var showWeb = false
+
+    var body: some View {
+        Group {
+            if let card {
+                MovieDetailView(card: card)
+            } else {
+                VStack(spacing: 14) {
+                    if failed {
+                        Text("在 AVFan 里没搜到番号 \(entry.code ?? "")。可能站点还没收录这部。")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                        Button("再试一次") { attempt += 1 }
+                            .buttonStyle(.bordered)
+                        Button("打开网页版搜索") { showWeb = true }
+                            .buttonStyle(.bordered)
+                    } else {
+                        ProgressView()
+                        Text("按番号匹配中…")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(24)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .navigationTitle(entry.code ?? "匹配")
+        .navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: $showWeb) {
+            InAppWebView(url: SiteClient.shared.searchURL(query: entry.code ?? "", st: "all"),
+                         title: "网页搜索")
+        }
+        .task(id: attempt) {
+            guard card == nil, let code = entry.code else { return }
+            failed = false
+            card = await store.resolveMovie(code: code, title: entry.title,
+                                            coverURL: entry.coverURL,
+                                            locale: settings.locale,
+                                            ageCookie: settings.legalAgeCookie,
+                                            force: attempt > 0)
+            if card == nil { failed = true }
+        }
+    }
+}
+
+private struct RankingActorTargetView: View {
+    let name: String
+    @EnvironmentObject private var settings: AppSettings
+    @ObservedObject private var store = RankingMatchStore.shared
+    @State private var resolved: (name: String, path: String)?
+    @State private var failed = false
+    @State private var attempt = 0
+
+    var body: some View {
+        Group {
+            if let resolved {
+                CastProfileView(name: resolved.name, path: resolved.path)
+            } else {
+                VStack(spacing: 14) {
+                    if failed {
+                        Text("在 AVFan 里没搜到演员「\(name)」。")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                        Button("再试一次") { attempt += 1 }
+                            .buttonStyle(.bordered)
+                    } else {
+                        ProgressView()
+                        Text("按名字匹配中…")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(24)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .navigationTitle(name)
+        .navigationBarTitleDisplayMode(.inline)
+        .task(id: attempt) {
+            guard resolved == nil else { return }
+            failed = false
+            resolved = await store.resolveActor(name: name, locale: settings.locale,
+                                                ageCookie: settings.legalAgeCookie,
+                                                force: attempt > 0)
+            if resolved == nil { failed = true }
         }
     }
 }
