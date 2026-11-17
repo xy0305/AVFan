@@ -35,7 +35,11 @@ private enum RankingSource: String, CaseIterable, Identifiable {
             return [RankingTerm(id: "daily", label: "日榜"),
                     RankingTerm(id: "weekly", label: "周榜")]
         case .javranking:
-            return [RankingTerm(id: "explore", label: "精选")]
+            return [RankingTerm(id: "explore", label: "精选"),
+                    RankingTerm(id: "awarded-videos", label: "神作榜"),
+                    RankingTerm(id: "awarded-actors", label: "女优榜"),
+                    RankingTerm(id: "awarded-male-actors", label: "男优榜"),
+                    RankingTerm(id: "rankings", label: "全部榜单")]
         case .missav:
             return [RankingTerm(id: "today-hot", label: "今日热门"),
                     RankingTerm(id: "weekly-hot", label: "本周热门"),
@@ -124,6 +128,17 @@ private struct ExternalRankingsView: View {
     @State private var zztYear: String = ZhongZhiTongCatalog.years.first ?? ""
     @State private var zztMonth: String = ZhongZhiTongCatalog.months.first?.month ?? ""
 
+    // JAV Ranking (build 52): sublist picker under 全部榜单 and
+    // ?page=N pagination state. Only meaningful for .javranking;
+    // the view is recreated per source (.id(source)), and load()
+    // resets the page state on every first-page load.
+    @State private var jrSublists: [JRListItem] = []
+    @State private var jrSublistPath: String?
+    @State private var jrSublistError: String?
+    @State private var jrPage = 1
+    @State private var jrHasMore = false
+    @State private var jrLoadingMore = false
+
     init(source: RankingSource) {
         self.source = source
         _term = State(initialValue: source.terms.first?.id ?? "")
@@ -177,6 +192,24 @@ private struct ExternalRankingsView: View {
                         }
                     }
                 }
+                if source == .javranking && term == "rankings" {
+                    if !jrSublists.isEmpty {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 8) {
+                                ForEach(jrSublists) { item in
+                                    chip(title: item.name, selected: jrSublistPath == item.path) {
+                                        jrSublistPath = item.path
+                                        loadAttempt += 1
+                                    }
+                                }
+                            }
+                        }
+                    } else if let jrSublistError {
+                        Text(jrSublistError)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
                 if let updatedText {
                     Text(updatedText)
                         .font(.caption)
@@ -221,17 +254,33 @@ private struct ExternalRankingsView: View {
             .frame(maxWidth: .infinity)
             .padding(.vertical, 32)
         } else {
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 3),
-                      spacing: 14) {
-                ForEach(entries) { entry in
-                    Button {
-                        target = entry.isActor
-                            ? .actor(entry.actorName ?? entry.title)
-                            : .movie(entry)
-                    } label: {
-                        RankingGridCell(entry: entry, source: source)
+            VStack(spacing: 14) {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 3),
+                          spacing: 14) {
+                    ForEach(entries) { entry in
+                        Button {
+                            target = entry.isActor
+                                ? .actor(entry.actorName ?? entry.title)
+                                : .movie(entry)
+                        } label: {
+                            RankingGridCell(entry: entry, source: source)
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
+                }
+                if source == .javranking && jrHasMore {
+                    Button {
+                        Task { await loadMore() }
+                    } label: {
+                        if jrLoadingMore {
+                            ProgressView()
+                        } else {
+                            Text("加载更多")
+                                .font(.subheadline.weight(.semibold))
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(jrLoadingMore || loading)
                 }
             }
         }
@@ -270,7 +319,7 @@ private struct ExternalRankingsView: View {
                 }
                 entries = month.entries
                 updatedText = "中指通月度精选 · 2019–2026 年全量"
-            case .dmm, .javranking:
+            case .dmm:
                 let result = try await RankingFeedLoader.load(board: source.rawValue, term: term)
                 // The feed's covers are JavDB-hosted (tp.spfcas.com)
                 // and unreachable on the owner's network — never
@@ -282,6 +331,30 @@ private struct ExternalRankingsView: View {
                     return entry
                 }
                 updatedText = result.generatedAt.map { "数据更新于 \(String($0.prefix(10)))" }
+            case .javranking:
+                // Live from javranking.cc (build 52) — no frozen
+                // feed. The sublist chips' data loads alongside the
+                // first page; its failure is reported in the chips
+                // row and retried on the next load while the list
+                // itself falls back to the first sublist.
+                if term == "rankings", jrSublists.isEmpty {
+                    do {
+                        jrSublists = try await JavRankingLists.sublists()
+                        jrSublistError = nil
+                        if jrSublistPath == nil {
+                            jrSublistPath = jrSublists.first?.path
+                        }
+                    } catch {
+                        jrSublistError = "子榜单取不到，请稍后重试。"
+                    }
+                }
+                jrHasMore = false
+                let result = try await JavRankingLists.loadPage(
+                    term: term, sublistPath: jrSublistPath, page: 1, rankOffset: 0)
+                entries = result.entries
+                jrPage = 1
+                jrHasMore = result.hasMore
+                updatedText = "实时抓取自 JAV Ranking"
             case .missav:
                 entries = try await MissAVRankings.load(term: term)
                 updatedText = "实时抓取自 MissAV"
@@ -317,6 +390,35 @@ private struct ExternalRankingsView: View {
         } catch {
             errorMessage = (error as? LocalizedError)?.errorDescription
                 ?? "榜单加载失败，请稍后重试。"
+        }
+    }
+
+    /// JAV Ranking pagination (build 52): appends the next ?page=N,
+    /// deduped by entry id, and pre-resolves only the new slice. A
+    /// failed page quietly ends pagination instead of erroring over
+    /// the entries already on screen.
+    private func loadMore() async {
+        guard source == .javranking, jrHasMore, !loading, !jrLoadingMore else { return }
+        jrLoadingMore = true
+        defer { jrLoadingMore = false }
+        let forTerm = term
+        let forSublist = jrSublistPath
+        do {
+            let result = try await JavRankingLists.loadPage(
+                term: forTerm, sublistPath: forSublist,
+                page: jrPage + 1, rankOffset: entries.count)
+            guard term == forTerm, jrSublistPath == forSublist else { return }
+            let known = Set(entries.map(\.id))
+            let fresh = result.entries.filter { !known.contains($0.id) }
+            entries += fresh
+            jrPage += 1
+            jrHasMore = result.hasMore
+            await store.preResolve(entries: fresh, locale: settings.locale,
+                                   ageCookie: settings.legalAgeCookie)
+        } catch is CancellationError {
+            return
+        } catch {
+            jrHasMore = false
         }
     }
 }

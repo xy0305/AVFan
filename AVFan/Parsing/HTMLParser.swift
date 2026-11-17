@@ -2154,4 +2154,131 @@ enum HTMLParser {
         }
         return nil
     }
+
+    // MARK: - JAV Ranking (javranking.cc, build 52)
+
+    /// Video cards on a javranking.cc list page (精选 / 神作榜 /
+    /// sublists share the markup): one `article.video-card` each,
+    /// whose cover anchor carries the video path, an aria-label of
+    /// "<code>: <title>" and the cover <img>. The title prefers the
+    /// page's JSON-LD ItemList name for the same path (clean, no
+    /// badge suffixes), with the code prefix stripped; the aria
+    /// label is the fallback. Deduped by path, page order kept.
+    static func javRankingVideoCards(in html: String) -> [JRVideoCard] {
+        var titlesByPath: [String: String] = [:]
+        for item in javRankingItemList(in: html) {
+            titlesByPath[item.path] = item.name
+        }
+        guard let articleRegex = try? NSRegularExpression(
+            pattern: "<article\\b[^>]*class=\"[^\"]*video-card[^\"]*\"[^>]*>",
+            options: [.caseInsensitive]) else { return [] }
+        let ns = html as NSString
+        let starts = articleRegex.matches(in: html, range: NSRange(location: 0, length: ns.length))
+        var out: [JRVideoCard] = []
+        var seen = Set<String>()
+        for (index, start) in starts.enumerated() {
+            let end = index + 1 < starts.count ? starts[index + 1].range.location : ns.length
+            let block = ns.substring(with: NSRange(location: start.range.location,
+                                                   length: end - start.range.location))
+            guard let anchor = firstMatch("(<a\\b(?:[^>\"]|\"[^\"]*\")*?data-video-card-cover(?:[^>\"]|\"[^\"]*\")*?>)", in: block),
+                  let path = attribute("href", in: anchor),
+                  path.contains("/videos/") else { continue }
+            let aria = attribute("aria-label", in: anchor) ?? ""
+            var code: String?
+            var ariaTitle: String?
+            if let sep = aria.range(of: ": ") {
+                code = String(aria[..<sep.lowerBound]).trimmingCharacters(in: .whitespaces)
+                ariaTitle = String(aria[sep.upperBound...]).trimmingCharacters(in: .whitespaces)
+            }
+            if code == nil || code?.isEmpty == true {
+                code = firstMatch("data-video-card-code[^>]*>([^<]+)<", in: block)?
+                    .trimmingCharacters(in: .whitespaces)
+            }
+            guard let code, !code.isEmpty, seen.insert(path).inserted else { continue }
+            let cover = firstMatch("<img\\b[^>]*?src=\"([^\"]+)\"", in: block)
+            var title = ariaTitle ?? ""
+            if let name = titlesByPath[path] {
+                var clean = name
+                if clean.hasPrefix(code + " ") {
+                    clean = String(clean.dropFirst(code.count + 1))
+                }
+                let trimmed = clean.trimmingCharacters(in: .whitespaces)
+                if !trimmed.isEmpty { title = trimmed }
+            }
+            if title.isEmpty { title = code }
+            out.append(JRVideoCard(path: path, code: code, title: title, coverURL: cover))
+        }
+        return out
+    }
+
+    /// The page's JSON-LD ItemList as flat items: ranked videos or
+    /// actors on list pages, sublists on the rankings index page.
+    /// URLs are stripped to site-local paths. Empty when the page
+    /// carries no ItemList.
+    static func javRankingItemList(in html: String) -> [JRListItem] {
+        let blocks = allMatches("<script[^>]*type=\"application/ld\\+json\"[^>]*>([\\s\\S]*?)</script>", in: html)
+        for block in blocks {
+            guard let data = block.data(using: .utf8),
+                  let json = try? JSONSerialization.jsonObject(with: data),
+                  let items = itemListElements(in: json) else { continue }
+            return items
+        }
+        return []
+    }
+
+    private static func itemListElements(in json: Any) -> [JRListItem]? {
+        if let dict = json as? [String: Any] {
+            if let graph = dict["@graph"] as? [Any] {
+                for node in graph {
+                    if let items = itemListElements(in: node) { return items }
+                }
+            }
+            guard let elements = dict["itemListElement"] as? [[String: Any]] else { return nil }
+            var out: [JRListItem] = []
+            for element in elements {
+                guard let name = element["name"] as? String,
+                      let url = element["url"] as? String else { continue }
+                let position = (element["position"] as? NSNumber)?.intValue ?? out.count + 1
+                out.append(JRListItem(position: position, name: name,
+                                      path: sitePath(from: url)))
+            }
+            return out
+        }
+        if let array = json as? [Any] {
+            for node in array {
+                if let items = itemListElements(in: node) { return items }
+            }
+        }
+        return nil
+    }
+
+    private static func sitePath(from url: String) -> String {
+        if url.hasPrefix("/") { return url }
+        if let parsed = URL(string: url) { return parsed.path }
+        return url
+    }
+
+    /// javranking.cc paginates with ?page=N links; a link to the
+    /// next page number means another page exists.
+    static func javRankingHasNextPage(in html: String, current: Int) -> Bool {
+        firstMatch("([\\?&]page=\(current + 1))(?![0-9])", in: html) != nil
+    }
+}
+
+/// A video card parsed from a javranking.cc list page (build 52).
+struct JRVideoCard: Equatable {
+    let path: String
+    let code: String
+    let title: String
+    let coverURL: String?
+}
+
+/// One entry of a javranking.cc JSON-LD ItemList (build 52): a
+/// ranked video/actor on list pages, or a sublist on the rankings
+/// index page. `path` is site-local.
+struct JRListItem: Equatable, Identifiable {
+    let position: Int
+    let name: String
+    let path: String
+    var id: String { path }
 }

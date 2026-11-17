@@ -6,9 +6,11 @@ import Combine
 // 中指通, JAVLibrary (JavDB's own rankings were explicitly skipped).
 //
 // Data routes (none of them touches JavDB):
-//  - DMM / JAV Ranking / 中指通: the pre-matched feed AVDB publishes on
+//  - DMM / 中指通: the pre-matched feed AVDB publishes on
 //    its repo's `feed` branch (frozen 2026-11-14; the generated date is
 //    shown in the UI so the staleness is never hidden).
+//  - JAV Ranking: javranking.cc's own list pages, parsed live on
+//    device (build 52; it used to ride the frozen feed's 20 picks).
 //  - JAVLibrary: the VPS snapshot API, through the same ExternalLibrary
 //    settings (server + token) the detail page already uses.
 //  - MissAV: missav.fans' own ranking pages, parsed on device the same
@@ -36,17 +38,19 @@ enum RankingSourcesError: LocalizedError {
     case feedUnavailable
     case missavChallenged
     case missavEmpty
+    case javrankingEmpty
 
     var errorDescription: String? {
         switch self {
         case .feedUnavailable: return "榜单数据暂时取不到，请稍后重试。"
         case .missavChallenged: return "MissAV 触发了人机验证，原生请求被拦。稍后再试，或在浏览器打开 MissAV 核对。"
         case .missavEmpty: return "MissAV 榜单页没有解析到条目。"
+        case .javrankingEmpty: return "JAV Ranking 榜单页没有解析到条目。"
         }
     }
 }
 
-// MARK: - Feed boards (DMM / JAV Ranking / 中指通)
+// MARK: - Feed boards (DMM / 中指通)
 
 enum RankingFeedLoader {
     static let rawBase = "https://raw.githubusercontent.com/xy0305/AVDB/feed/feed"
@@ -198,6 +202,94 @@ enum MissAVRankings {
             if out.count >= 120 { break }
         }
         return out
+    }
+}
+
+// MARK: - JAV Ranking boards (live, build 52)
+
+/// javranking.cc's own list pages, parsed on device. Video boards
+/// （精选 / 神作榜 / the ~20 sublists under 全部榜单） share one card
+/// markup and paginate with ?page=N; the actor boards （女优榜 /
+/// 男优榜） are single-page JSON-LD ItemLists. An entry's coverURL
+/// keeps the site's own static cover as a fallback — grid display
+/// resolves HQ first through the shared cover pipeline (build 46).
+enum JavRankingLists {
+    static let base = "https://javranking.cc"
+
+    private static var cachedSublists: [JRListItem]?
+
+    /// The 全部榜单 index: sublist names + paths, cached for the
+    /// process lifetime.
+    static func sublists() async throws -> [JRListItem] {
+        if let cachedSublists { return cachedSublists }
+        let html = try await fetch("/zh-hans/rankings/")
+        let items = HTMLParser.javRankingItemList(in: html)
+        guard !items.isEmpty else { throw RankingSourcesError.javrankingEmpty }
+        cachedSublists = items
+        return items
+    }
+
+    static func loadPage(term: String, sublistPath: String?, page: Int,
+                         rankOffset: Int) async throws
+        -> (entries: [RankingBoardEntry], hasMore: Bool) {
+        if term == "awarded-actors" || term == "awarded-male-actors" {
+            let path = term == "awarded-actors"
+                ? "/zh-hans/most-awarded-actors/"
+                : "/zh-hans/most-awarded-male-actors/"
+            let html = try await fetch(path)
+            let items = HTMLParser.javRankingItemList(in: html)
+            guard !items.isEmpty else { throw RankingSourcesError.javrankingEmpty }
+            let entries = items.enumerated().map { index, item in
+                RankingBoardEntry(rank: item.position > 0 ? item.position : index + 1,
+                                  code: nil, title: item.name, coverURL: nil,
+                                  actresses: [], actorName: item.name)
+            }
+            return (entries, false)
+        }
+        let path: String
+        switch term {
+        case "awarded-videos":
+            path = "/zh-hans/most-awarded-videos/"
+        case "rankings":
+            if let sublistPath {
+                path = sublistPath
+            } else if let first = try await sublists().first {
+                path = first.path
+            } else {
+                throw RankingSourcesError.javrankingEmpty
+            }
+        default:
+            path = "/zh-hans/explore/"
+        }
+        let html = try await fetch(path, page: page)
+        let cards = HTMLParser.javRankingVideoCards(in: html)
+        guard !cards.isEmpty else { throw RankingSourcesError.javrankingEmpty }
+        let entries = cards.enumerated().map { index, card in
+            RankingBoardEntry(rank: rankOffset + index + 1, code: card.code,
+                              title: card.title, coverURL: card.coverURL,
+                              actresses: [], actorName: nil)
+        }
+        return (entries, HTMLParser.javRankingHasNextPage(in: html, current: page))
+    }
+
+    private static func fetch(_ path: String, page: Int = 1) async throws -> String {
+        var fullPath = path
+        if page > 1 {
+            fullPath += (path.contains("?") ? "&" : "?") + "page=\(page)"
+        }
+        guard let url = URL(string: base + fullPath) else {
+            throw RankingSourcesError.javrankingEmpty
+        }
+        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData,
+                                 timeoutInterval: 25)
+        request.setValue(SiteClient.mobileSafariUA, forHTTPHeaderField: "User-Agent")
+        request.setValue("text/html", forHTTPHeaderField: "Accept")
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200,
+              let html = String(data: data, encoding: .utf8) else {
+            throw RankingSourcesError.javrankingEmpty
+        }
+        return html
     }
 }
 

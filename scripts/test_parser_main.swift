@@ -992,8 +992,62 @@ enum ParserTests {
         expect(HTMLParser.hotSearchKeywords(nil).isEmpty, "nil JSON, no keywords")
         expect(HTMLParser.hotSearchKeywords(["other": 1]).isEmpty, "missing keywords key, no keywords")
 
+        // Build 52: JAV Ranking boards parse javranking.cc's own
+        // pages on device — video cards (article.video-card), the
+        // JSON-LD ItemList (actors / sublist index) and ?page=N
+        // pagination. Fixtures are real captured markup.
+        let jrExplore = try fixture("jr-explore.html")
+        let jrExploreCards = HTMLParser.javRankingVideoCards(in: jrExplore)
+        expect(jrExploreCards.count >= 3, "jr explore cards, got \(jrExploreCards.count)")
+        expect(jrExploreCards.first?.path == "/zh-hans/videos/25850/",
+               "jr explore first path, got \(jrExploreCards.first?.path ?? "nil")")
+        expect(jrExploreCards.first?.code == "FC2-4909883",
+               "jr explore first code, got \(jrExploreCards.first?.code ?? "nil")")
+        expect(jrExploreCards.first?.coverURL == "https://static.javranking.cc/video/cover/25850.webp",
+               "jr explore first cover, got \(jrExploreCards.first?.coverURL ?? "nil")")
+        expect(HTMLParser.javRankingHasNextPage(in: jrExplore, current: 1),
+               "jr explore has a page 2")
+        expect(!HTMLParser.javRankingHasNextPage(in: jrExplore, current: 5),
+               "jr explore has no page 6 link")
+        expect(!HTMLParser.javRankingHasNextPage(in: jrExplore, current: 165),
+               "jr explore page=1665 must not count as a page=166 link")
+        expect(HTMLParser.javRankingHasNextPage(in: jrExplore, current: 1664),
+               "jr explore has a page 1665")
 
-        print("PASS: home, detail magnets, ranking merge, hot casts, HQ cover sources, empty shell, block detection, cover policy, login signals, ranking tabs, pagination, news, series, detail cover identity, page map, cast cards, prefix links, filter form, homepage panel, auto-next, home main list, movie toolbar, tab hygiene, tab locale guard, drawer shortcuts, poster quality, javbus, tenhow, amazon, avbase catalogue, trailer and stills, library sync parsing, cast profile, comments sanitize, related lists, preview whitelist, filmography, real list fragments, number prefix, avfan trailer preference, hot searches, strip splice guard, real-page strip triples, canonical identity, same-file identity")
+        let jrWeekly = try fixture("jr-dmm-weekly.html")
+        let jrWeeklyCards = HTMLParser.javRankingVideoCards(in: jrWeekly)
+        expect(jrWeeklyCards.count >= 3, "jr dmm weekly cards, got \(jrWeeklyCards.count)")
+        expect(jrWeeklyCards.first?.code == "SNOS-463",
+               "jr weekly first code, got \(jrWeeklyCards.first?.code ?? "nil")")
+        expect(jrWeeklyCards.first?.path == "/zh-hans/videos/33523/",
+               "jr weekly first path, got \(jrWeeklyCards.first?.path ?? "nil")")
+        expect(jrWeeklyCards.first?.coverURL == "https://static.javranking.cc/video/cover/33523.webp",
+               "jr weekly first cover, got \(jrWeeklyCards.first?.coverURL ?? "nil")")
+        // The aria label carries badge suffixes ("即将发行. 当前榜单
+        // #1"); the title must be the JSON-LD name minus its code
+        // prefix.
+        expect(jrWeeklyCards.first?.title == "我的专属公主 #1 #免费性爱 #免费性爱 #女大学生 #圈子 #巨乳 Tano Yuu 三件套写真",
+               "jr weekly title from JSON-LD, got \(jrWeeklyCards.first?.title ?? "nil")")
+        expect(jrWeeklyCards.first?.title.hasPrefix("SNOS-463") == false,
+               "jr weekly title has no code prefix")
+
+        let jrActors = try fixture("jr-awarded-actors.html")
+        let jrActorItems = HTMLParser.javRankingItemList(in: jrActors)
+        expect(jrActorItems.count >= 6, "jr awarded actors, got \(jrActorItems.count)")
+        expect(jrActorItems.first?.position == 1 && jrActorItems.first?.name == "凉森玲梦",
+               "jr first actor, got \(jrActorItems.first?.name ?? "nil")")
+        expect(jrActorItems.first?.path == "/zh-hans/actors/actor-KxPb/",
+               "jr first actor path, got \(jrActorItems.first?.path ?? "nil")")
+
+        let jrIndex = try fixture("jr-rankings-index.html")
+        let jrSubItems = HTMLParser.javRankingItemList(in: jrIndex)
+        expect(jrSubItems.count >= 8, "jr sublists, got \(jrSubItems.count)")
+        expect(jrSubItems.first?.path == "/zh-hans/rankings/javranking-hottest-top250-weekly/",
+               "jr first sublist path, got \(jrSubItems.first?.path ?? "nil")")
+        expect(jrSubItems.dropFirst().first?.name == "DMM 本周热销榜",
+               "jr second sublist, got \(jrSubItems.dropFirst().first?.name ?? "nil")")
+
+        print("PASS: home, detail magnets, ranking merge, hot casts, HQ cover sources, empty shell, block detection, cover policy, login signals, ranking tabs, pagination, news, series, detail cover identity, page map, cast cards, prefix links, filter form, homepage panel, auto-next, home main list, movie toolbar, tab hygiene, tab locale guard, drawer shortcuts, poster quality, javbus, tenhow, amazon, avbase catalogue, trailer and stills, library sync parsing, cast profile, comments sanitize, related lists, preview whitelist, filmography, real list fragments, number prefix, avfan trailer preference, hot searches, strip splice guard, real-page strip triples, canonical identity, same-file identity, javranking boards")
     }
 }
 
