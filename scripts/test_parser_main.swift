@@ -1015,6 +1015,12 @@ enum ParserTests {
                "jr explore has a page 1665")
 
         let jrWeekly = try fixture("jr-dmm-weekly.html")
+        let jrWeeklyItems = HTMLParser.javRankingItemList(in: jrWeekly)
+        expect(jrWeeklyItems.count >= 3, "jr weekly item list, got \(jrWeeklyItems.count)")
+        expect(jrWeeklyItems.first?.path == "/zh-hans/videos/33523/",
+               "jr weekly item path, got \(jrWeeklyItems.first?.path ?? "nil")")
+        expect(jrWeeklyItems.first?.name.hasPrefix("SNOS-463 ") == true,
+               "jr weekly item name carries the code prefix, got \(jrWeeklyItems.first?.name ?? "nil")")
         let jrWeeklyCards = HTMLParser.javRankingVideoCards(in: jrWeekly)
         expect(jrWeeklyCards.count >= 3, "jr dmm weekly cards, got \(jrWeeklyCards.count)")
         expect(jrWeeklyCards.first?.code == "SNOS-463",

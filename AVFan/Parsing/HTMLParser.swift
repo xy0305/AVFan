@@ -2218,10 +2218,17 @@ enum HTMLParser {
     static func javRankingItemList(in html: String) -> [JRListItem] {
         let blocks = allMatches("<script[^>]*type=\"application/ld\\+json\"[^>]*>([\\s\\S]*?)</script>", in: html)
         for block in blocks {
-            guard let data = block.data(using: .utf8),
-                  let json = try? JSONSerialization.jsonObject(with: data),
-                  let items = itemListElements(in: json) else { continue }
-            return items
+            if let data = block.data(using: .utf8),
+               let json = try? JSONSerialization.jsonObject(with: data),
+               let items = itemListElements(in: json) {
+                return items
+            }
+            // Fallback: pull the (position, name, url) triples out
+            // of the block text directly. The ItemList payload is
+            // flat; this keeps the boards working even if the JSON
+            // object graph's shape surprises the casts above.
+            let items = itemListTriples(in: block)
+            if !items.isEmpty { return items }
         }
         return []
     }
@@ -2233,10 +2240,11 @@ enum HTMLParser {
                     if let items = itemListElements(in: node) { return items }
                 }
             }
-            guard let elements = dict["itemListElement"] as? [[String: Any]] else { return nil }
+            guard let rawElements = dict["itemListElement"] as? [Any] else { return nil }
             var out: [JRListItem] = []
-            for element in elements {
-                guard let name = element["name"] as? String,
+            for raw in rawElements {
+                guard let element = raw as? [String: Any],
+                      let name = element["name"] as? String,
                       let url = element["url"] as? String else { continue }
                 let position = (element["position"] as? NSNumber)?.intValue ?? out.count + 1
                 out.append(JRListItem(position: position, name: name,
@@ -2252,9 +2260,68 @@ enum HTMLParser {
         return nil
     }
 
+    private static func itemListTriples(in block: String) -> [JRListItem] {
+        guard let regex = try? NSRegularExpression(
+            pattern: "\"position\"\\s*:\\s*(\\d+)\\s*,\\s*\"name\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"\\s*,\\s*\"url\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"",
+            options: [.caseInsensitive]) else { return [] }
+        let ns = block as NSString
+        return regex.matches(in: block, range: NSRange(location: 0, length: ns.length)).compactMap { match in
+            guard match.numberOfRanges > 3,
+                  let nameRange = Range(match.range(at: 2), in: block),
+                  let urlRange = Range(match.range(at: 3), in: block) else { return nil }
+            let position = Int(ns.substring(with: match.range(at: 1))) ?? 0
+            return JRListItem(position: position,
+                              name: jsonStringValue(String(block[nameRange])),
+                              path: sitePath(from: jsonStringValue(String(block[urlRange]))))
+        }
+    }
+
+    /// Minimal JSON string unescaping for the regex fallback above
+    /// (\\\" \\\\ \\/ and \\uXXXX; other escapes pass through).
+    private static func jsonStringValue(_ raw: String) -> String {
+        guard raw.contains("\\") else { return raw }
+        var out = ""
+        var index = raw.startIndex
+        while index < raw.endIndex {
+            let ch = raw[index]
+            if ch == "\\" {
+                let next = raw.index(after: index)
+                guard next < raw.endIndex else { break }
+                let esc = raw[next]
+                switch esc {
+                case "u":
+                    let hexStart = raw.index(after: next)
+                    guard let hexEnd = raw.index(hexStart, offsetBy: 4, limitedBy: raw.endIndex),
+                          let value = UInt32(raw[hexStart..<hexEnd], radix: 16),
+                          let scalar = UnicodeScalar(value) else {
+                        index = next
+                        continue
+                    }
+                    out += String(Character(scalar))
+                    index = hexEnd
+                    continue
+                case "n": out += "\n"
+                case "t": out += "\t"
+                case "r": out += "\r"
+                default: out.append(esc)
+                }
+                index = raw.index(after: next)
+            } else {
+                out.append(ch)
+                index = raw.index(after: index)
+            }
+        }
+        return out
+    }
+
     private static func sitePath(from url: String) -> String {
         if url.hasPrefix("/") { return url }
-        if let parsed = URL(string: url) { return parsed.path }
+        if let scheme = url.range(of: "://") {
+            let rest = url[scheme.upperBound...]
+            if let slash = rest.firstIndex(of: "/") {
+                return String(rest[slash...])
+            }
+        }
         return url
     }
 
