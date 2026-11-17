@@ -866,6 +866,28 @@ enum ParserTests {
         expect(filoRelated.allSatisfy { ($0.coverURL ?? "").contains("/covers/") },
                "related-works covers present, got \(filoRelated.map { $0.coverURL ?? "nil" })")
 
+        // Build 41: a bare mention anchor (a text reference to
+        // a movie inside prose) must not claim that movie's id
+        // with the following markup's content, and must not
+        // block the movie's real card later in the section.
+        let mentionHTML = """
+        <span class="sub-tab-item">还出演过</span>
+        <p>评论里提到 <a href="/zh-CN/movies/Mntn1234">这部旧作</a> 不错</p>
+        <a href="/zh-CN/movies/Real5678" title="[REAL-001] Real Title" class="history-link">
+          <div><img src="https://c1.avfan.com/covers/rr/real.jpg"></div>
+          <div><strong>REAL-001</strong></div>
+        </a>
+        <a href="/zh-CN/movies/Mntn1234" title="[MENT-002] Mention Title" class="history-link">
+          <div><img src="https://c1.avfan.com/covers/mm/mention.jpg"></div>
+          <div><strong>MENT-002</strong></div>
+        </a>
+        """
+        let mentionCards = HTMLParser.sectionCards(in: mentionHTML, heading: "还出演过")
+        expect(mentionCards.map(\.displayCode) == ["REAL-001", "MENT-002"],
+               "mention anchor does not steal or block cards, got \(mentionCards.map(\.displayCode))")
+        expect(mentionCards.last?.coverURL?.contains("/covers/mm/mention.jpg") == true,
+               "the mentioned movie keeps its own cover, got \(mentionCards.last?.coverURL ?? "nil")")
+
         // Build 31: hot searches come from the site's
         // /hot_searches JSON ({keywords: [...]}) — the panel
         // renders them client-side; they are in no page's HTML.

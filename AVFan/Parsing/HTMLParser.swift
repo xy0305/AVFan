@@ -1291,11 +1291,33 @@ enum HTMLParser {
         for (index, match) in matches.enumerated() {
             let tag = ns.substring(with: match.range(at: 1))
             let href = unescape(ns.substring(with: match.range(at: 2)))
-            guard let id = pathID(from: href), seen.insert(id).inserted else { continue }
+            guard let id = pathID(from: href), !seen.contains(id) else { continue }
             let windowStart = match.range.location + match.range.length
             let windowEnd = index + 1 < matches.count ? matches[index + 1].range.location : min(ns.length, windowStart + 2500)
             let windowLen = max(0, windowEnd - windowStart)
-            let window = ns.substring(with: NSRange(location: windowStart, length: windowLen))
+            let fullWindow = ns.substring(with: NSRange(location: windowStart, length: windowLen))
+            // Pairing discipline (build 41): the first image in
+            // reach decides whose card this is. If it only shows
+            // up inside the NEXT movie anchor, this anchor is a
+            // bare mention (a text reference to the movie), not
+            // a card — claiming it would pair this movie's link
+            // with the next card's cover, exactly the "tapped
+            // cover opens a different movie" report. When the
+            // anchor wraps its own image (the site's real
+            // markup), pairing reads inside the anchor only;
+            // the wider window remains for layouts where the
+            // image trails the anchor element.
+            let nsWindow = fullWindow as NSString
+            let imgLocation = nsWindow.range(of: "<img", options: .caseInsensitive).location
+            if imgLocation == NSNotFound || imgLocation >= windowLen {
+                continue
+            }
+            var window = fullWindow
+            let closeRange = nsWindow.range(of: "</a>", options: .caseInsensitive)
+            if closeRange.location != NSNotFound, imgLocation < closeRange.location {
+                window = nsWindow.substring(to: closeRange.location)
+            }
+            seen.insert(id)
             let titleAttr = attribute("title", in: tag).map(unescape) ?? ""
             let imgSrc = firstMatch("<img[^>]+(?:data-src|data-original|src)=\"([^\"]+)\"", in: window)
             let imgAlt = firstMatch("<img[^>]+alt=\"([^\"]*)\"", in: window).map(unescape) ?? ""

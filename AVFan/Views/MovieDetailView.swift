@@ -25,6 +25,8 @@ struct MovieDetailView: View {
     @State private var toast: String?
     @ObservedObject private var externalSettings = ExternalLibrarySettings.shared
     /// External-database links for this movie (build 38).
+    @State private var magnetsExpanded = false
+    @State private var externalExpanded = false
     @State private var externalMagnets: [MagnetItem] = []
     @State private var externalStatus: String?
     @State private var externalCode: String?
@@ -1219,8 +1221,19 @@ struct MovieDetailView: View {
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
-            ForEach(detail.magnets) { magnet in
+            ForEach(magnetsExpanded ? detail.magnets : Array(detail.magnets.prefix(3))) { magnet in
                 magnetRow(magnet, detail: detail)
+            }
+            if detail.magnets.count > 3 {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) { magnetsExpanded.toggle() }
+                } label: {
+                    Text(magnetsExpanded ? "收起" : "展开全部（共 \(detail.magnets.count) 条）")
+                        .font(.caption.weight(.semibold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 6)
+                }
+                .glassChromeButton()
             }
             if externalSettings.enabled {
                 externalMagnetsBlock(detail)
@@ -1267,8 +1280,19 @@ struct MovieDetailView: View {
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
-            ForEach(externalMagnets) { magnet in
+            ForEach(externalExpanded ? externalMagnets : Array(externalMagnets.prefix(3))) { magnet in
                 magnetRow(magnet, detail: detail)
+            }
+            if externalMagnets.count > 3 {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) { externalExpanded.toggle() }
+                } label: {
+                    Text(externalExpanded ? "收起" : "展开全部（共 \(externalMagnets.count) 条）")
+                        .font(.caption.weight(.semibold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 6)
+                }
+                .glassChromeButton()
             }
         }
         .padding(.top, 8)
@@ -1512,10 +1536,10 @@ struct MagnetRow: View {
     var onCopy: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 6) {
             Text(magnet.name)
                 .font(.subheadline.weight(.semibold))
-                .lineLimit(2)
+                .lineLimit(1)
             HStack(spacing: 8) {
                 if !magnet.displayMeta.isEmpty {
                     Text(magnet.displayMeta)
@@ -1545,7 +1569,7 @@ struct MagnetRow: View {
             }
             .font(.caption.weight(.semibold))
         }
-        .padding(14)
+        .padding(10)
         .liquidGlassRect(cornerRadius: 16)
         .contextMenu {
             Button("复制磁力", action: onCopy)
