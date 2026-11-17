@@ -201,6 +201,80 @@ enum MissAVRankings {
     }
 }
 
+// MARK: - 中指通 full catalog (bundled)
+
+/// The complete 中指通 monthly-picks catalog AVDB bundles
+/// (ZhongZhiTongMonthly.json, 2019-09 → 2026-10, 79 months), copied
+/// into AVFan unchanged. Entries carry codes only; the two newest
+/// months additionally get their covers overlaid from the frozen feed.
+enum ZhongZhiTongCatalog {
+    struct Month: Identifiable, Hashable {
+        let month: String
+        let entries: [RankingBoardEntry]
+        var id: String { month }
+        var year: String { String(month.prefix(4)) }
+        var monthLabel: String { "\(Int(month.suffix(2)) ?? 0) 月" }
+    }
+
+    private struct CatalogFile: Decodable {
+        struct Entry: Decodable {
+            let code: String
+            let actresses: [String]?
+        }
+        struct MonthFile: Decodable {
+            let month: String
+            let entries: [Entry]
+        }
+        let months: [MonthFile]
+    }
+
+    static let months: [Month] = {
+        guard let url = Bundle.main.url(forResource: "ZhongZhiTongMonthly",
+                                        withExtension: "json"),
+              let data = try? Data(contentsOf: url),
+              let file = try? JSONDecoder().decode(CatalogFile.self, from: data) else {
+            return []
+        }
+        return file.months.map { month in
+            Month(month: month.month, entries: month.entries.enumerated().map { index, entry in
+                RankingBoardEntry(rank: index + 1, code: entry.code, title: entry.code,
+                                  coverURL: nil, actresses: entry.actresses ?? [],
+                                  actorName: nil)
+            })
+        }.sorted { $0.month > $1.month }
+    }()
+
+    static var years: [String] {
+        var seen: [String] = []
+        for month in months where !seen.contains(month.year) { seen.append(month.year) }
+        return seen
+    }
+
+    static func months(inYear year: String) -> [Month] {
+        months.filter { $0.year == year }
+    }
+
+    static func month(_ id: String) -> Month? {
+        months.first { $0.month == id }
+    }
+
+    /// Feed covers for a month (only 2026-09 / 2026-10 exist in the
+    /// frozen feed), keyed by normalized code.
+    static func feedCovers(term: String) async -> [String: String] {
+        guard let result = try? await RankingFeedLoader.load(board: "zhongzhitong",
+                                                             term: term) else {
+            return [:]
+        }
+        var out: [String: String] = [:]
+        for entry in result.entries {
+            if let code = entry.code, let cover = entry.coverURL {
+                out[RankingMatchStore.key(for: code)] = cover
+            }
+        }
+        return out
+    }
+}
+
 // MARK: - Code → AVFan resolution
 
 @MainActor
@@ -233,7 +307,7 @@ final class RankingMatchStore: ObservableObject {
         }
     }
 
-    static func key(for code: String) -> String {
+    nonisolated static func key(for code: String) -> String {
         code.uppercased().filter { !$0.isWhitespace }
     }
 

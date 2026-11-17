@@ -41,8 +41,7 @@ private enum RankingSource: String, CaseIterable, Identifiable {
                     RankingTerm(id: "weekly-hot", label: "本周热门"),
                     RankingTerm(id: "monthly-hot", label: "本月热门")]
         case .zhongzhitong:
-            return [RankingTerm(id: "2026-10", label: "2026 年 10 月"),
-                    RankingTerm(id: "2026-09", label: "2026 年 9 月")]
+            return []  // dynamic: bundled catalog years/months (build 44)
         case .javlibrary:
             return [RankingTerm(id: "mostwanted", label: "最想要"),
                     RankingTerm(id: "bestrated", label: "高评价"),
@@ -122,9 +121,12 @@ private struct ExternalRankingsView: View {
     let source: RankingSource
     @State private var term: String
 
+    @State private var zztYear: String = ZhongZhiTongCatalog.years.first ?? ""
+    @State private var zztMonth: String = ZhongZhiTongCatalog.months.first?.month ?? ""
+
     init(source: RankingSource) {
         self.source = source
-        _term = State(initialValue: source.terms[0].id)
+        _term = State(initialValue: source.terms.first?.id ?? "")
     }
     @State private var entries: [RankingBoardEntry] = []
     @State private var updatedText: String?
@@ -133,7 +135,7 @@ private struct ExternalRankingsView: View {
     @State private var target: RankingTarget?
     @State private var loadAttempt = 0
 
-    private var loadKey: String { "\(source.rawValue)|\(term)|\(loadAttempt)" }
+    private var loadKey: String { "\(source.rawValue)|\(term)|\(zztMonth)|\(loadAttempt)" }
 
     private var javlibraryConfigured: Bool {
         external.enabled && !(external.token() ?? "").isEmpty
@@ -142,11 +144,35 @@ private struct ExternalRankingsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(source.terms) { item in
-                            chip(title: item.label, selected: term == item.id) {
-                                term = item.id
+                if source == .zhongzhitong {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(ZhongZhiTongCatalog.years, id: \.self) { year in
+                                chip(title: "\(year) 年", selected: zztYear == year) {
+                                    zztYear = year
+                                    if let first = ZhongZhiTongCatalog.months(inYear: year).first {
+                                        zztMonth = first.month
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(ZhongZhiTongCatalog.months(inYear: zztYear)) { month in
+                                chip(title: month.monthLabel, selected: zztMonth == month.month) {
+                                    zztMonth = month.month
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(source.terms) { item in
+                                chip(title: item.label, selected: term == item.id) {
+                                    term = item.id
+                                }
                             }
                         }
                     }
@@ -195,17 +221,17 @@ private struct ExternalRankingsView: View {
             .frame(maxWidth: .infinity)
             .padding(.vertical, 32)
         } else {
-            LazyVStack(spacing: 0) {
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 3),
+                      spacing: 14) {
                 ForEach(entries) { entry in
                     Button {
                         target = entry.isActor
                             ? .actor(entry.actorName ?? entry.title)
                             : .movie(entry)
                     } label: {
-                        RankingRow(entry: entry)
+                        RankingGridCell(entry: entry)
                     }
                     .buttonStyle(.plain)
-                    Divider()
                 }
             }
         }
@@ -236,7 +262,25 @@ private struct ExternalRankingsView: View {
         defer { loading = false }
         do {
             switch source {
-            case .dmm, .javranking, .zhongzhitong:
+            case .zhongzhitong:
+                guard let month = ZhongZhiTongCatalog.month(zztMonth) else {
+                    entries = []
+                    updatedText = nil
+                    return
+                }
+                var monthEntries = month.entries
+                let covers = await ZhongZhiTongCatalog.feedCovers(term: zztMonth)
+                if !covers.isEmpty {
+                    for index in monthEntries.indices {
+                        if let code = monthEntries[index].code,
+                           let cover = covers[RankingMatchStore.key(for: code)] {
+                            monthEntries[index].coverURL = cover
+                        }
+                    }
+                }
+                entries = monthEntries
+                updatedText = "中指通月度精选 · 2019–2026 年全量"
+            case .dmm, .javranking:
                 let result = try await RankingFeedLoader.load(board: source.rawValue, term: term)
                 entries = result.entries
                 updatedText = result.generatedAt.map { "数据更新于 \(String($0.prefix(10)))" }
@@ -264,6 +308,10 @@ private struct ExternalRankingsView: View {
                 }
                 updatedText = text
             }
+            let coverURLs = entries.prefix(36).compactMap { $0.coverURL }
+            Task {
+                for url in coverURLs { await ImageLoader.shared.warm(url) }
+            }
             await store.preResolve(entries: entries, locale: settings.locale,
                                    ageCookie: settings.legalAgeCookie)
         } catch is CancellationError {
@@ -275,50 +323,44 @@ private struct ExternalRankingsView: View {
     }
 }
 
-private struct RankingRow: View {
+private struct RankingGridCell: View {
     let entry: RankingBoardEntry
 
     var body: some View {
-        HStack(spacing: 12) {
-            Text("\(entry.rank)")
-                .font(.headline)
-                .foregroundStyle(entry.rank <= 3 ? Color.accentColor : Color.secondary)
-                .frame(width: 30, alignment: .center)
-            if entry.isActor {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 6).fill(Color.secondary.opacity(0.15))
-                    Image(systemName: "person.fill")
-                        .foregroundStyle(.secondary)
+        VStack(spacing: 5) {
+            ZStack(alignment: .topLeading) {
+                if entry.isActor {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(Color.secondary.opacity(0.15))
+                        Image(systemName: "person.fill")
+                            .foregroundStyle(.secondary)
+                    }
+                    .aspectRatio(3.0 / 4.0, contentMode: .fill)
+                } else {
+                    // A board-provided cover loads directly (no HQ
+                    // probing — that contention is what made covers
+                    // slow); code-only entries keep the HQ pipeline.
+                    CoverImage(url: entry.coverURL,
+                               code: entry.coverURL == nil ? entry.code : nil)
+                        .aspectRatio(3.0 / 4.0, contentMode: .fill)
+                        .clipped()
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                 }
-                .frame(width: 54, height: 72)
-            } else {
-                CoverImage(url: entry.coverURL, code: entry.code)
-                    .frame(width: 54, height: 72)
-                    .clipped()
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                Text("\(entry.rank)")
+                    .font(.caption2.weight(.bold))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(entry.rank <= 3 ? Color.accentColor : Color.black.opacity(0.45),
+                                in: Capsule())
+                    .foregroundStyle(.white)
+                    .padding(5)
             }
-            VStack(alignment: .leading, spacing: 4) {
-                if let code = entry.code {
-                    Text(code)
-                        .font(.subheadline.weight(.semibold))
-                }
-                Text(entry.title)
-                    .font(.subheadline)
-                    .lineLimit(2)
-                if !entry.actresses.isEmpty {
-                    Text(entry.actresses.joined(separator: " · "))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-            }
-            Spacer()
-            Image(systemName: "chevron.right")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
+            Text(entry.code ?? entry.actorName ?? "")
+                .font(.caption.weight(.semibold))
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .center)
         }
-        .padding(.vertical, 8)
-        .contentShape(Rectangle())
     }
 }
 
