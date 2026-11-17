@@ -392,7 +392,7 @@ final class PosterImageModel: ObservableObject {
                 if let loaded {
                     Self.retained.setObject(loaded, forKey: pinnedURL as NSString)
                     show(loaded, from: pinnedURL, code: code)
-                } else if let url, CoverURLPolicy.isSameFile(pinnedURL, url), pinnedURL != url {
+                } else if CoverURLPolicy.isSameFile(pinnedURL, url), pinnedURL != url {
                     // Fall back only to the same file (build 45
                     // isSameFile) — never a different cover.
                     resolvedURL = url
