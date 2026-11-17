@@ -40,6 +40,7 @@ private struct FilmographyStripCell: View {
                 )
                     .frame(width: 110, height: 165)
                     .clipped()
+                    .contentShape(Rectangle())
                     .liquidCover(cornerRadius: AVFanTheme.cardRadius)
                 Text(card.displayCode)
                     .font(.caption.weight(.semibold))
@@ -47,8 +48,16 @@ private struct FilmographyStripCell: View {
                     .lineLimit(1)
                     .frame(width: 110, alignment: .leading)
             }
+            .frame(width: 110, alignment: .leading)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .frame(width: 110)
+        .contentShape(Rectangle())
+        // Front-crop overflow is clipped visually but not for
+        // hits; without a tight contentShape, the next tile's
+        // jacket (later in the HStack, therefore on top) steals
+        // taps on this tile (build 49).
     }
 
     /// Nothing has landed on this cell yet: the snapshot is the

@@ -234,6 +234,12 @@ struct HomeAnchoredFill: View {
             .offset(x: p.offset.width, y: p.offset.height)
             .frame(width: size.width, height: size.height, alignment: .topLeading)
             .clipped()
+            // .clipped() hides overflow but does not clip hit testing.
+            // Front-crop offsets the full jacket to the left, so the
+            // invisible overflow would otherwise steal taps on the
+            // neighbor tile (build 49: tap left cover, open the right
+            // movie). Lock hits to the visible box.
+            .contentShape(Rectangle())
     }
 
     /// Do not treat a small thumb as HQ: skip aggressive upscaling when the
@@ -564,6 +570,9 @@ struct CoverImage: View {
                     ProgressView().tint(.secondary)
                 }
             }
+            .frame(width: proxy.size.width, height: proxy.size.height)
+            .clipped()
+            .contentShape(Rectangle())
             .onAppear {
                 reload(size: proxy.size)
                 if let image = model.image {
