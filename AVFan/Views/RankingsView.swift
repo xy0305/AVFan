@@ -348,8 +348,8 @@ private struct RankingGridCell: View {
                     CoverImage(url: store.resolvedCards[RankingMatchStore.key(for: entry.code ?? "")]?.coverURL
                                    ?? (source == .missav ? entry.coverURL : nil),
                                code: entry.code,
-                               probeDisplaysWinner: true,
-                               registryCode: entry.code)
+                               registryCode: entry.code,
+                               probeDisplaysWinner: true)
                         .aspectRatio(3.0 / 4.0, contentMode: .fill)
                         .clipped()
                         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
