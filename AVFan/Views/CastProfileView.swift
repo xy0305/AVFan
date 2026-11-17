@@ -111,7 +111,10 @@ struct CastProfileView: View {
                     .padding(.vertical, 10)
                     .background(.black.opacity(0.82), in: Capsule())
                     .foregroundStyle(.white)
-                    .padding(.bottom, 26)
+                    // Above the floating tab bar (build 37): at 26 pt
+                    // the toast hid behind it and the owner could not
+                    // read sync results.
+                    .padding(.bottom, 108)
             }
         }
     }
@@ -251,6 +254,9 @@ struct CastProfileView: View {
     }
 
     private func toggleFollow(_ profile: CastProfile) async {
+        // Guests go to login first, like the site (build 37) —
+        // firing the POST anyway only earns a redirect.
+        guard profile.signedIn else { showLogin = true; return }
         let isOn = following ?? profile.isFollowing
         actionBusy = true
         defer { actionBusy = false }
@@ -263,14 +269,25 @@ struct CastProfileView: View {
             outcome = await LibrarySync.modelAction(url: url, model: profile.modelName, modelID: profile.modelID, csrf: profile.csrfToken)
         }
         if outcome.success {
-            following = !isOn
-            showToast(isOn ? "已取消关注" : "已关注")
+            // Verify against the server before claiming it
+            // (build 37): reload the profile fresh and adopt ITS
+            // follow state — the same discipline as the list
+            // collect (build 34). The reload also clears the
+            // local override, so the button shows the truth.
+            let target = !isOn
+            await loadPage(activePath.isEmpty ? path : activePath, page: 1, bypassCache: true)
+            if let now = self.profile, now.isFollowing == target {
+                showToast(target ? "已关注" : "已取消关注")
+            } else {
+                showToast("未同步到账号，请稍后再试")
+            }
         } else {
             handleFailure(outcome)
         }
     }
 
     private func toggleCollect(_ profile: CastProfile) async {
+        guard profile.signedIn else { showLogin = true; return }
         let isOn = collected ?? profile.isCollected
         actionBusy = true
         defer { actionBusy = false }
@@ -283,8 +300,13 @@ struct CastProfileView: View {
             outcome = await LibrarySync.modelAction(url: url, model: profile.modelName, modelID: profile.modelID, csrf: profile.csrfToken)
         }
         if outcome.success {
-            collected = !isOn
-            showToast(isOn ? "已取消收藏" : "已收藏")
+            let target = !isOn
+            await loadPage(activePath.isEmpty ? path : activePath, page: 1, bypassCache: true)
+            if let now = self.profile, now.isCollected == target {
+                showToast(target ? "已收藏" : "已取消收藏")
+            } else {
+                showToast("未同步到账号，请稍后再试")
+            }
         } else {
             handleFailure(outcome)
         }
@@ -346,7 +368,7 @@ struct CastProfileView: View {
         await loadPage(target, page: currentPage + 1, append: true)
     }
 
-    private func loadPage(_ fetchPath: String, page: Int, append: Bool = false) async {
+    private func loadPage(_ fetchPath: String, page: Int, append: Bool = false, bypassCache: Bool = false) async {
         loading = true
         defer { loading = false }
         let url = SiteClient.shared.catalogURL(path: fetchPath)
@@ -357,7 +379,8 @@ struct CastProfileView: View {
                 locale: settings.locale,
                 ageCookie: settings.legalAgeCookie,
                 allowWebViewFallback: true,
-                expectCatalog: true
+                expectCatalog: true,
+                bypassCache: bypassCache
             )
             let html = result.html
             source = result.source

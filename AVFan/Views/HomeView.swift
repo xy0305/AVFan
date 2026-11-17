@@ -821,7 +821,8 @@ struct CatalogListView: View {
                     .padding(.vertical, 10)
                     .background(.black.opacity(0.82), in: Capsule())
                     .foregroundStyle(.white)
-                    .padding(.bottom, 26)
+                    // Above the floating tab bar (build 37).
+                    .padding(.bottom, 108)
             }
         }
         .sheet(isPresented: $showFilters) {
@@ -878,7 +879,7 @@ struct CatalogListView: View {
             // collect state. A write the account did not record
             // must not toast success or flip the button.
             let target = !isOn
-            await loadPage(activePath.isEmpty ? path : activePath, page: 1)
+            await loadPage(activePath.isEmpty ? path : activePath, page: 1, bypassCache: true)
             if let now = collectState, now.isCollected == target {
                 showToast(target ? "已收藏到账号" : "已取消收藏")
             } else {
@@ -899,7 +900,7 @@ struct CatalogListView: View {
         }
     }
 
-    private func loadPage(_ fetchPath: String, page: Int, append: Bool = false) async {
+    private func loadPage(_ fetchPath: String, page: Int, append: Bool = false, bypassCache: Bool = false) async {
         loading = true
         defer { loading = false }
         let url = SiteClient.shared.catalogURL(path: fetchPath)
@@ -910,7 +911,8 @@ struct CatalogListView: View {
                 locale: settings.locale,
                 ageCookie: settings.legalAgeCookie,
                 allowWebViewFallback: true,
-                expectCatalog: true
+                expectCatalog: true,
+                bypassCache: bypassCache
             )
             let html = result.html
             let parsed = await HTMLParser.detached {

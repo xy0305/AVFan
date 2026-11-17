@@ -207,6 +207,8 @@ struct MovieDetailView: View {
                     .padding(.vertical, 10)
                     .liquidGlass()
                     .padding()
+                    // Clear the floating tab bar (build 37).
+                    .padding(.bottom, 92)
             }
         }
     }
