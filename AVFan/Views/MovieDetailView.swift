@@ -23,6 +23,11 @@ struct MovieDetailView: View {
     @State private var activeWatch: WatchStream?
     @State private var startFromBeginning = false
     @State private var toast: String?
+    @ObservedObject private var externalSettings = ExternalLibrarySettings.shared
+    /// External-database links for this movie (build 38).
+    @State private var externalMagnets: [MagnetItem] = []
+    @State private var externalStatus: String?
+    @State private var externalCode: String?
     @State private var resume115: PlaybackResumeEntry?
     @State private var resumeOnline: PlaybackResumeEntry?
     @State private var showListPicker = false
@@ -1194,31 +1199,102 @@ struct MovieDetailView: View {
                     .foregroundStyle(.secondary)
             }
             ForEach(detail.magnets) { magnet in
-                MagnetRow(
-                    magnet: magnet,
-                    configured: pan115.isConfigured,
-                    onPushPlay: {
-                        activeMagnet = magnet
-                        startFromBeginning = false
-                        if pan115.isConfigured {
-                            showPlayer = true
-                        } else {
-                            toast = "请先在设置里填写 115 Cookie 和目录 CID"
-                            hideToastLater()
-                        }
-                    },
-                    onPushOnly: {
-                        Task { await pushOnly(magnet, keyword: detail.displayCode) }
-                    },
-                    onCopy: {
-                        UIPasteboard.general.string = magnet.url
-                        toast = "已复制磁力链接"
-                        hideToastLater()
-                    }
-                )
+                magnetRow(magnet, detail: detail)
+            }
+            if externalSettings.enabled {
+                externalMagnetsBlock(detail)
             }
         }
         .padding(.top, 4)
+        .task(id: detail.displayCode) { await loadExternalLinks(detail) }
+    }
+
+    private func magnetRow(_ magnet: MagnetItem, detail: MovieDetail) -> some View {
+        MagnetRow(
+            magnet: magnet,
+            configured: pan115.isConfigured,
+            onPushPlay: {
+                activeMagnet = magnet
+                startFromBeginning = false
+                if pan115.isConfigured {
+                    showPlayer = true
+                } else {
+                    toast = "请先在设置里填写 115 Cookie 和目录 CID"
+                    hideToastLater()
+                }
+            },
+            onPushOnly: {
+                Task { await pushOnly(magnet, keyword: detail.displayCode) }
+            },
+            onCopy: {
+                UIPasteboard.general.string = magnet.url
+                toast = "已复制磁力链接"
+                hideToastLater()
+            }
+        )
+    }
+
+    /// The external database's extra links for this number
+    /// (build 38): same rows, same 115 actions, deduplicated
+    /// against the page's own magnets, with AVDB's status line.
+    @ViewBuilder
+    private func externalMagnetsBlock(_ detail: MovieDetail) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            GlassSectionHeader(title: "外部数据库", icon: "externaldrive", badge: externalMagnets.isEmpty ? nil : "\(externalMagnets.count)", trailingTitle: nil)
+            if let externalStatus {
+                Text(externalStatus)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(externalMagnets) { magnet in
+                magnetRow(magnet, detail: detail)
+            }
+        }
+        .padding(.top, 8)
+    }
+
+    private func loadExternalLinks(_ detail: MovieDetail) async {
+        let settings = ExternalLibrarySettings.shared
+        guard settings.enabled else { return }
+        let code = detail.displayCode.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !code.isEmpty, externalCode != code else { return }
+        externalCode = code
+        guard let token = settings.token(), !token.isEmpty else {
+            externalStatus = "外部数据库未配置令牌，请前往「设置 → 外部数据库」保存。"
+            return
+        }
+        externalStatus = "正在查询外部数据库…"
+        do {
+            let links = try await ExternalLibraryClient.shared.fetchLinks(for: code)
+            let existing = Set(detail.magnets.map(\.url))
+            var seen = Set<String>()
+            externalMagnets = links.compactMap { link -> MagnetItem? in
+                guard !existing.contains(link.downloadURL), seen.insert(link.downloadURL).inserted else { return nil }
+                var tags: [String] = []
+                if link.chinese == true { tags.append("中字") }
+                if link.uncensored == true { tags.append("无码") }
+                if link.uhd == true { tags.append("UHD") }
+                if let seeders = link.seeders { tags.append("做种 \(seeders)") }
+                var sizeText: String?
+                if let mb = link.sizeMB {
+                    sizeText = mb >= 1024 ? String(format: "%.2f GB", mb / 1024) : String(format: "%.0f MB", mb)
+                }
+                return MagnetItem(
+                    url: link.downloadURL,
+                    name: link.title ?? code,
+                    sizeText: sizeText,
+                    sizeKB: link.sizeMB.map { Int($0 * 1024) },
+                    fileCount: nil,
+                    date: nil,
+                    tags: tags
+                )
+            }
+            externalStatus = links.isEmpty ? "外部数据库查询成功，暂无资源" : "外部数据库已加载"
+        } catch is CancellationError {
+            return
+        } catch {
+            externalStatus = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        }
     }
 
     private func pushOnly(_ magnet: MagnetItem, keyword: String) async {

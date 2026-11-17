@@ -78,6 +78,13 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
+            Section("外部数据库") {
+                NavigationLink("外部数据库") { ExternalLibrarySettingsView() }
+                Text("与 AVDB 相同的外部数据库：启用并保存令牌后，详情页会按番号多查一份磁力 / ED2K 链接。默认服务器与 AVDB 一致。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("缓存") {
                 Button(cleared ? "已清除" : "清除页面缓存") {
                     Task {
@@ -114,6 +121,71 @@ struct SettingsView: View {
             SiteLoginView()
                 .environmentObject(settings)
                 .environmentObject(session)
+        }
+    }
+}
+
+
+/// External database settings (build 38) — AVDB's page, ported:
+/// enable toggle, server root, keychain token (blank keeps the
+/// saved one), save / clear, and the plain-HTTP warning.
+private struct ExternalLibrarySettingsView: View {
+    @ObservedObject private var settings = ExternalLibrarySettings.shared
+    @State private var baseURL = ""
+    @State private var enabled = false
+    @State private var token = ""
+    @State private var message: String?
+    @State private var confirmClear = false
+
+    var body: some View {
+        Form {
+            Section("外部数据库") {
+                Toggle("启用外部数据库", isOn: $enabled)
+                TextField("服务器根地址", text: $baseURL)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .keyboardType(.URL)
+                SecureField("新令牌（留空保留已保存令牌）", text: $token)
+                    .textContentType(.password)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .privacySensitive()
+                Text(settings.hasToken ? "令牌已保存（不显示内容）" : "未配置令牌，不会发送请求")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            Section {
+                Button("保存设置") {
+                    do {
+                        try settings.save(baseURL: baseURL, enabled: enabled, replacementToken: token)
+                        token = ""
+                        baseURL = settings.baseURL
+                        message = "设置已保存，后续查询立即使用新设置。"
+                    } catch { message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription }
+                }
+                Button("清除已保存令牌", role: .destructive) { confirmClear = true }
+                if let message { Text(message).font(.footnote) }
+            } footer: {
+                Text("令牌仅存于本机钥匙串，不会显示或复制。留空保存不会清除令牌。更换服务器须重新填写令牌，或先清除旧令牌。停用后不查询。")
+            }
+            Section("传输风险") {
+                Text("HTTP 未加密：令牌与查询内容可能被网络中间人读取或篡改。默认服务器使用 HTTP；请仅在知晓风险时启用。所有重定向均拒绝，请直接填写最终服务器根地址。")
+                    .foregroundStyle(.orange)
+            }
+        }
+        .navigationTitle("外部数据库")
+        .onAppear {
+            settings.refreshStatus()
+            baseURL = settings.baseURL
+            enabled = settings.enabled
+        }
+        .onDisappear { token = "" }
+        .confirmationDialog("清除后外部数据库将停止查询，直到重新保存令牌。", isPresented: $confirmClear, titleVisibility: .visible) {
+            Button("清除令牌", role: .destructive) {
+                settings.clearToken()
+                message = "已清除令牌，不再发送外部数据库请求。"
+            }
+            Button("取消", role: .cancel) { }
         }
     }
 }

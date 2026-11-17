@@ -59,6 +59,7 @@
 		AF1100000000000000000063 /* DMMLabelSeed.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF1100000000000000000062 /* DMMLabelSeed.swift */; };
 		AF1100000000000000000065 /* HQCoverResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF1100000000000000000064 /* HQCoverResolver.swift */; };
 		AF110000000000000000000085 /* LibrarySync.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF110000000000000000000084 /* LibrarySync.swift */; };
+		AF110000000000000000000089 /* ExternalLibrary.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF110000000000000000000088 /* ExternalLibrary.swift */; };
 		AF110000000000000000000087 /* CastProfileView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF110000000000000000000086 /* CastProfileView.swift */; };
 		AF1100000000000000000067 /* CategoriesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF1100000000000000000066 /* CategoriesView.swift */; };
 		AF1100000000000000000069 /* NewsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF1100000000000000000068 /* NewsView.swift */; };
@@ -128,6 +129,7 @@
 		AF1100000000000000000062 /* DMMLabelSeed.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DMMLabelSeed.swift; sourceTree = "<group>"; };
 		AF1100000000000000000064 /* HQCoverResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HQCoverResolver.swift; sourceTree = "<group>"; };
 		AF110000000000000000000084 /* LibrarySync.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibrarySync.swift; sourceTree = "<group>"; };
+		AF110000000000000000000088 /* ExternalLibrary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExternalLibrary.swift; sourceTree = "<group>"; };
 		AF110000000000000000000086 /* CastProfileView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CastProfileView.swift; sourceTree = "<group>"; };
 		AF1100000000000000000066 /* CategoriesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CategoriesView.swift; sourceTree = "<group>"; };
 		AF1100000000000000000068 /* NewsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewsView.swift; sourceTree = "<group>"; };
@@ -230,6 +232,7 @@
 				AF1100000000000000000062 /* DMMLabelSeed.swift */,
 				AF1100000000000000000064 /* HQCoverResolver.swift */,
 				AF110000000000000000000084 /* LibrarySync.swift */,
+				AF110000000000000000000088 /* ExternalLibrary.swift */,
 				AF110000000000000000000082 /* CataloguePoster.swift */,
 				AF110000000000000000000080 /* TenhowActorLinks.swift */,
 				AF110000000000000000000078 /* TenhowPoster.swift */,
@@ -436,6 +439,7 @@
 				AF1100000000000000000063 /* DMMLabelSeed.swift in Sources */,
 				AF1100000000000000000065 /* HQCoverResolver.swift in Sources */,
 				AF110000000000000000000085 /* LibrarySync.swift in Sources */,
+				AF110000000000000000000089 /* ExternalLibrary.swift in Sources */,
 				AF110000000000000000000087 /* CastProfileView.swift in Sources */,
 				AF110000000000000000000083 /* CataloguePoster.swift in Sources */,
 				AF110000000000000000000081 /* TenhowActorLinks.swift in Sources */,
@@ -501,7 +505,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 37;
+				CURRENT_PROJECT_VERSION = 38;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -530,7 +534,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 37;
+				CURRENT_PROJECT_VERSION = 38;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
