@@ -678,6 +678,38 @@ enum ParserTests {
         expect(castProfile.reviewCreateURL == "/cast_reviews" && castProfile.reviewCastSqid == "sxT5CTN5" && castProfile.reviewListURL == "/casts/sxT5CTN5/reviews",
                "review wiring parsed")
 
+        // Build 39: the REAL site's button shape — data-action
+        // ("click->model#follow", with a literal ">" inside the
+        // quoted value) comes BEFORE data-model-target. The old
+        // <[^>]* tag matching died at that ">", so no account
+        // wiring was ever found on real pages (follow/collect
+        // reported 页面未提供该入口). Locked against a trimmed
+        // real cast page capture plus a follow snippet in the
+        // site's exact shape.
+        let castToolbar = try fixture("cast-toolbar-real.html")
+        let toolbarProfile = HTMLParser.castProfile(in: castToolbar)
+        expect(toolbarProfile.collectURL == "/en/user/collections",
+               "real cast page collect URL parsed, got \(toolbarProfile.collectURL ?? "nil")")
+        expect(toolbarProfile.modelName == "cast" && toolbarProfile.modelID == "kZbfTsDF",
+               "real cast page model identity parsed, got \(toolbarProfile.modelName ?? "nil")/\(toolbarProfile.modelID ?? "nil")")
+        expect(toolbarProfile.uncollectURL == "/en/user/collections/remove?model=cast&model_id=kZbfTsDF",
+               "real cast page uncollect URL parsed and entity-decoded, got \(toolbarProfile.uncollectURL ?? "nil")")
+        expect(toolbarProfile.isCollected == false, "real cast page not collected (uncollect hidden)")
+        expect(toolbarProfile.csrfToken != nil, "real cast page csrf parsed")
+        let realListState = HTMLParser.listCollectState(in: castToolbar)
+        expect(realListState.collectURL == "/en/user/collections" && realListState.isCollected == false,
+               "list collect state reads the real toolbar too")
+        let followSnippet = """
+        <div data-controller="model"><button type="button" data-action="click->model#follow" data-model="cast" data-model-id="AbCd1234" data-origin-text="关注" data-loading-text="加载中" data-model-target="btnFollow" data-url="/zh-CN/user/follows">关注</button>
+        <button type="button" class="danger-dropdown-button hidden" data-action="click->model#unfollow" data-model-target="btnUnfollow" data-url="/zh-CN/user/follows/remove?model=cast&amp;model_id=AbCd1234">取消关注</button></div>
+        """
+        let followProfile = HTMLParser.castProfile(in: followSnippet)
+        expect(followProfile.followURL == "/zh-CN/user/follows",
+               "follow URL parsed past data-action, got \(followProfile.followURL ?? "nil")")
+        expect(followProfile.unfollowURL == "/zh-CN/user/follows/remove?model=cast&model_id=AbCd1234",
+               "unfollow URL parsed and entity-decoded, got \(followProfile.unfollowURL ?? "nil")")
+        expect(followProfile.isFollowing == false, "follow state parsed (unfollow hidden)")
+
         // Cast details fragment rows: table first, then definitions.
         let tableRows = HTMLParser.infoRows(in: "<table><tr><th>生日</th><td>1999-01-01</td></tr><tr><th>身高</th><td>160cm</td></tr></table>")
         expect(tableRows.count == 2 && tableRows[0].label == "生日" && tableRows[0].value == "1999-01-01" && tableRows[1].label == "身高",

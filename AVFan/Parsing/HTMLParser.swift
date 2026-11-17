@@ -1597,7 +1597,7 @@ enum HTMLParser {
     /// Returns nil when the page has no such block.
     static func libraryState(in html: String) -> LibraryPageState? {
         func targetTag(_ target: String) -> String? {
-            firstMatch("(<[^>]*data-review-target=\"\(target)\"[^>]*>)", in: html)
+            firstMatch("(<(?:[^>\"]|\"[^\"]*\")*?data-review-target=\"\(target)\"(?:[^>\"]|\"[^\"]*\")*?>)", in: html)
         }
         let addWatchlist = targetTag("btnAddToWatchlist")
         let alreadyWatchlist = targetTag("btnAlreadyInWatchlist")
@@ -1605,7 +1605,7 @@ enum HTMLParser {
         let markWatched = targetTag("btnMarkAsWatched")
         let alreadyWatched = targetTag("btnAlreadyWatched")
         let removeButton = targetTag("btnRemoveReview")
-        let modal = firstMatch("(<[^>]*id=\"save-to-list-modal\"[^>]*>)", in: html)
+        let modal = firstMatch("(<(?:[^>\"]|\"[^\"]*\")*?id=\"save-to-list-modal\"(?:[^>\"]|\"[^\"]*\")*?>)", in: html)
         guard addWatchlist != nil || alreadyWatchlist != nil || watchedButton != nil
             || markWatched != nil || alreadyWatched != nil || modal != nil else { return nil }
 
@@ -1624,24 +1624,24 @@ enum HTMLParser {
             state.reviewStatus = .watchlist
         }
         if let addWatchlist {
-            state.watchlistURL = attribute("data-url", in: addWatchlist)
+            state.watchlistURL = attribute("data-url", in: addWatchlist).map(unescape)
             if let type = attribute("data-action-type", in: addWatchlist) { state.watchlistActionType = type }
         }
         if let watchedSource = markWatched ?? watchedButton {
-            state.watchedURL = attribute("data-url", in: watchedSource)
+            state.watchedURL = attribute("data-url", in: watchedSource).map(unescape)
             if let type = attribute("data-action-type", in: watchedSource) { state.watchedActionType = type }
         }
         // The site's create call is one endpoint for both statuses; if
         // only one button printed its URL, it serves both.
         if state.watchlistURL == nil { state.watchlistURL = state.watchedURL }
         if state.watchedURL == nil { state.watchedURL = state.watchlistURL }
-        if let removeButton { state.removeURL = attribute("data-url", in: removeButton) }
-        if let modal { state.changeURL = attribute("data-change-url", in: modal) }
-        if let container = firstMatch("(<[^>]*id=\"lists-container\"[^>]*>)", in: html) {
-            state.listsURL = attribute("data-url", in: container)
+        if let removeButton { state.removeURL = attribute("data-url", in: removeButton).map(unescape) }
+        if let modal { state.changeURL = attribute("data-change-url", in: modal).map(unescape) }
+        if let container = firstMatch("(<(?:[^>\"]|\"[^\"]*\")*?id=\"lists-container\"(?:[^>\"]|\"[^\"]*\")*?>)", in: html) {
+            state.listsURL = attribute("data-url", in: container).map(unescape)
         }
-        if let saveButton = firstMatch("(<[^>]*id=\"save-list-btn\"[^>]*>)", in: html) {
-            state.createListURL = attribute("data-url", in: saveButton)
+        if let saveButton = firstMatch("(<(?:[^>\"]|\"[^\"]*\")*?id=\"save-list-btn\"(?:[^>\"]|\"[^\"]*\")*?>)", in: html) {
+            state.createListURL = attribute("data-url", in: saveButton).map(unescape)
             if let mode = attribute("data-mode", in: saveButton) { state.createListMode = mode }
         }
         return state
@@ -1720,7 +1720,7 @@ enum HTMLParser {
 
         // The `model` controller's four buttons.
         func modelTag(_ target: String) -> String? {
-            firstMatch("(<[^>]*data-model-target=\"\(target)\"[^>]*>)", in: html)
+            firstMatch("(<(?:[^>\"]|\"[^\"]*\")*?data-model-target=\"\(target)\"(?:[^>\"]|\"[^\"]*\")*?>)", in: html)
         }
         func visible(_ tag: String?) -> Bool {
             guard let tag else { return false }
@@ -1731,32 +1731,32 @@ enum HTMLParser {
         let collect = modelTag("btnCollect")
         let uncollect = modelTag("btnUncollect")
         if let follow {
-            profile.followURL = attribute("data-url", in: follow)
+            profile.followURL = attribute("data-url", in: follow).map(unescape)
             profile.modelName = attribute("data-model", in: follow)
             profile.modelID = attribute("data-model-id", in: follow)
         }
-        if let unfollow { profile.unfollowURL = attribute("data-url", in: unfollow) }
+        if let unfollow { profile.unfollowURL = attribute("data-url", in: unfollow).map(unescape) }
         if let collect {
-            profile.collectURL = attribute("data-url", in: collect)
+            profile.collectURL = attribute("data-url", in: collect).map(unescape)
             if profile.modelName == nil { profile.modelName = attribute("data-model", in: collect) }
             if profile.modelID == nil { profile.modelID = attribute("data-model-id", in: collect) }
         }
-        if let uncollect { profile.uncollectURL = attribute("data-url", in: uncollect) }
+        if let uncollect { profile.uncollectURL = attribute("data-url", in: uncollect).map(unescape) }
         profile.isFollowing = visible(unfollow)
         profile.isCollected = visible(uncollect)
 
         // 详细资料： the cast-profile element's fragment URL value.
-        if let tag = firstMatch("(<[^>]*data-controller=\"[^\"]*cast-profile[^\"]*\"[^>]*>)", in: html) {
-            profile.detailsURL = attribute("data-cast-profile-url-value", in: tag)
+        if let tag = firstMatch("(<(?:[^>\"]|\"[^\"]*\")*?data-controller=\"[^\"]*cast-profile[^\"]*\"(?:[^>\"]|\"[^\"]*\")*?>)", in: html) {
+            profile.detailsURL = attribute("data-cast-profile-url-value", in: tag).map(unescape)
         }
 
         // 短评： the cast-review element carries create URL + cast id.
-        if let tag = firstMatch("(<[^>]*data-controller=\"[^\"]*cast-review[^\"]*\"[^>]*>)", in: html) {
-            profile.reviewCreateURL = attribute("data-create-url", in: tag)
+        if let tag = firstMatch("(<(?:[^>\"]|\"[^\"]*\")*?data-controller=\"[^\"]*cast-review[^\"]*\"(?:[^>\"]|\"[^\"]*\")*?>)", in: html) {
+            profile.reviewCreateURL = attribute("data-create-url", in: tag).map(unescape)
             profile.reviewCastSqid = attribute("data-cast-sqid", in: tag)
-            profile.reviewListURL = attribute("data-cast-review-list-url-value", in: tag)
+            profile.reviewListURL = attribute("data-cast-review-list-url-value", in: tag).map(unescape)
             profile.ownReviewID = attribute("data-review-id", in: tag)
-            profile.ownReviewDestroyURL = attribute("data-destroy-url", in: tag)
+            profile.ownReviewDestroyURL = attribute("data-destroy-url", in: tag).map(unescape)
         }
         return profile
     }
@@ -1769,7 +1769,7 @@ enum HTMLParser {
         state.csrfToken = firstMatch("<meta[^>]*name=\"csrf-token\"[^>]*content=\"([^\"]+)\"", in: html)
         state.signedIn = isSignedIn(html: html)
         func modelTag(_ target: String) -> String? {
-            firstMatch("(<[^>]*data-model-target=\"\(target)\"[^>]*>)", in: html)
+            firstMatch("(<(?:[^>\"]|\"[^\"]*\")*?data-model-target=\"\(target)\"(?:[^>\"]|\"[^\"]*\")*?>)", in: html)
         }
         func visible(_ tag: String?) -> Bool {
             guard let tag else { return false }
@@ -1778,11 +1778,11 @@ enum HTMLParser {
         let collect = modelTag("btnCollect")
         let uncollect = modelTag("btnUncollect")
         if let collect {
-            state.collectURL = attribute("data-url", in: collect)
+            state.collectURL = attribute("data-url", in: collect).map(unescape)
             state.modelName = attribute("data-model", in: collect)
             state.modelID = attribute("data-model-id", in: collect)
         }
-        if let uncollect { state.uncollectURL = attribute("data-url", in: uncollect) }
+        if let uncollect { state.uncollectURL = attribute("data-url", in: uncollect).map(unescape) }
         state.isCollected = visible(uncollect)
         return state
     }
@@ -1833,7 +1833,7 @@ enum HTMLParser {
     /// the fragment's plain text lines instead).
     static func castReviews(in fragment: String) -> [CastReviewItem] {
         guard let regex = try? NSRegularExpression(
-            pattern: "(<[^>]*data-controller=\"cast-review-like\"[^>]*>)",
+            pattern: "(<(?:[^>\"]|\"[^\"]*\")*?data-controller=\"cast-review-like\"(?:[^>\"]|\"[^\"]*\")*?>)",
             options: [.caseInsensitive]
         ) else { return [] }
         let ns = fragment as NSString
@@ -1847,7 +1847,7 @@ enum HTMLParser {
             let block = ns.substring(with: NSRange(location: blockStart, length: match.range.location - blockStart))
             let tag = ns.substring(with: match.range(at: 1))
             blockStart = match.range.location + match.range.length
-            let likeURL = attribute("data-cast-review-like-url-value", in: tag)
+            let likeURL = attribute("data-cast-review-like-url-value", in: tag).map(unescape)
             var author = "匿名"
             if let anchorRegex = try? NSRegularExpression(pattern: "<a[^>]+href=\"[^\"]+\"[^>]*>([\\s\\S]*?)</a>", options: [.caseInsensitive]) {
                 let blockNS = block as NSString

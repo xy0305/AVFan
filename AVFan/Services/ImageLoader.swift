@@ -262,6 +262,17 @@ final class PosterImageModel: ObservableObject {
     /// so a reused grid cell never shows the wrong cover.
     private var shownCode: String?
 
+    /// Bitmaps already decoded this session, keyed by resolved
+    /// URL (build 39). Lazy grids and strips destroy and recreate
+    /// their CoverImage views while scrolling; a fresh model used
+    /// to start empty and flash the placeholder until the async
+    /// load landed — the detail page's scroll flicker. Seeding
+    /// synchronously from this store makes a recreated view show
+    /// the cover in its first frame; the async load below still
+    /// fetches the properly-sized decode and replaces it (same
+    /// image, no visible change).
+    private static let retained = NSCache<NSString, UIImage>()
+
     func load(url: String?, code: String? = nil, displayPoints: CGSize, allowUpscale: Bool, actors: [String] = []) {
         token += 1
         let current = token
@@ -299,10 +310,15 @@ final class PosterImageModel: ObservableObject {
             }
         }
         resolvedURL = displayURL
+        if !sameMovie, let seeded = Self.retained.object(forKey: displayURL as NSString) {
+            image = seeded
+            shownCode = code
+        }
         Task {
             let loaded = await ImageLoader.shared.load(displayURL, maxPixelSize: displayCap)
             guard current == token else { return }
             if let loaded {
+                Self.retained.setObject(loaded, forKey: displayURL as NSString)
                 image = loaded
                 shownCode = code
             } else if displayURL != url {
@@ -312,6 +328,7 @@ final class PosterImageModel: ObservableObject {
                 let fallback = await ImageLoader.shared.load(url, maxPixelSize: cap)
                 guard current == token else { return }
                 if let fallback {
+                    Self.retained.setObject(fallback, forKey: url as NSString)
                     image = fallback
                     shownCode = code
                 } else {
