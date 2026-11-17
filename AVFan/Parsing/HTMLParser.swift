@@ -1293,7 +1293,13 @@ enum HTMLParser {
             let href = unescape(ns.substring(with: match.range(at: 2)))
             guard let id = pathID(from: href), !seen.contains(id) else { continue }
             let windowStart = match.range.location + match.range.length
-            let windowEnd = index + 1 < matches.count ? matches[index + 1].range.location : min(ns.length, windowStart + 2500)
+            // The last card's window runs to the end of the input
+            // (sectionCards already bounds it): a card's own markup
+            // can exceed the old 2500-char cap — the real DLDSS-575
+            // cards carry ~3,700 chars of inline SVG — and the
+            // inside-anchor test below must be able to reach this
+            // anchor's own </a>.
+            let windowEnd = index + 1 < matches.count ? matches[index + 1].range.location : ns.length
             let windowLen = max(0, windowEnd - windowStart)
             let fullWindow = ns.substring(with: NSRange(location: windowStart, length: windowLen))
             // Pairing discipline (build 41, hardened build 46):
