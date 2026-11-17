@@ -250,7 +250,7 @@ struct HomeAnchoredFill: View {
 /// LOCK-1.3-build45 B): the resolved URL on screen and how it was
 /// presented. A tap snapshots this; the pushed detail view pins
 /// exactly it for the whole visit.
-struct DisplayedCoverSnapshot: Equatable {
+struct DisplayedCoverSnapshot: Hashable {
     let url: String
     let wholeImage: Bool
     let anchorY: CGFloat
@@ -527,6 +527,12 @@ struct CoverImage: View {
     /// the probe only warms the cache and never swaps (build 45's
     /// identity rule); pinned views ignore this entirely.
     var probeDisplaysWinner: Bool = false
+    /// Build 47 (LOCK-1.3-build47 B): reports the snapshot this
+    /// view actually put on screen (same value, same moments as
+    /// the registry record below) to a caller that keeps its own
+    /// copy — the detail strips freeze it at tap time instead of
+    /// consulting the shared registry.
+    var onDisplayed: ((DisplayedCoverSnapshot) -> Void)? = nil
 
     @StateObject private var model = PosterImageModel()
     @State private var lastURL: String?
@@ -547,7 +553,17 @@ struct CoverImage: View {
                     ProgressView().tint(.secondary)
                 }
             }
-            .onAppear { reload(size: proxy.size) }
+            .onAppear {
+                reload(size: proxy.size)
+                // A bitmap seeded synchronously from the retained
+                // store is already on screen at this point and may
+                // never pass through the onChange below — report
+                // the displayed snapshot here as well (build 47).
+                if pinned == nil, let image = model.image, let shown = model.resolvedURL {
+                    let whole = fitWholeImage && Self.shouldShowWhole(image: image, source: shown)
+                    onDisplayed?(DisplayedCoverSnapshot(url: shown, wholeImage: whole, anchorY: anchorY))
+                }
+            }
             .onChange(of: url) { _, _ in reload(size: proxy.size) }
             .onChange(of: model.image) { _, newImage in
                 // Record what this surface ACTUALLY displays (the
@@ -555,13 +571,15 @@ struct CoverImage: View {
                 // so a tap can snapshot it. Pinned views never
                 // record — they display another surface's snapshot.
                 guard let newImage, pinned == nil else { return }
-                let recordCode = registryCode ?? code
-                guard registryPathID != nil || recordCode != nil else { return }
                 guard let shown = model.resolvedURL else { return }
                 let whole = fitWholeImage && Self.shouldShowWhole(image: newImage, source: shown)
-                DisplayedCoverRegistry.shared.record(
-                    pathID: registryPathID, code: recordCode,
-                    snapshot: DisplayedCoverSnapshot(url: shown, wholeImage: whole, anchorY: anchorY))
+                let snapshot = DisplayedCoverSnapshot(url: shown, wholeImage: whole, anchorY: anchorY)
+                let recordCode = registryCode ?? code
+                if registryPathID != nil || recordCode != nil {
+                    DisplayedCoverRegistry.shared.record(
+                        pathID: registryPathID, code: recordCode, snapshot: snapshot)
+                }
+                onDisplayed?(snapshot)
             }
         }
     }

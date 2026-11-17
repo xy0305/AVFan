@@ -5,6 +5,57 @@ import AVKit
 import Combine
 import WebKit
 
+/// Navigation target for the detail page's also-starred /
+/// related-works strips (build 47, LOCK-1.3-build47 B): the tapped
+/// card plus the cover snapshot the strip cell itself was
+/// displaying at tap time. This path never consults
+/// DisplayedCoverRegistry — the snapshot travels with the tap.
+struct StripTarget: Identifiable, Hashable {
+    let card: MovieCard
+    let snapshot: DisplayedCoverSnapshot?
+    var id: String { card.pathID }
+}
+
+/// One cell of the also-starred / related-works strips (build 47,
+/// LOCK-1.3-build47 B). The cell keeps the cover snapshot IT
+/// displayed — written by CoverImage's onDisplayed callback when
+/// a bitmap actually lands on this cell — and a tap hands that
+/// snapshot, frozen, to the detail page along with the card. The
+/// shared registry plays no part on this path.
+private struct FilmographyStripCell: View {
+    let card: MovieCard
+    let onOpen: (StripTarget) -> Void
+    @State private var displayed: DisplayedCoverSnapshot?
+
+    var body: some View {
+        Button {
+            onOpen(StripTarget(card: card, snapshot: displayed ?? Self.unlandedSnapshot(for: card)))
+        } label: {
+            VStack(alignment: .leading, spacing: 6) {
+                CoverImage(url: card.coverURL, code: card.code, registryPathID: card.pathID, onDisplayed: { displayed = $0 })
+                    .frame(width: 110, height: 165)
+                    .clipped()
+                    .liquidCover(cornerRadius: AVFanTheme.cardRadius)
+                Text(card.displayCode)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                    .frame(width: 110, alignment: .leading)
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// Nothing has landed on this cell yet: the snapshot is the
+    /// card's own cover with the cell's own presentation — front
+    /// window at the anchor the cell renders with (it passes no
+    /// anchorY, so CoverImage's default 0.22) — and nothing else
+    /// (LOCK-1.3-build47 B11).
+    private static func unlandedSnapshot(for card: MovieCard) -> DisplayedCoverSnapshot? {
+        card.coverURL.map { DisplayedCoverSnapshot(url: $0, wholeImage: false, anchorY: 0.22) }
+    }
+}
+
 struct MovieDetailView: View {
     let card: MovieCard
     /// The cover snapshot captured ONCE, here at creation, from the
@@ -13,11 +64,16 @@ struct MovieDetailView: View {
     /// Falls back to the card's own cover (front window) when no
     /// surface recorded one. Never re-read during the visit, so a
     /// probe finishing or a cell remounting elsewhere cannot change
-    /// this visit's hero.
+    /// this visit's hero. Strip entries (build 47) do NOT use this:
+    /// they carry their own snapshot, frozen in `frozenStripPin`.
     let entryPin: DisplayedCoverSnapshot?
+    /// True when this view was opened from an also-starred /
+    /// related-works strip with an explicit snapshot (build 47).
+    let isStripEntry: Bool
 
     init(card: MovieCard) {
         self.card = card
+        self.isStripEntry = false
         if let hit = DisplayedCoverRegistry.shared.snapshot(pathID: card.pathID, code: card.code) {
             self.entryPin = hit
         } else if let cover = card.coverURL, !cover.isEmpty {
@@ -25,6 +81,17 @@ struct MovieDetailView: View {
         } else {
             self.entryPin = nil
         }
+    }
+
+    /// Strip entry (build 47, LOCK-1.3-build47 B12/B13): the
+    /// registry is never consulted on this path — not by pathID,
+    /// not by code. The tapped cell's snapshot is frozen into
+    /// @State here, once, and the whole visit honors only it.
+    init(stripTarget: StripTarget) {
+        self.card = stripTarget.card
+        self.entryPin = nil
+        self.isStripEntry = true
+        _frozenStripPin = State(initialValue: stripTarget.snapshot)
     }
 
     @EnvironmentObject private var settings: AppSettings
@@ -64,8 +131,13 @@ struct MovieDetailView: View {
     /// Detail extras (build 24): the page's comments and related
     /// lists, lazy-loaded from the fragments the page itself declares,
     /// auto-appending as the user scrolls — plus card navigation for
-    /// the also-starred / related-works grids.
-    @State private var openCard: MovieCard?
+    /// the also-starred / related-works strips (build 47: strips
+    /// navigate via StripTarget, carrying the tapped cell's own
+    /// displayed-cover snapshot).
+    @State private var stripTarget: StripTarget?
+    /// The strip snapshot frozen at entry (build 47); only set on
+    /// the strip-entry path, via init(stripTarget:).
+    @State private var frozenStripPin: DisplayedCoverSnapshot?
     @State private var comments: [MovieComment] = []
     @State private var commentsFallback: String?
     /// Cursor for the comments load-more (sort_by/last_value/last_id),
@@ -84,6 +156,10 @@ struct MovieDetailView: View {
     @State private var listsLoaded = false
     @State private var listsNeedLogin = false
     @State private var listsFailed = false
+    /// Identity of the lists load (card.pathID + relatedListsURL),
+    /// build 47: the first load is driven by the parent view after
+    /// the detail lands; a changed identity resets the section.
+    @State private var listsIdentity: String?
     /// Measured height of the hero's text stack (title block + controls).
     /// A long title with its expand button outgrows the slot the geometry
     /// planned, pushing the play row past the artwork and the gradient —
@@ -164,6 +240,10 @@ struct MovieDetailView: View {
         .task(id: card.pathID) {
             await model.load(card: card, settings: settings)
             refreshResume()
+            // Related lists' primary load path (build 47): driven
+            // from here, once the detail has landed — not by the
+            // section's .task inside the LazyVStack.
+            if let detail = model.detail { ensureListsLoaded(detail) }
         }
         .onChange(of: session.isSignedIn) { _, signedIn in
             if signedIn {
@@ -180,7 +260,11 @@ struct MovieDetailView: View {
                     comments = []
                     commentsNeedLogin = false
                 }
-                if listsNeedLogin || listsFailed || !listsLoaded {
+                // While a lists load is in flight, skip the reset
+                // entirely (build 47): clearing state here used to
+                // ride along with the reload and cancel/poison the
+                // very load the section was waiting on.
+                if !listsBusy, listsNeedLogin || listsFailed || !listsLoaded {
                     listsLoaded = false
                     relatedRows = []
                     listsNeedLogin = false
@@ -189,10 +273,11 @@ struct MovieDetailView: View {
                 Task {
                     await model.load(card: card, settings: settings)
                     refreshResume()
+                    if let detail = model.detail { ensureListsLoaded(detail) }
                 }
             }
         }
-        .navigationDestination(item: $openCard) { MovieDetailView(card: $0) }
+        .navigationDestination(item: $stripTarget) { MovieDetailView(stripTarget: $0) }
         .sheet(isPresented: $showWeb) {
             if let url = model.pageURL { InAppWebView(url: url, title: card.displayCode) }
         }
@@ -344,12 +429,34 @@ struct MovieDetailView: View {
         .frame(maxWidth: .infinity)
     }
 
+    /// The hero's cover, by entry path (build 47, LOCK-1.3-build47
+    /// B14). Non-strip entries keep the build-45 behavior verbatim.
+    /// Strip entries show ONLY the frozen snapshot: same file,
+    /// same presentation — no HQ substitution, no og:image swap,
+    /// no unconditional whole-image. In pinned mode the `url`
+    /// argument is the failure fallback, so it is the card's cover
+    /// only when that IS the pinned file; otherwise the pinned URL
+    /// itself (a failed pin leaves the placeholder, never another
+    /// movie's or another source's image). A strip entry whose
+    /// snapshot is missing shows the card's own cover, front
+    /// window, and nothing else.
+    private func heroCover(_ detail: MovieDetail) -> CoverImage {
+        if isStripEntry {
+            if let pin = frozenStripPin {
+                let fallback = (card.coverURL == pin.url) ? card.coverURL : pin.url
+                return CoverImage(url: fallback, code: detail.code ?? card.code, anchorY: pin.anchorY, allowUpscale: true, fitWholeImage: false, actors: detail.casts.map(\.name), pinned: pin)
+            }
+            return CoverImage(url: card.coverURL, code: nil, anchorY: 0.18, allowUpscale: true, fitWholeImage: false, actors: detail.casts.map(\.name))
+        }
+        return CoverImage(url: detail.coverURL ?? card.coverURL, code: detail.code ?? card.code, anchorY: 0.18, allowUpscale: true, fitWholeImage: true, actors: detail.casts.map(\.name), pinned: entryPin)
+    }
+
     private func portraitHero(_ detail: MovieDetail, geometry: DetailPortraitGeometry) -> some View {
         let width = geometry.width
         let imageHeight = geometry.imageHeight
         let titleTop = geometry.titleTop
         return ZStack(alignment: .top) {
-            CoverImage(url: detail.coverURL ?? card.coverURL, code: detail.code ?? card.code, anchorY: 0.18, allowUpscale: true, fitWholeImage: true, actors: detail.casts.map(\.name), pinned: entryPin)
+            heroCover(detail)
                 .frame(width: width, height: imageHeight, alignment: .top)
                 .clipped()
                 .accessibilityHidden(true)
@@ -1069,8 +1176,13 @@ struct MovieDetailView: View {
             }
         }
         .animation(nil, value: relatedRows)
+        // Fallback only (build 47): the primary load is driven by
+        // the parent view after the detail lands. This fires when
+        // the section appears and the load has neither completed
+        // nor is in flight — including after a cancelled attempt,
+        // which no longer poisons the loaded/failed flags.
         .task(id: detail.relatedListsURL) {
-            if !listsLoaded { await loadRelatedLists(detail, page: nil) }
+            ensureListsLoaded(detail)
         }
     }
 
@@ -1087,20 +1199,7 @@ struct MovieDetailView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(alignment: .top, spacing: 10) {
                     ForEach(cards) { card in
-                        Button { openCard = card } label: {
-                            VStack(alignment: .leading, spacing: 6) {
-                                CoverImage(url: card.coverURL, code: card.code, registryPathID: card.pathID)
-                                    .frame(width: 110, height: 165)
-                                    .clipped()
-                                    .liquidCover(cornerRadius: AVFanTheme.cardRadius)
-                                Text(card.displayCode)
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundStyle(.primary)
-                                    .lineLimit(1)
-                                    .frame(width: 110, alignment: .leading)
-                            }
-                        }
-                        .buttonStyle(.plain)
+                        FilmographyStripCell(card: card) { stripTarget = $0 }
                     }
                 }
             }
@@ -1164,12 +1263,39 @@ struct MovieDetailView: View {
             commentsCursor = await HTMLParser.detached { HTMLParser.commentsCursor(in: fragment) }
             commentsLoaded = true
         } catch {
+            // A cancelled load is not a completed one (build 47):
+            // leave commentsLoaded false so the section's .task
+            // can pull again when the section reappears.
+            if Task.isCancelled || error is CancellationError || (error as? URLError)?.code == .cancelled {
+                return
+            }
             commentsCursor = nil
             commentsLoaded = true
         }
     }
 
-    private func loadRelatedLists(_ detail: MovieDetail, page: Int?) async {
+    /// Drives the related-lists first load (build 47,
+    /// LOCK-1.3-build47 A): called by the parent view right after
+    /// the detail lands (and by the section's .task as a fallback).
+    /// The load's identity is the card plus the lists URL the page
+    /// declared; a new identity resets the section first.
+    private func ensureListsLoaded(_ detail: MovieDetail) {
+        guard let listsURL = detail.relatedListsURL else { return }
+        let identity = card.pathID + "|" + listsURL
+        if listsIdentity != identity {
+            listsIdentity = identity
+            relatedRows = []
+            listsNext = nil
+            listsLoaded = false
+            listsFailed = false
+            listsNeedLogin = false
+        }
+        if !listsLoaded && !listsBusy {
+            Task { await loadRelatedLists(detail, page: nil) }
+        }
+    }
+
+    private func loadRelatedLists(_ detail: MovieDetail, page: Int?, attempt: Int = 0) async {
         guard let base = detail.relatedListsURL, !listsBusy else { return }
         listsBusy = true
         defer { listsBusy = false }
@@ -1224,8 +1350,24 @@ struct MovieDetailView: View {
                 listsFailed = false
             }
         } catch {
+            // Cancellation is not a failure (build 47,
+            // LOCK-1.3-build47 A5): the LazyVStack churn cancels
+            // first runs routinely. Leave every flag untouched so
+            // the load can simply be pulled again later.
+            if Task.isCancelled || error is CancellationError || (error as? URLError)?.code == .cancelled {
+                return
+            }
+            // A REAL first-page failure gets one automatic retry;
+            // only the second failure surfaces the failure UI.
+            // listsLoaded deliberately stays false either way, so
+            // a later section appearance can re-pull via the
+            // fallback .task.
+            if page == nil, attempt == 0 {
+                listsBusy = false
+                await loadRelatedLists(detail, page: nil, attempt: 1)
+                return
+            }
             listsNext = nil
-            listsLoaded = true
             if page == nil, relatedRows.isEmpty {
                 listsFailed = true
                 listsNeedLogin = false
