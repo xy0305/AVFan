@@ -246,10 +246,10 @@ struct HomeMetrics {
     var heroHeight: CGFloat {
         min(width * 1.58, max(600, UIScreen.main.bounds.height * 0.8))
     }
-    /// Build 332: light rails overlap the hero bottom by 32 pt.
-    /// Build 53: raised to 52 so the rails sit inside the hero's
-    /// bottom fade into the page background (owner's scheme one).
-    static let heroContentOverlap: CGFloat = 52
+    /// Build 332 / 54: light rails overlap the hero bottom by 32 pt.
+    /// Build 53 temporarily raised this to 52 to hide the hard seam;
+    /// 54 keeps 53's page-color dissolve and restores the 32 pt overlap.
+    static let heroContentOverlap: CGFloat = 32
     var contentWidth: CGFloat { min(width, AdaptiveLayout.contentMaxWidth) }
     var cardWidth: CGFloat {
         let usable = contentWidth - 2 * padding - 24
@@ -434,6 +434,11 @@ private struct HomeHeroCarousel: View {
                 },
                 lastPageCommitAt: { lastPageCommitAt }
             )
+            // Build 54: the overlap band belongs to the shortcuts / rails,
+            // not the hero. Shrink the hit view and pin it to the top so
+            // taps in the bottom overlap do not open the poster.
+            .frame(width: metrics.width, height: max(0, metrics.heroHeight - HomeMetrics.heroContentOverlap))
+            .frame(width: metrics.width, height: metrics.heroHeight, alignment: .top)
             .zIndex(10)
 
             VStack(alignment: .leading, spacing: 10) {
@@ -529,24 +534,25 @@ private struct HomeHeroPage: View {
                 .frame(width: metrics.width, height: metrics.heroHeight)
                 .clipped()
                 .allowsHitTesting(false)
-            // The detail page's gradient stops.
+            // Build 54: typography scrim only — peak around 0.35–0.45
+            // in the text band, then fade to clear from 0.82 so the
+            // overlap zone has no near-black bar. The detail page
+            // keeps its own (darker) hero gradient.
             LinearGradient(
                 stops: [
-                    .init(color: .clear, location: 0.36),
-                    .init(color: .black.opacity(0.24), location: 0.57),
-                    .init(color: .black.opacity(0.78), location: 0.86),
-                    .init(color: .black.opacity(0.92), location: 1),
+                    .init(color: .clear, location: 0.40),
+                    .init(color: .black.opacity(0.18), location: 0.62),
+                    .init(color: .black.opacity(0.42), location: 0.75),
+                    .init(color: .black.opacity(0.40), location: 0.82),
+                    .init(color: .clear, location: 1),
                 ],
                 startPoint: .top,
                 endPoint: .bottom
             )
             .allowsHitTesting(false)
-            // Build 53 (owner's scheme one): a second gradient melts
-            // the hero's bottom edge into the page background, so the
-            // near-black tail above no longer cuts hard against the
-            // light page below. Over roughly the last quarter of the
-            // hero the picture washes out to systemBackground; the
-            // content rails overlap into this fade zone.
+            // Build 53 page-color dissolve, kept in 54: starts around
+            // 0.76 and is fully opaque at the bottom so the poster
+            // melts into the same color as the rails.
             LinearGradient(
                 stops: [
                     .init(color: .clear, location: 0.76),
@@ -573,9 +579,8 @@ private struct HomeHeroDots: View {
         HStack(spacing: 5) {
             ForEach(start..<(start + visible), id: \.self) { i in
                 Capsule()
-                    // Build 53: the dots now sit in the hero's light
-                    // fade zone, so they are dark instead of white,
-                    // with a faint white shadow to keep their edge.
+                    // Build 53 darkened the dots for the fade zone.
+                    // Build 54 does not retune them; accept after install.
                     .fill(Color.black.opacity(i == index ? 0.8 : 0.3))
                     .frame(width: i == index ? 18 : 6, height: 6)
                     .shadow(color: .white.opacity(0.35), radius: 1)
