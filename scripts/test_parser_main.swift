@@ -925,6 +925,49 @@ enum ParserTests {
                && Set(filoStarred.map(\.pathID)).count == filoStarred.count,
                "real filmography pathIDs distinct and non-empty, got \(filoStarred.map(\.pathID))")
 
+        // Build 46: a spliced card must be impossible. A bare
+        // anchor whose image trails OUTSIDE the anchor (in the
+        // markup that follows it) is skipped entirely — it may
+        // not wear the next movie's cover/code under its own id.
+        // The real card later in the section still parses intact.
+        let spliceHTML = """
+        <span class="sub-tab-item">还出演过</span>
+        <a href="/zh-CN/movies/B0BB405x">BOBB-405</a>
+        <img src="https://c1.avfan.com/covers/do/doks.jpg" alt="DOKS-666 題">
+        <strong>DOKS-666</strong>
+        <a href="/zh-CN/movies/D0KS666x" title="[DOKS-666] t"><div><img src="https://c1.avfan.com/covers/do/doks.jpg"></div><strong>DOKS-666</strong></a>
+        """
+        let spliceCards = HTMLParser.sectionCards(in: spliceHTML, heading: "还出演过")
+        expect(!spliceCards.contains { $0.pathID == "B0BB405x" },
+               "spliced BOBB-405 card must not exist, got \(spliceCards.map(\.pathID))")
+        expect(spliceCards.contains { $0.pathID == "D0KS666x" && $0.code == "DOKS-666"
+                                      && ($0.coverURL ?? "").contains("doks.jpg") },
+               "the real DOKS-666 card survives intact, got \(spliceCards.map { "\($0.pathID)|\($0.code ?? "nil")|\($0.coverURL ?? "nil")" })")
+
+        // Build 46: a real archived detail page (MDB-970, EN
+        // template) — the strips' (pathID, code, cover) triples
+        // hold on genuine markup, not only on synthetic fragments.
+        // The EN page's section slicing is inexact (the cut list is
+        // the Chinese headings), so these assert containment.
+        let mdb970 = try fixture("movie-mdb-970-en.html")
+        let mdbStarred = HTMLParser.sectionCards(in: mdb970, heading: "also starred")
+        expect(mdbStarred.contains { $0.pathID == "CpeDvBbd" && $0.code == "IPX-320"
+                                     && ($0.coverURL ?? "").contains("IxXhAv.jpg") },
+               "MDB-970 also-starred IPX-320 triple, got \(mdbStarred.map { "\($0.pathID)|\($0.code ?? "nil")|\($0.coverURL ?? "nil")" })")
+        expect(mdbStarred.contains { $0.pathID == "cPJcrj3C" && $0.code == "DSVR-1812" },
+               "MDB-970 also-starred DSVR-1812 pairing, got \(mdbStarred.map { "\($0.pathID)|\($0.code ?? "nil")" })")
+        let mdbRelated = HTMLParser.sectionCards(in: mdb970, heading: "Related movies")
+        expect(mdbRelated.contains { $0.pathID == "cpSVj3Cj" && $0.code == "MDB-410" },
+               "MDB-970 related MDB-410 pairing, got \(mdbRelated.map { "\($0.pathID)|\($0.code ?? "nil")" })")
+
+        // Build 46: the page's canonical link names its own movie.
+        expect(HTMLParser.canonicalPathID(in: mdb970) == "02WHNm6i",
+               "MDB-970 canonical id, got \(String(describing: HTMLParser.canonicalPathID(in: mdb970)))")
+        expect(HTMLParser.canonicalPathID(in: "<link href=\"https://avfan.com/en/movies/AbCd1234\" rel=\"canonical\" />") == "AbCd1234",
+               "canonical with href before rel")
+        expect(HTMLParser.canonicalPathID(in: "<html><head><title>x</title></head>") == nil,
+               "no canonical link, no id")
+
         // Build 31: hot searches come from the site's
         // /hot_searches JSON ({keywords: [...]}) — the panel
         // renders them client-side; they are in no page's HTML.
@@ -935,7 +978,7 @@ enum ParserTests {
         expect(HTMLParser.hotSearchKeywords(["other": 1]).isEmpty, "missing keywords key, no keywords")
 
 
-        print("PASS: home, detail magnets, ranking merge, hot casts, HQ cover sources, empty shell, block detection, cover policy, login signals, ranking tabs, pagination, news, series, detail cover identity, page map, cast cards, prefix links, filter form, homepage panel, auto-next, home main list, movie toolbar, tab hygiene, tab locale guard, drawer shortcuts, poster quality, javbus, tenhow, amazon, avbase catalogue, trailer and stills, library sync parsing, cast profile, comments sanitize, related lists, preview whitelist, filmography, real list fragments, number prefix, avfan trailer preference, hot searches")
+        print("PASS: home, detail magnets, ranking merge, hot casts, HQ cover sources, empty shell, block detection, cover policy, login signals, ranking tabs, pagination, news, series, detail cover identity, page map, cast cards, prefix links, filter form, homepage panel, auto-next, home main list, movie toolbar, tab hygiene, tab locale guard, drawer shortcuts, poster quality, javbus, tenhow, amazon, avbase catalogue, trailer and stills, library sync parsing, cast profile, comments sanitize, related lists, preview whitelist, filmography, real list fragments, number prefix, avfan trailer preference, hot searches, strip splice guard, real-page strip triples, canonical identity")
     }
 }
 

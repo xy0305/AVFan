@@ -1643,6 +1643,29 @@ final class MovieDetailViewModel: ObservableObject {
                 )
                 html = result.html
             }
+            // Canonical identity check (build 46): the served page
+            // names its own movie in <link rel="canonical">. If that
+            // id is not the tapped card's, this HTML is a different
+            // movie even when its parsed 番号 happens to agree —
+            // refetch once bypassing the cache and re-check; still
+            // mismatched → refuse through the same fallback path as
+            // the 番号 guard below. No canonical → no opinion, no
+            // block.
+            if let canonical = HTMLParser.canonicalPathID(in: html), canonical != card.pathID {
+                result = try await SiteClient.shared.html(
+                    for: url,
+                    locale: settings.locale,
+                    ageCookie: settings.legalAgeCookie,
+                    allowWebViewFallback: true,
+                    expectCatalog: true,
+                    bypassCache: true
+                )
+                html = result.html
+                if let retryCanonical = HTMLParser.canonicalPathID(in: html),
+                   retryCanonical != card.pathID {
+                    throw SiteClientError.transport("打开的影片与所点封面不一致，已停止打开错误影片")
+                }
+            }
             var parsed = await HTMLParser.detached { HTMLParser.movieDetail(from: html, url: url) }
             if parsed.pathID.isEmpty { parsed.pathID = card.pathID }
             // Identity guard (build 11): the fetched page's own 番号 must

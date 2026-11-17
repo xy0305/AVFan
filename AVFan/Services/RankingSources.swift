@@ -205,8 +205,10 @@ enum MissAVRankings {
 
 /// The complete 中指通 monthly-picks catalog AVDB bundles
 /// (ZhongZhiTongMonthly.json, 2019-09 → 2026-10, 79 months), copied
-/// into AVFan unchanged. Entries carry codes only; the two newest
-/// months additionally get their covers overlaid from the frozen feed.
+/// into AVFan unchanged. Entries carry codes only; their covers
+/// resolve in the grid like every other board's (HQ first, the
+/// matched AVFan cover second — the frozen feed's JavDB-hosted
+/// covers are not used, build 46).
 enum ZhongZhiTongCatalog {
     struct Month: Identifiable, Hashable {
         let month: String
@@ -258,21 +260,6 @@ enum ZhongZhiTongCatalog {
         months.first { $0.month == id }
     }
 
-    /// Feed covers for a month (only 2026-09 / 2026-10 exist in the
-    /// frozen feed), keyed by normalized code.
-    static func feedCovers(term: String) async -> [String: String] {
-        guard let result = try? await RankingFeedLoader.load(board: "zhongzhitong",
-                                                             term: term) else {
-            return [:]
-        }
-        var out: [String: String] = [:]
-        for entry in result.entries {
-            if let code = entry.code, let cover = entry.coverURL {
-                out[RankingMatchStore.key(for: code)] = cover
-            }
-        }
-        return out
-    }
 }
 
 // MARK: - Code → AVFan resolution
@@ -283,6 +270,12 @@ final class RankingMatchStore: ObservableObject {
 
     @Published private(set) var movieIDs: [String: String] = [:]
     @Published private(set) var actorPaths: [String: String] = [:]
+    /// Cards codes resolved to this session (build 46), keyed by
+    /// the normalized code: the rankings grid reads the matched
+    /// movie's AVFan cover from here — its fallback when no HQ
+    /// cover matches. Session-only; movieIDs above are what
+    /// persists.
+    @Published private(set) var resolvedCards: [String: MovieCard] = [:]
     private var missedMovies = Set<String>()
     private var missedActors = Set<String>()
     private let defaultsKey = "avfan.rankingMatch.v1"
@@ -318,13 +311,24 @@ final class RankingMatchStore: ObservableObject {
                          badges: [], canPlay: false)
     }
 
+    /// Remembers the card a code resolved to (build 46). A later
+    /// card without a cover never erases a cover already known.
+    private func noteResolved(_ card: MovieCard) {
+        guard let code = card.code else { return }
+        let key = Self.key(for: code)
+        var card = card
+        if card.coverURL == nil { card.coverURL = resolvedCards[key]?.coverURL }
+        resolvedCards[key] = card
+    }
+
     func resolveMovie(code: String, title: String, coverURL: String?,
                       locale: SiteLocale, ageCookie: String?,
                       force: Bool = false) async -> MovieCard? {
+        let key = Self.key(for: code)
         if let cached = cachedMovieCard(code: code, title: title, coverURL: coverURL) {
+            noteResolved(cached)
             return cached
         }
-        let key = Self.key(for: code)
         if force { missedMovies.remove(key) }
         if missedMovies.contains(key) { return nil }
         let url = SiteClient.shared.searchURL(query: code, st: "all")
@@ -345,6 +349,7 @@ final class RankingMatchStore: ObservableObject {
         var card = hit
         if card.coverURL == nil { card.coverURL = coverURL }
         if card.title.isEmpty { card.title = title }
+        noteResolved(card)
         return card
     }
 

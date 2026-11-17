@@ -229,7 +229,7 @@ private struct ExternalRankingsView: View {
                             ? .actor(entry.actorName ?? entry.title)
                             : .movie(entry)
                     } label: {
-                        RankingGridCell(entry: entry)
+                        RankingGridCell(entry: entry, source: source)
                     }
                     .buttonStyle(.plain)
                 }
@@ -268,21 +268,19 @@ private struct ExternalRankingsView: View {
                     updatedText = nil
                     return
                 }
-                var monthEntries = month.entries
-                let covers = await ZhongZhiTongCatalog.feedCovers(term: zztMonth)
-                if !covers.isEmpty {
-                    for index in monthEntries.indices {
-                        if let code = monthEntries[index].code,
-                           let cover = covers[RankingMatchStore.key(for: code)] {
-                            monthEntries[index].coverURL = cover
-                        }
-                    }
-                }
-                entries = monthEntries
+                entries = month.entries
                 updatedText = "中指通月度精选 · 2019–2026 年全量"
             case .dmm, .javranking:
                 let result = try await RankingFeedLoader.load(board: source.rawValue, term: term)
-                entries = result.entries
+                // The feed's covers are JavDB-hosted (tp.spfcas.com)
+                // and unreachable on the owner's network — never
+                // display them (build 46). Grid covers resolve HQ
+                // first, then the matched movie's AVFan cover.
+                entries = result.entries.map { entry in
+                    var entry = entry
+                    entry.coverURL = nil
+                    return entry
+                }
                 updatedText = result.generatedAt.map { "数据更新于 \(String($0.prefix(10)))" }
             case .missav:
                 entries = try await MissAVRankings.load(term: term)
@@ -325,6 +323,8 @@ private struct ExternalRankingsView: View {
 
 private struct RankingGridCell: View {
     let entry: RankingBoardEntry
+    let source: RankingSource
+    @ObservedObject private var store = RankingMatchStore.shared
 
     var body: some View {
         VStack(spacing: 5) {
@@ -338,11 +338,17 @@ private struct RankingGridCell: View {
                     }
                     .aspectRatio(3.0 / 4.0, contentMode: .fill)
                 } else {
-                    // A board-provided cover loads directly (no HQ
-                    // probing — that contention is what made covers
-                    // slow); code-only entries keep the HQ pipeline.
-                    CoverImage(url: entry.coverURL,
-                               code: entry.coverURL == nil ? entry.code : nil,
+                    // Cover policy (build 46, owner's rule): match an
+                    // HQ cover first (probeDisplaysWinner lets the
+                    // probe's winner land on screen), fall back to
+                    // the matched movie's AVFan cover, and never use
+                    // a JavDB-hosted cover. MissAV's own thumbnails
+                    // stay as its source cover under the same
+                    // HQ-first rule.
+                    CoverImage(url: store.resolvedCards[RankingMatchStore.key(for: entry.code ?? "")]?.coverURL
+                                   ?? (source == .missav ? entry.coverURL : nil),
+                               code: entry.code,
+                               probeDisplaysWinner: true,
                                registryCode: entry.code)
                         .aspectRatio(3.0 / 4.0, contentMode: .fill)
                         .clipped()

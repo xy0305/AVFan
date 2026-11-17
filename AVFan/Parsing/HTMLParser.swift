@@ -1296,27 +1296,24 @@ enum HTMLParser {
             let windowEnd = index + 1 < matches.count ? matches[index + 1].range.location : min(ns.length, windowStart + 2500)
             let windowLen = max(0, windowEnd - windowStart)
             let fullWindow = ns.substring(with: NSRange(location: windowStart, length: windowLen))
-            // Pairing discipline (build 41): the first image in
-            // reach decides whose card this is. If it only shows
-            // up inside the NEXT movie anchor, this anchor is a
-            // bare mention (a text reference to the movie), not
-            // a card — claiming it would pair this movie's link
-            // with the next card's cover, exactly the "tapped
-            // cover opens a different movie" report. When the
-            // anchor wraps its own image (the site's real
-            // markup), pairing reads inside the anchor only;
-            // the wider window remains for layouts where the
-            // image trails the anchor element.
+            // Pairing discipline (build 41, hardened build 46):
+            // the card's image must live INSIDE this anchor — the
+            // first <img in reach must appear before this anchor's
+            // own </a>, and every field is read from inside the
+            // anchor only. Anything else is skipped outright: a
+            // bare mention anchor whose image would have to be
+            // borrowed from the markup that follows it must never
+            // wear another movie's cover/code under its own id —
+            // that splice is exactly the "tapped DOKS-666, opened
+            // BOBB-405" report. A missing card is acceptable; a
+            // spliced card is not.
             let nsWindow = fullWindow as NSString
             let imgLocation = nsWindow.range(of: "<img", options: .caseInsensitive).location
-            if imgLocation == NSNotFound || imgLocation >= windowLen {
-                continue
-            }
-            var window = fullWindow
             let closeRange = nsWindow.range(of: "</a>", options: .caseInsensitive)
-            if closeRange.location != NSNotFound, imgLocation < closeRange.location {
-                window = nsWindow.substring(to: closeRange.location)
-            }
+            guard imgLocation != NSNotFound,
+                  closeRange.location != NSNotFound,
+                  imgLocation < closeRange.location else { continue }
+            let window = nsWindow.substring(to: closeRange.location)
             seen.insert(id)
             let titleAttr = attribute("title", in: tag).map(unescape) ?? ""
             let imgSrc = firstMatch("<img[^>]+(?:data-src|data-original|src)=\"([^\"]+)\"", in: window)
@@ -1349,6 +1346,24 @@ enum HTMLParser {
             ))
         }
         return cards
+    }
+
+    /// The detail page's own canonical movie id, from
+    /// <link rel="canonical" href=".../movies/<8-char id>">.
+    /// Attribute order varies between templates, so both orders
+    /// are tried. Build 46 uses this as a page-identity check
+    /// that is independent of the parsed 番号： the served page
+    /// names the movie it actually is.
+    static func canonicalPathID(in html: String) -> String? {
+        for pattern in [
+            "<link[^>]*rel=\"canonical\"[^>]*href=\"([^\"]*/movies/[A-Za-z0-9]{8})[^\"]*\"",
+            "<link[^>]*href=\"([^\"]*/movies/[A-Za-z0-9]{8})[^\"]*\"[^>]*rel=\"canonical\""
+        ] {
+            if let href = firstMatch(pattern, in: html) {
+                return pathID(from: unescape(href))
+            }
+        }
+        return nil
     }
 
     /// Hot-search keywords from the site's /hot_searches JSON

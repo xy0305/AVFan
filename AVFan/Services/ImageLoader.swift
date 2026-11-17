@@ -317,22 +317,45 @@ final class PosterImageModel: ObservableObject {
     /// image, no visible change).
     private static let retained = NSCache<NSString, UIImage>()
 
-    func load(url: String?, code: String? = nil, displayPoints: CGSize, allowUpscale: Bool, actors: [String] = [], pinnedURL: String? = nil) {
+    func load(url: String?, code: String? = nil, displayPoints: CGSize, allowUpscale: Bool, actors: [String] = [], pinnedURL: String? = nil, probeDisplaysWinner: Bool = false) {
         token += 1
         let current = token
         let sameMovie = code != nil && code == shownCode && image != nil
         if !sameMovie { image = nil }
         failed = false
         resolvedURL = url
-        guard let url, !url.isEmpty else {
-            failed = true
-            return
-        }
         let scale = UIScreen.main.scale
         let longest = Int(max(displayPoints.width, displayPoints.height) * scale)
         // Never request more pixels than needed, but keep HQ jackets sharp.
         // Small thumbs stay at their native size (no invented HQ source).
         let cap = allowUpscale ? max(longest, 1200) : min(max(longest, 400), 900)
+        guard let url, !url.isEmpty else {
+            // Probe-display mode (build 46, rankings grid only):
+            // no URL to show yet, but a code — run the HQ probe on
+            // its own and display the winner when it lands. Pinned
+            // mode ignores this parameter entirely.
+            if probeDisplaysWinner, pinnedURL == nil,
+               let code, !code.isEmpty, HQCoverResolver.enabled {
+                Task {
+                    let winner = await HQCoverResolver.shared.winner(for: code, pageCover: nil, actors: actors)
+                    guard current == token else { return }
+                    guard let winner, !winner.isEmpty else { failed = true; return }
+                    resolvedURL = winner
+                    let loaded = await ImageLoader.shared.load(winner, maxPixelSize: max(cap, 1200))
+                    guard current == token else { return }
+                    if let loaded {
+                        Self.retained.setObject(loaded, forKey: winner as NSString)
+                        image = loaded
+                        shownCode = code
+                    } else {
+                        failed = true
+                    }
+                }
+                return
+            }
+            failed = true
+            return
+        }
 
         if let pinnedURL, !pinnedURL.isEmpty {
             // Build 45 pin (LOCK-1.3-build45 B): this view was pushed
@@ -388,6 +411,26 @@ final class PosterImageModel: ObservableObject {
             if let cached = HQCoverResolver.cachedWinner(for: code), cached != url {
                 displayURL = cached
                 displayCap = max(cap, 1200)
+            } else if probeDisplaysWinner {
+                // Probe-display mode (build 46, rankings grid only):
+                // the given URL shows first; when the probe finds an
+                // HQ winner, swap it in. This surface's identity is
+                // its code, and the displayed-cover registry
+                // re-records on the swap, so a tap still pins
+                // exactly what is on screen at tap time. Every other
+                // surface keeps the no-swap rule below.
+                Task {
+                    let winner = await HQCoverResolver.shared.winner(for: code, pageCover: url, actors: actors)
+                    guard current == token, let winner, !winner.isEmpty, winner != displayURL else { return }
+                    resolvedURL = winner
+                    let loaded = await ImageLoader.shared.load(winner, maxPixelSize: max(cap, 1200))
+                    guard current == token else { return }
+                    if let loaded {
+                        Self.retained.setObject(loaded, forKey: winner as NSString)
+                        image = loaded
+                        shownCode = code
+                    }
+                }
             } else {
                 Task { _ = await HQCoverResolver.shared.winner(for: code, pageCover: url, actors: actors) }
             }
@@ -478,6 +521,12 @@ struct CoverImage: View {
     /// pathID or a code records what it actually displayed.
     var registryPathID: String? = nil
     var registryCode: String? = nil
+    /// Build 46 (rankings grid only): let an HQ probe's winner
+    /// become the displayed cover — immediately when there is no
+    /// URL to show, or as a swap-in when there is. Everywhere else
+    /// the probe only warms the cache and never swaps (build 45's
+    /// identity rule); pinned views ignore this entirely.
+    var probeDisplaysWinner: Bool = false
 
     @StateObject private var model = PosterImageModel()
     @State private var lastURL: String?
@@ -530,7 +579,7 @@ struct CoverImage: View {
         if lastURL != url || lastPinURL != pinned?.url || model.image == nil {
             lastURL = url
             lastPinURL = pinned?.url
-            model.load(url: url, code: code, displayPoints: size, allowUpscale: allowUpscale, actors: actors, pinnedURL: pinned?.url)
+            model.load(url: url, code: code, displayPoints: size, allowUpscale: allowUpscale, actors: actors, pinnedURL: pinned?.url, probeDisplaysWinner: probeDisplaysWinner)
         }
     }
 
