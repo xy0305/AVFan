@@ -1,9 +1,9 @@
 import Foundation
 import Combine
 
-// Build 42: the rankings tab carries ONLY the five external boards the
-// owner picked — DMM, JAV Ranking, MissAV, 中指通, JAVLibrary. AVFan's
-// own ranking pages are no longer shown anywhere.
+// Build 42/43: the rankings tab keeps AVFan's own boards and adds the
+// five external boards the owner picked — DMM, JAV Ranking, MissAV,
+// 中指通, JAVLibrary (JavDB's own rankings were explicitly skipped).
 //
 // Data routes (none of them touches JavDB):
 //  - DMM / JAV Ranking / 中指通: the pre-matched feed AVDB publishes on

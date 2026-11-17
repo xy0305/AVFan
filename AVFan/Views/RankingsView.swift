@@ -1,11 +1,13 @@
 import SwiftUI
 
-// Build 42: the rankings tab carries ONLY the five external boards the
-// owner picked — DMM, JAV Ranking, MissAV, 中指通, JAVLibrary — ported
-// from AVDB. AVFan's own ranking pages are gone. Entries are keyed by
-// code; tapping one resolves the code against AVFan's own search and
-// opens the AVFan detail page (RankingMatchStore caches resolutions
-// on disk and pre-resolves the visible list in the background).
+// Build 42/43: the rankings tab keeps ALL of AVFan's own boards and
+// adds the five external boards ported from AVDB — DMM, JAV Ranking,
+// MissAV, 中指通, JAVLibrary. (JavDB's own rankings were the ones the
+// owner said to skip.) External entries are keyed by code; tapping one
+// resolves the code against AVFan's own search and opens the AVFan
+// detail page (RankingMatchStore caches resolutions on disk and
+// pre-resolves the visible list in the background). The native boards
+// live in NativeRankingsView, unchanged.
 
 private struct RankingTerm: Identifiable, Hashable {
     let id: String
@@ -61,12 +63,69 @@ private enum RankingTarget: Hashable, Identifiable {
     }
 }
 
+
+private enum RankingBoard: Hashable {
+    case native
+    case external(RankingSource)
+}
+
+/// Rankings tab container (build 43): a board picker on top — AVFan's
+/// own boards first (NativeRankingsView, untouched), then the five
+/// external boards.
 struct RankingsView: View {
+    @State private var board: RankingBoard = .native
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    boardChip(title: "本站榜单", selected: board == .native) {
+                        board = .native
+                    }
+                    ForEach(RankingSource.allCases) { item in
+                        boardChip(title: item.title, selected: board == .external(item)) {
+                            board = .external(item)
+                        }
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+            }
+            switch board {
+            case .native:
+                NativeRankingsView()
+            case .external(let source):
+                ExternalRankingsView(source: source)
+                    .id(source)
+            }
+        }
+    }
+
+    private func boardChip(title: String, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.subheadline.weight(selected ? .semibold : .regular))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 7)
+                .background(selected ? Color.accentColor : Color.secondary.opacity(0.15),
+                            in: Capsule())
+                .foregroundStyle(selected ? Color.white : Color.primary)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct ExternalRankingsView: View {
     @EnvironmentObject private var settings: AppSettings
     @ObservedObject private var store = RankingMatchStore.shared
     @ObservedObject private var external = ExternalLibrarySettings.shared
-    @State private var source: RankingSource = .dmm
-    @State private var term: String = "daily"
+    let source: RankingSource
+    @State private var term: String
+
+    init(source: RankingSource) {
+        self.source = source
+        _term = State(initialValue: source.terms[0].id)
+    }
     @State private var entries: [RankingBoardEntry] = []
     @State private var updatedText: String?
     @State private var loading = false
@@ -83,16 +142,6 @@ struct RankingsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(RankingSource.allCases) { item in
-                            chip(title: item.title, selected: source == item) {
-                                source = item
-                                term = item.terms[0].id
-                            }
-                        }
-                    }
-                }
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
                         ForEach(source.terms) { item in
