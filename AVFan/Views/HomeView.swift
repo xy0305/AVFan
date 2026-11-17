@@ -240,7 +240,12 @@ struct HomeMetrics {
 
     var isPadWidth: Bool { width >= 768 }
     var padding: CGFloat { isPadWidth ? 24 : (width < 380 ? 16 : 20) }
-    var heroHeight: CGFloat { isPadWidth ? 600 : min(max(width * 1.15, 430), 560) }
+    /// Same hero geometry as the detail page (build 36, owner:
+    /// home hero in the detail page's style):
+    /// DetailPortraitGeometry.imageHeight.
+    var heroHeight: CGFloat {
+        min(width * 1.58, max(600, UIScreen.main.bounds.height * 0.8))
+    }
     /// Build 332: light rails overlap the hero bottom by 32 pt.
     static let heroContentOverlap: CGFloat = 32
     var contentWidth: CGFloat { min(width, AdaptiveLayout.contentMaxWidth) }
@@ -506,40 +511,28 @@ private struct HomeHeroPage: View {
     let metrics: HomeMetrics
     var active: Bool
 
-    @StateObject private var model = PosterImageModel()
-
     var body: some View {
         ZStack(alignment: .bottom) {
             Rectangle().fill(Color.secondary.opacity(0.14))
-            if let image = model.image {
-                // Backdrop: the same cover blown up to fill the
-                // whole hero frame, blurred and darkened — the
-                // frame is always covered, with no sharp crop.
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFill()
-                    .frame(width: metrics.width, height: metrics.heroHeight)
-                    .clipped()
-                    .blur(radius: 28)
-                    .overlay(Color.black.opacity(0.16))
-                    .allowsHitTesting(false)
-                // The cover itself COMPLETE (build 33): aspect-fit,
-                // nothing cropped — the anchored fill of builds
-                // 18-32 zoomed landscape covers into a centre slice
-                // and the owner kept reporting the size as wrong.
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: metrics.width, height: metrics.heroHeight)
-                    .allowsHitTesting(false)
-            } else if !model.failed {
-                ProgressView().tint(.secondary)
-            }
+            // The detail page's hero, literally (build 36): the
+            // same CoverImage with the same parameters — anchored
+            // fill for jackets and croppable covers, whole-image
+            // for plain landscape originals — in the detail
+            // geometry's frame. Builds 32/33's home-only
+            // treatments (zoom fill, then complete-fit over a
+            // blurred blow-up) are retired.
+            CoverImage(url: card.coverURL, code: card.code,
+                       anchorY: 0.18, allowUpscale: true, fitWholeImage: true)
+                .frame(width: metrics.width, height: metrics.heroHeight)
+                .clipped()
+                .allowsHitTesting(false)
+            // The detail page's gradient stops.
             LinearGradient(
                 stops: [
-                    .init(color: .clear, location: 0.42),
-                    .init(color: .black.opacity(0.28), location: 0.62),
-                    .init(color: .black.opacity(0.72), location: 1),
+                    .init(color: .clear, location: 0.36),
+                    .init(color: .black.opacity(0.24), location: 0.57),
+                    .init(color: .black.opacity(0.78), location: 0.86),
+                    .init(color: .black.opacity(0.92), location: 1),
                 ],
                 startPoint: .top,
                 endPoint: .bottom
@@ -548,14 +541,6 @@ private struct HomeHeroPage: View {
         }
         .frame(width: metrics.width, height: metrics.heroHeight)
         .clipped()
-        .onAppear { reload() }
-        .onChange(of: card.coverURL) { _, _ in reload() }
-    }
-
-    private func reload() {
-        model.load(url: card.coverURL, code: card.code,
-                   displayPoints: CGSize(width: metrics.width, height: metrics.heroHeight),
-                   allowUpscale: true)
     }
 }
 
