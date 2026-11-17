@@ -7,6 +7,26 @@ import WebKit
 
 struct MovieDetailView: View {
     let card: MovieCard
+    /// The cover snapshot captured ONCE, here at creation, from the
+    /// displayed-cover registry (build 45, LOCK-1.3-build45 B): the
+    /// exact file and presentation the tapped surface was showing.
+    /// Falls back to the card's own cover (front window) when no
+    /// surface recorded one. Never re-read during the visit, so a
+    /// probe finishing or a cell remounting elsewhere cannot change
+    /// this visit's hero.
+    let entryPin: DisplayedCoverSnapshot?
+
+    init(card: MovieCard) {
+        self.card = card
+        if let hit = DisplayedCoverRegistry.shared.snapshot(pathID: card.pathID, code: card.code) {
+            self.entryPin = hit
+        } else if let cover = card.coverURL, !cover.isEmpty {
+            self.entryPin = DisplayedCoverSnapshot(url: cover, wholeImage: false, anchorY: 0.18)
+        } else {
+            self.entryPin = nil
+        }
+    }
+
     @EnvironmentObject private var settings: AppSettings
     @EnvironmentObject private var bookmarks: BookmarkStore
     @EnvironmentObject private var session: SiteSession
@@ -141,7 +161,7 @@ struct MovieDetailView: View {
             }
         }
         .toolbar(.hidden, for: .navigationBar)
-        .task {
+        .task(id: card.pathID) {
             await model.load(card: card, settings: settings)
             refreshResume()
         }
@@ -329,7 +349,7 @@ struct MovieDetailView: View {
         let imageHeight = geometry.imageHeight
         let titleTop = geometry.titleTop
         return ZStack(alignment: .top) {
-            CoverImage(url: detail.coverURL ?? card.coverURL, code: detail.code ?? card.code, anchorY: 0.18, allowUpscale: true, fitWholeImage: true, actors: detail.casts.map(\.name))
+            CoverImage(url: detail.coverURL ?? card.coverURL, code: detail.code ?? card.code, anchorY: 0.18, allowUpscale: true, fitWholeImage: true, actors: detail.casts.map(\.name), pinned: entryPin)
                 .frame(width: width, height: imageHeight, alignment: .top)
                 .clipped()
                 .accessibilityHidden(true)
@@ -1069,7 +1089,7 @@ struct MovieDetailView: View {
                     ForEach(cards) { card in
                         Button { openCard = card } label: {
                             VStack(alignment: .leading, spacing: 6) {
-                                CoverImage(url: card.coverURL, code: card.code)
+                                CoverImage(url: card.coverURL, code: card.code, registryPathID: card.pathID)
                                     .frame(width: 110, height: 165)
                                     .clipped()
                                     .liquidCover(cornerRadius: AVFanTheme.cardRadius)
@@ -1587,6 +1607,10 @@ final class MovieDetailViewModel: ObservableObject {
     var pageURL: URL?
 
     func load(card: MovieCard, settings: AppSettings) async {
+        // Identity reset (build 45, LOCK-1.3-build45 A): a reused
+        // view must never show the previous movie's detail under
+        // the new card — clear first, then load.
+        if detail?.pathID != card.pathID { detail = nil }
         loading = true
         errorMessage = nil
         defer { loading = false }
@@ -1637,6 +1661,10 @@ final class MovieDetailViewModel: ObservableObject {
             if parsed.title.isEmpty { parsed.title = card.titleWithoutCodePrefix }
             if parsed.coverURL == nil { parsed.coverURL = card.coverURL }
             if parsed.pageURL.isEmpty { parsed.pageURL = url.absoluteString }
+            // A superseded load (the view was reused for another
+            // card and .task(id:) cancelled this one) must not land
+            // its movie on screen.
+            guard !Task.isCancelled else { return }
             detail = parsed
             source = result.source
         } catch {

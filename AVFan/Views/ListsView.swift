@@ -137,7 +137,7 @@ struct ListsView: View {
             MovieDetailView(card: item.asCard)
         } label: {
             HStack(spacing: 12) {
-                CoverImage(url: item.coverURL, code: item.code)
+                CoverImage(url: item.coverURL, code: item.code, registryPathID: item.pathID)
                     .frame(width: 84, height: 56)
                     .clipped()
                     .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
@@ -295,7 +295,7 @@ struct AccountPageView: View {
             MovieDetailView(card: card)
         } label: {
             HStack(spacing: 12) {
-                CoverImage(url: card.coverURL, code: card.code)
+                CoverImage(url: card.coverURL, code: card.code, registryPathID: card.pathID)
                     .frame(width: 84, height: 56)
                     .clipped()
                     .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))

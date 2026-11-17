@@ -246,6 +246,50 @@ struct HomeAnchoredFill: View {
 }
 
 @MainActor
+/// What one cover surface actually displayed for a movie (build 45,
+/// LOCK-1.3-build45 B): the resolved URL on screen and how it was
+/// presented. A tap snapshots this; the pushed detail view pins
+/// exactly it for the whole visit.
+struct DisplayedCoverSnapshot: Equatable {
+    let url: String
+    let wholeImage: Bool
+    let anchorY: CGFloat
+}
+
+/// Click-time snapshots of displayed covers, keyed by pathID with a
+/// normalized-code fallback. Written by CoverImage whenever a bitmap
+/// lands (the URL it actually resolved to, not the one requested);
+/// read ONCE when a detail view is created. A detail view never
+/// re-reads it during the visit, so later updates (a probe finishing,
+/// a cell remounting with the HQ winner) cannot change a cover the
+/// user is already looking at.
+final class DisplayedCoverRegistry {
+    static let shared = DisplayedCoverRegistry()
+    private let lock = NSLock()
+    private var byPathID: [String: DisplayedCoverSnapshot] = [:]
+    private var byCode: [String: DisplayedCoverSnapshot] = [:]
+
+    static func normalize(_ code: String) -> String {
+        code.uppercased().filter { $0.isLetter || $0.isNumber }
+    }
+
+    func record(pathID: String?, code: String?, snapshot: DisplayedCoverSnapshot) {
+        guard !snapshot.url.isEmpty else { return }
+        lock.lock()
+        defer { lock.unlock() }
+        if let pathID, !pathID.isEmpty { byPathID[pathID] = snapshot }
+        if let code, !code.isEmpty { byCode[Self.normalize(code)] = snapshot }
+    }
+
+    func snapshot(pathID: String?, code: String?) -> DisplayedCoverSnapshot? {
+        lock.lock()
+        defer { lock.unlock() }
+        if let pathID, !pathID.isEmpty, let hit = byPathID[pathID] { return hit }
+        if let code, !code.isEmpty, let hit = byCode[Self.normalize(code)] { return hit }
+        return nil
+    }
+}
+
 final class PosterImageModel: ObservableObject {
     @Published var image: UIImage?
     @Published var failed = false
@@ -273,7 +317,7 @@ final class PosterImageModel: ObservableObject {
     /// image, no visible change).
     private static let retained = NSCache<NSString, UIImage>()
 
-    func load(url: String?, code: String? = nil, displayPoints: CGSize, allowUpscale: Bool, actors: [String] = []) {
+    func load(url: String?, code: String? = nil, displayPoints: CGSize, allowUpscale: Bool, actors: [String] = [], pinnedURL: String? = nil) {
         token += 1
         let current = token
         let sameMovie = code != nil && code == shownCode && image != nil
@@ -289,6 +333,45 @@ final class PosterImageModel: ObservableObject {
         // Never request more pixels than needed, but keep HQ jackets sharp.
         // Small thumbs stay at their native size (no invented HQ source).
         let cap = allowUpscale ? max(longest, 1200) : min(max(longest, 400), 900)
+
+        if let pinnedURL, !pinnedURL.isEmpty {
+            // Build 45 pin (LOCK-1.3-build45 B): this view was pushed
+            // with the exact cover file the user tapped. Display that
+            // file — never a cached HQ winner, never a probe result.
+            // The fetch still runs at this view's pixel cap, so the
+            // SAME file may arrive sharper; a different file may not
+            // arrive at all. If the pinned file itself fails, fall
+            // back to the page cover (usually the same file) — never
+            // to a winner.
+            resolvedURL = pinnedURL
+            if !sameMovie, let seeded = Self.retained.object(forKey: pinnedURL as NSString) {
+                image = seeded
+                shownCode = code
+            }
+            Task {
+                let loaded = await ImageLoader.shared.load(pinnedURL, maxPixelSize: cap)
+                guard current == token else { return }
+                if let loaded {
+                    Self.retained.setObject(loaded, forKey: pinnedURL as NSString)
+                    image = loaded
+                    shownCode = code
+                } else if pinnedURL != url {
+                    resolvedURL = url
+                    let fallback = await ImageLoader.shared.load(url, maxPixelSize: cap)
+                    guard current == token else { return }
+                    if let fallback {
+                        Self.retained.setObject(fallback, forKey: url as NSString)
+                        image = fallback
+                        shownCode = code
+                    } else {
+                        failed = true
+                    }
+                } else {
+                    failed = true
+                }
+            }
+            return
+        }
 
         // AVDB HQ cover sources (DMM / MGS), on by default. The cover for
         // a number is decided ONCE, here at load time, from the shared
@@ -385,20 +468,31 @@ struct CoverImage: View {
     /// Actor display names for Tenhow cover discovery (build 19);
     /// only the detail page can supply them.
     var actors: [String] = []
+    /// Build 45 (LOCK-1.3-build45 B): when set, this view displays
+    /// exactly the tapped cover snapshot — that URL, that
+    /// presentation — for its whole lifetime. Set only by the
+    /// detail hero from the snapshot captured at push time.
+    var pinned: DisplayedCoverSnapshot? = nil
+    /// Build 45: identity of the movie this cover belongs to, for
+    /// the displayed-cover registry. Any cover rendered with a
+    /// pathID or a code records what it actually displayed.
+    var registryPathID: String? = nil
+    var registryCode: String? = nil
 
     @StateObject private var model = PosterImageModel()
     @State private var lastURL: String?
+    @State private var lastPinURL: String?
 
     var body: some View {
         GeometryReader { proxy in
             ZStack {
                 placeholder
                 if let image = model.image {
-                    if fitWholeImage, Self.shouldShowWhole(image: image, source: model.resolvedURL ?? url) {
+                    if (pinned?.wholeImage ?? fitWholeImage), Self.shouldShowWhole(image: image, source: model.resolvedURL ?? url) {
                         NativeFitImage(image: image, size: proxy.size)
                     } else {
                         HomeAnchoredFill(image: image, size: proxy.size, source: model.resolvedURL ?? url,
-                                         anchorY: anchorY, allowUpscale: allowUpscale)
+                                         anchorY: pinned?.anchorY ?? anchorY, allowUpscale: allowUpscale)
                     }
                 } else if !model.failed {
                     ProgressView().tint(.secondary)
@@ -406,6 +500,20 @@ struct CoverImage: View {
             }
             .onAppear { reload(size: proxy.size) }
             .onChange(of: url) { _, _ in reload(size: proxy.size) }
+            .onChange(of: model.image) { _, newImage in
+                // Record what this surface ACTUALLY displays (the
+                // resolved URL and the presentation branch taken),
+                // so a tap can snapshot it. Pinned views never
+                // record — they display another surface's snapshot.
+                guard let newImage, pinned == nil else { return }
+                let recordCode = registryCode ?? code
+                guard registryPathID != nil || recordCode != nil else { return }
+                guard let shown = model.resolvedURL else { return }
+                let whole = fitWholeImage && Self.shouldShowWhole(image: newImage, source: shown)
+                DisplayedCoverRegistry.shared.record(
+                    pathID: registryPathID, code: recordCode,
+                    snapshot: DisplayedCoverSnapshot(url: shown, wholeImage: whole, anchorY: anchorY))
+            }
         }
     }
 
@@ -419,9 +527,10 @@ struct CoverImage: View {
     }
 
     private func reload(size: CGSize) {
-        if lastURL != url || model.image == nil {
+        if lastURL != url || lastPinURL != pinned?.url || model.image == nil {
             lastURL = url
-            model.load(url: url, code: code, displayPoints: size, allowUpscale: allowUpscale, actors: actors)
+            lastPinURL = pinned?.url
+            model.load(url: url, code: code, displayPoints: size, allowUpscale: allowUpscale, actors: actors, pinnedURL: pinned?.url)
         }
     }
 

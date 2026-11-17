@@ -67,7 +67,7 @@ struct MoviePosterCard: View {
             // No text overlays on the cover (build 14, owner's call):
             // the site's badge pills （可播放 / 24小时磁链 …) covered the
             // artwork on every small card.
-            CoverImage(url: card.coverURL, code: card.code)
+            CoverImage(url: card.coverURL, code: card.code, registryPathID: card.pathID)
                 .aspectRatio(2.0/3.0, contentMode: .fill)
                 .clipped()
                 .liquidCover(cornerRadius: AVFanTheme.cardRadius)

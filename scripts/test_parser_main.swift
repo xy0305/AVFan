@@ -888,6 +888,43 @@ enum ParserTests {
         expect(mentionCards.last?.coverURL?.contains("/covers/mm/mention.jpg") == true,
                "the mentioned movie keeps its own cover, got \(mentionCards.last?.coverURL ?? "nil")")
 
+        // Build 45 (LOCK-1.3-build45 D): in a strip of standard
+        // history-link cards — one anchor wrapping its own img and
+        // its own code, the live structure — every card's
+        // (pathID, code, coverURL) triple must come from that same
+        // anchor node, position by position.
+        let tripleHTML = """
+        <span class="sub-tab-item">还出演过</span>
+        <a class="history-link" href="/zh-CN/movies/Gana3371" title="[GANA-3371] First Title">
+          <div><img src="https://c1.avfan.com/covers/ga/gana.jpg"></div>
+          <div><strong>GANA-3371</strong></div>
+        </a>
+        <a class="history-link" href="/zh-CN/movies/Nghj062x" title="[NGHJ-062] Second Title">
+          <div><img src="https://c1.avfan.com/covers/ng/nghj.jpg"></div>
+          <div><strong>NGHJ-062</strong></div>
+        </a>
+        <a class="history-link" href="/zh-CN/movies/Shyn148x" title="[SHYN-148] Third Title">
+          <div><img src="https://c1.avfan.com/covers/sh/shyn.jpg"></div>
+          <div><strong>SHYN-148</strong></div>
+        </a>
+        """
+        let tripleCards = HTMLParser.sectionCards(in: tripleHTML, heading: "还出演过")
+        expect(tripleCards.count == 3, "triple strip count, got \(tripleCards.count)")
+        expect(tripleCards.map(\.pathID) == ["Gana3371", "Nghj062x", "Shyn148x"],
+               "triple pathIDs from their own anchors, got \(tripleCards.map(\.pathID))")
+        expect(tripleCards.map(\.displayCode) == ["GANA-3371", "NGHJ-062", "SHYN-148"],
+               "triple codes from their own anchors, got \(tripleCards.map(\.displayCode))")
+        expect(tripleCards.map { $0.coverURL ?? "nil" } == [
+            "https://c1.avfan.com/covers/ga/gana.jpg",
+            "https://c1.avfan.com/covers/ng/nghj.jpg",
+            "https://c1.avfan.com/covers/sh/shyn.jpg"],
+               "triple covers from their own anchors, got \(tripleCards.map { $0.coverURL ?? "nil" })")
+        // The real filmography fixture's cards likewise carry a
+        // distinct, non-empty pathID each — no shared or borrowed id.
+        expect(filoStarred.allSatisfy { !$0.pathID.isEmpty }
+               && Set(filoStarred.map(\.pathID)).count == filoStarred.count,
+               "real filmography pathIDs distinct and non-empty, got \(filoStarred.map(\.pathID))")
+
         // Build 31: hot searches come from the site's
         // /hot_searches JSON ({keywords: [...]}) — the panel
         // renders them client-side; they are in no page's HTML.

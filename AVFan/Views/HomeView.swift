@@ -522,7 +522,8 @@ private struct HomeHeroPage: View {
             // treatments (zoom fill, then complete-fit over a
             // blurred blow-up) are retired.
             CoverImage(url: card.coverURL, code: card.code,
-                       anchorY: 0.18, allowUpscale: true, fitWholeImage: true)
+                       anchorY: 0.18, allowUpscale: true, fitWholeImage: true,
+                       registryPathID: card.pathID)
                 .frame(width: metrics.width, height: metrics.heroHeight)
                 .clipped()
                 .allowsHitTesting(false)

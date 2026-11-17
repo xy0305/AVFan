@@ -342,7 +342,8 @@ private struct RankingGridCell: View {
                     // probing — that contention is what made covers
                     // slow); code-only entries keep the HQ pipeline.
                     CoverImage(url: entry.coverURL,
-                               code: entry.coverURL == nil ? entry.code : nil)
+                               code: entry.coverURL == nil ? entry.code : nil,
+                               registryCode: entry.code)
                         .aspectRatio(3.0 / 4.0, contentMode: .fill)
                         .clipped()
                         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
