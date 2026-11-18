@@ -530,7 +530,7 @@ private struct HomeHeroPage: View {
             // blurred blow-up) are retired.
             CoverImage(url: card.coverURL, code: card.hqCoverCode,
                        anchorY: 0.18, allowUpscale: true, fitWholeImage: true,
-                       registryPathID: card.pathID, usesOriginalCover: card.usesOriginalAvfanCover)
+                       usesOriginalCover: card.usesOriginalAvfanCover, registryPathID: card.pathID)
                 .frame(width: metrics.width, height: metrics.heroHeight)
                 .clipped()
                 .allowsHitTesting(false)

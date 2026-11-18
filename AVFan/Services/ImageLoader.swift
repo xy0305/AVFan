@@ -563,6 +563,10 @@ struct CoverImage: View {
     /// the whole image at its native aspect instead of force-filling
     /// the tall hero frame.
     var fitWholeImage: Bool = false
+    /// Build 57: 欧美 / 无码 titles use the avfan original cover.
+    /// Heroes use NativeFitImage; thumbnails letterbox (scaledToFit,
+    /// no blur) inside the existing cell. HQ lookup is skipped.
+    var usesOriginalCover: Bool = false
     /// Actor display names for Tenhow cover discovery (build 19);
     /// only the detail page can supply them.
     var actors: [String] = []
@@ -594,10 +598,6 @@ struct CoverImage: View {
     /// and never repaint with a decode that is not larger than
     /// what is already on screen — the hero paints once, at size.
     var paintOnce: Bool = false
-    /// Build 57: 欧美 / 无码 titles use the avfan original cover.
-    /// Heroes use NativeFitImage; thumbnails letterbox (scaledToFit,
-    /// no blur) inside the existing cell. HQ lookup is skipped.
-    var usesOriginalCover: Bool = false
 
     @StateObject private var model = PosterImageModel()
     @State private var lastURL: String?
