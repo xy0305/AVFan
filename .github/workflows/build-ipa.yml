@@ -37,7 +37,6 @@ jobs:
             AVFan/Models/Models.swift \
             AVFan/Parsing/HTMLParser.swift \
             AVFan/Parsing/CoverURLPolicy.swift \
-            AVFan/Parsing/FanzaTodayParser.swift \
             AVFan/Services/JRHTML.swift \
             AVFan/Services/DMMCoverResolver.swift \
             AVFan/Services/DMMLabelSeed.swift \
