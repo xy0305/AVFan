@@ -129,7 +129,8 @@ enum FanzaTodayParser {
     /// after `current`. The live list uses `?release=recent&sort=date&page=N`.
     static func nextPage(in html: String, current: Int) -> Int? {
         var found: [Int] = []
-        for match in JRHTML.matches(#"[?&]page=(\d+)"#, html) {
+        // Rendered markup often entity-encodes the query (`&amp;page=2`).
+        for match in JRHTML.matches(#"[?&](?:amp;)?page=(\d+)"#, html) {
             if let value = Int(match[1]) { found.append(value) }
         }
         let later = found.filter { $0 > current }
