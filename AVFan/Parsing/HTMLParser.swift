@@ -900,12 +900,15 @@ enum HTMLParser {
         if let match = firstMatch("\\b([A-Z]{2,10}-\\d{2,8})\\b", in: trimmed, options: [.caseInsensitive]) {
             return match.uppercased()
         }
+        if let match = firstMatch("\\b([A-Za-z][A-Za-z0-9]*(?:\\.[A-Za-z0-9]+)*\\.\\d{4}\\.\\d{2}\\.\\d{2})\\b", in: trimmed) {
+            return match
+        }
         return nil
     }
 
     // MARK: - Cards
 
-    static func movieCards(in html: String) -> [MovieCard] {
+    static func movieCards(in html: String, fromPath path: String? = nil) -> [MovieCard] {
         var cards: [MovieCard] = []
         var seen = Set<String>()
         guard let regex = try? NSRegularExpression(
@@ -973,6 +976,7 @@ enum HTMLParser {
                 if cards[index].date == nil { cards[index].date = incoming.date }
                 if cards[index].ratingText == nil { cards[index].ratingText = incoming.ratingText }
                 if incoming.canPlay { cards[index].canPlay = true }
+                if cards[index].catalogType == nil { cards[index].catalogType = incoming.catalogType }
                 var merged = Set(cards[index].badges)
                 merged.formUnion(incoming.badges)
                 cards[index].badges = Array(merged)
@@ -1021,7 +1025,77 @@ enum HTMLParser {
                 cards[index].coverURL = CoverURLPolicy.preferred(from: [absoluteURL(lastImg)])
             }
         }
-        return cards
+        return resolvedCards(cards, fromPath: path)
+    }
+
+
+    /// Stamp an explicit list type (`t=` / `tfilter`) onto cards, then
+    /// fill any still-unknown type with the tight code heuristic.
+    static func resolvedCards(_ cards: [MovieCard], fromPath path: String? = nil) -> [MovieCard] {
+        let context = path.flatMap { catalogType(fromPath: $0) }
+        return cards.map { card in
+            var card = card
+            if card.catalogType == nil {
+                card.catalogType = context ?? CatalogCoverPolicy.inferredType(code: card.code)
+            }
+            return card
+        }
+    }
+
+    /// Exclusive catalog type declared by a list/search URL. `t=` wins
+    /// over `tfilter`. Multiple distinct type tokens mean no exclusive type.
+    static func catalogType(fromPath path: String) -> CatalogType? {
+        let query: String
+        if let mark = path.firstIndex(of: "?") {
+            var q = String(path[path.index(after: mark)...])
+            if let hash = q.firstIndex(of: "#") { q = String(q[..<hash]) }
+            query = q
+        } else {
+            return nil
+        }
+        var tValues: [String] = []
+        var tfilterValues: [String] = []
+        for pair in query.split(separator: "&") {
+            let kv = pair.split(separator: "=", maxSplits: 1).map(String.init)
+            guard let rawKey = kv.first else { continue }
+            let key = (rawKey.removingPercentEncoding ?? rawKey).lowercased()
+            let raw = kv.count == 2 ? kv[1] : ""
+            let value = raw.removingPercentEncoding ?? raw
+            let parts = value.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }.filter { !$0.isEmpty }
+            if key == "t" { tValues.append(contentsOf: parts) }
+            else if key == "tfilter" { tfilterValues.append(contentsOf: parts) }
+        }
+        if let type = exclusiveCatalogType(tValues) { return type }
+        return exclusiveCatalogType(tfilterValues)
+    }
+
+    private static func exclusiveCatalogType(_ values: [String]) -> CatalogType? {
+        let types = values.compactMap { CatalogType.parse($0) }
+        guard let first = types.first, types.allSatisfy({ $0 == first }) else { return nil }
+        return first
+    }
+
+    /// Type declared on a detail page: a 类型 definition, or the `t=`
+    /// token on tag / type links inside `.movie-info` only — never the
+    /// magnet list (so 「无码破解」 cannot flip a 有码 title).
+    static func catalogType(inDetailHTML html: String) -> CatalogType? {
+        for label in ["影片类型", "类型", "类别"] {
+            if let text = definition(named: label, in: html), let type = CatalogType.parse(text) {
+                return type
+            }
+        }
+        if let info = firstMatch("<dl[^>]*class=\"[^\"]*movie-info[^\"]*\"[^>]*>([\\s\\S]*?)</dl>", in: html)
+            ?? firstMatch("<dl[^>]*class='[^']*movie-info[^']*'[^>]*>([\\s\\S]*?)</dl>", in: html) {
+            return catalogType(fromLinkQueries: info)
+        }
+        return nil
+    }
+
+    private static func catalogType(fromLinkQueries html: String) -> CatalogType? {
+        let hrefs = allMatches("href=\"([^\"]+)\"", in: html) + allMatches("href='([^']+)'", in: html)
+        let types = hrefs.compactMap { catalogType(fromPath: unescape($0)) }
+        guard let first = types.first, types.allSatisfy({ $0 == first }) else { return nil }
+        return first
     }
 
     static func home(from html: String) -> HomePage {
@@ -1210,6 +1284,9 @@ enum HTMLParser {
         // The scan remains only as a fallback for pages declaring none.
         let declaredCover = cover.flatMap { $0.isEmpty ? nil : $0 }
         let preferredCover = declaredCover ?? CoverURLPolicy.preferred(in: html)
+        let makers = links(in: definitionHTML(named: "制作商", in: html) ?? "", kind: "maker")
+        let parsedType = catalogType(inDetailHTML: html)
+            ?? CatalogCoverPolicy.inferredType(code: code, makers: makers.map(\.name))
         return MovieDetail(
             pathID: pathID,
             pageURL: pageURL,
@@ -1221,7 +1298,7 @@ enum HTMLParser {
             duration: duration,
             rating: rating,
             ratingCount: ratingCount,
-            makers: links(in: definitionHTML(named: "制作商", in: html) ?? "", kind: "maker"),
+            makers: makers,
             publishers: links(in: definitionHTML(named: "发行商", in: html) ?? "", kind: "publisher"),
             directors: links(in: definitionHTML(named: "导演", in: html) ?? "", kind: "director"),
             series: links(in: html, kind: "series", pathHint: "/series/"),
@@ -1240,7 +1317,8 @@ enum HTMLParser {
             commentsCount: firstMatch("tabComments\"[^>]*>[\\s\\S]*?评论[\\s\\S]*?>(\\d+)<", in: html).flatMap { Int($0) },
             alsoStarred: sectionCards(in: html, heading: "还出演过"),
             relatedWorks: sectionCards(in: html, heading: "相关作品"),
-            prefixLink: movieNumberPrefix(in: html)
+            prefixLink: movieNumberPrefix(in: html),
+            catalogType: parsedType
         )
     }
 
@@ -1351,7 +1429,7 @@ enum HTMLParser {
                 canPlay: window.contains("可播放")
             ))
         }
-        return cards
+        return resolvedCards(cards)
     }
 
     /// The detail page's own canonical movie id, from

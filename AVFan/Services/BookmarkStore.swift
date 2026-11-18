@@ -30,7 +30,8 @@ final class BookmarkStore: ObservableObject {
                 code: detail.code,
                 title: detail.displayTitle,
                 coverURL: detail.coverURL,
-                addedAt: Date()
+                addedAt: Date(),
+                catalogType: detail.catalogType
             )
             items.insert(item, at: 0)
         }

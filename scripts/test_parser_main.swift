@@ -1053,7 +1053,45 @@ enum ParserTests {
         expect(jrSubItems.dropFirst().first?.name == "DMM 本周热销榜",
                "jr second sublist, got \(jrSubItems.dropFirst().first?.name ?? "nil")")
 
-        print("PASS: home, detail magnets, ranking merge, hot casts, HQ cover sources, empty shell, block detection, cover policy, login signals, ranking tabs, pagination, news, series, detail cover identity, page map, cast cards, prefix links, filter form, homepage panel, auto-next, home main list, movie toolbar, tab hygiene, tab locale guard, drawer shortcuts, poster quality, javbus, tenhow, amazon, avbase catalogue, trailer and stills, library sync parsing, cast profile, comments sanitize, related lists, preview whitelist, filmography, real list fragments, number prefix, avfan trailer preference, hot searches, strip splice guard, real-page strip triples, canonical identity, same-file identity, javranking boards")
+        // Build 57: 欧美 / 无码 keep the avfan original cover.
+        expect(CatalogCoverPolicy.isWesternDateCode("Blacked.2026.09.10"), "western date-code Blacked.2026.09.10")
+        expect(CatalogCoverPolicy.inferredType(code: "Blacked.2026.09.10") == .western, "heuristic stamps western for Blacked.2026.09.10")
+        expect(HTMLParser.extractCode(from: "Blacked.2026.09.10") == "Blacked.2026.09.10", "extract western date-code, got \(HTMLParser.extractCode(from: "Blacked.2026.09.10") ?? "nil")")
+        expect(CatalogCoverPolicy.inferredType(code: "HEYZO-1234") == .uncensored, "HEYZO is uncensored")
+        expect(CatalogCoverPolicy.inferredType(code: "FC2-PPV-1234567") == nil, "FC2-PPV is not uncensored")
+        expect(CatalogCoverPolicy.inferredType(code: "FC2-4909883") == nil, "FC2 is not uncensored")
+        expect(!CatalogCoverPolicy.usesOriginalAvfanCover(explicit: nil, code: "FC2-PPV-1234567"), "FC2 does not use the original-cover path")
+        expect(CatalogType.parse("无码破解") == nil, "无码破解 is not the 无码 type token")
+
+        expect(detail.catalogType == .censored, "IPZZ-936 is 有码 from movie-info t=censored, got \(String(describing: detail.catalogType))")
+        let leakedHTML = movieHTML + "<div id=\"magnets\"><span class=\"tag\">无码破解</span> magnet:?xt=urn:btih:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa</div>"
+        let leakedDetail = HTMLParser.movieDetail(from: leakedHTML, url: movieURL)
+        expect(leakedDetail.catalogType == .censored, "无码破解 magnet must not flip a 有码 title, got \(String(describing: leakedDetail.catalogType))")
+        expect(!CatalogCoverPolicy.usesOriginalAvfanCover(explicit: leakedDetail.catalogType, code: leakedDetail.code), "有码 + 无码破解 still uses the jacket/HQ path")
+
+        expect(HTMLParser.catalogType(fromPath: "/zh-CN/tags?cts=has_magnets&t=western") == .western, "t=western")
+        expect(HTMLParser.catalogType(fromPath: "/zh-CN/tags?cts=has_magnets&t=uncensored") == .uncensored, "t=uncensored")
+        expect(HTMLParser.catalogType(fromPath: "https://avfan.com/zh-CN?tfilter=western") == .western, "tfilter=western")
+        expect(HTMLParser.catalogType(fromPath: "/zh-CN?tfilter=uncensored") == .uncensored, "tfilter=uncensored")
+        expect(HTMLParser.catalogType(fromPath: "/zh-CN?tfilter=censored,western") == nil, "mixed tfilter is not exclusive")
+        expect(HTMLParser.catalogType(fromPath: "/zh-CN/tags?cts=has_magnets&t=censored") == .censored, "t=censored")
+
+        let westernList = """
+        <a href="/zh-CN/movies/AbCd1234" title="[Blacked.2026.09.10] Hotel Vixen"><img src="https://c1.avfan.com/covers/xx/hotel.jpg" alt="[Blacked.2026.09.10] Hotel Vixen"><strong>Blacked.2026.09.10</strong><span class="text-sm">Hotel Vixen</span></a>
+        """
+        let stampedWestern = HTMLParser.movieCards(in: westernList, fromPath: "/zh-CN/tags?t=western")
+        expect(stampedWestern.contains { $0.catalogType == .western }, "list t=western stamps cards, got \(stampedWestern.map { String(describing: $0.catalogType) })")
+        let stampedUncensored = HTMLParser.movieCards(in: "<a href=\"/zh-CN/movies/HeYzO123\" title=\"[HEYZO-1234] sample\"><img src=\"https://c1.avfan.com/covers/xx/heyzo.jpg\" alt=\"HEYZO-1234\"><strong>HEYZO-1234</strong><span class=\"text-sm\">sample</span></a>", fromPath: "/zh-CN/tags?t=uncensored")
+        expect(stampedUncensored.contains { $0.catalogType == .uncensored }, "list t=uncensored stamps cards")
+        let heuristicWestern = HTMLParser.movieCards(in: westernList)
+        expect(heuristicWestern.contains { $0.catalogType == .western }, "heuristic stamps Blacked date-code without list context")
+
+        let jacketOriginal = FrontPosterPolicy.cropRect(width: 800, height: 538, source: "https://c1.avfan.com/covers/4j/4jOrgf.jpg", usesOriginalCover: true)
+        expect(jacketOriginal == nil, "original-cover flag skips FrontPosterPolicy even on a 1.5-ratio avfan /covers/ URL")
+        let jacketDefault = FrontPosterPolicy.cropRect(width: 800, height: 538, source: "https://c1.avfan.com/covers/4j/4jOrgf.jpg")
+        expect(jacketDefault != nil, "same jacket still crops when the original-cover flag is off")
+
+        print("PASS: home, detail magnets, ranking merge, hot casts, HQ cover sources, empty shell, block detection, cover policy, login signals, ranking tabs, pagination, news, series, detail cover identity, page map, cast cards, prefix links, filter form, homepage panel, auto-next, home main list, movie toolbar, tab hygiene, tab locale guard, drawer shortcuts, poster quality, javbus, tenhow, amazon, avbase catalogue, trailer and stills, library sync parsing, cast profile, comments sanitize, related lists, preview whitelist, filmography, real list fragments, number prefix, avfan trailer preference, hot searches, strip splice guard, real-page strip triples, canonical identity, same-file identity, javranking boards, original-cover types")
     }
 }
 

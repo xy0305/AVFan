@@ -400,7 +400,8 @@ final class RankingMatchStore: ObservableObject {
         guard let pathID = movieIDs[Self.key(for: code)] else { return nil }
         return MovieCard(pathID: pathID, href: "/movies/\(pathID)", code: code,
                          title: title, coverURL: coverURL, date: nil, ratingText: nil,
-                         badges: [], canPlay: false)
+                         badges: [], canPlay: false,
+                         catalogType: CatalogCoverPolicy.inferredType(code: code))
     }
 
     /// Remembers the card a code resolved to (build 46). A later

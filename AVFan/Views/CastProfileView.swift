@@ -385,7 +385,7 @@ struct CastProfileView: View {
             let html = result.html
             source = result.source
             let parsed = await HTMLParser.detached {
-                (cards: HTMLParser.movieCards(in: html),
+                (cards: HTMLParser.movieCards(in: html, fromPath: fetchPath),
                  form: HTMLParser.listFilterForm(in: html),
                  next: HTMLParser.autoNextPath(in: html, page: page, path: fetchPath),
                  profile: HTMLParser.castProfile(in: html))

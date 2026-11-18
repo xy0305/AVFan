@@ -528,9 +528,9 @@ private struct HomeHeroPage: View {
             // geometry's frame. Builds 32/33's home-only
             // treatments (zoom fill, then complete-fit over a
             // blurred blow-up) are retired.
-            CoverImage(url: card.coverURL, code: card.code,
+            CoverImage(url: card.coverURL, code: card.hqCoverCode,
                        anchorY: 0.18, allowUpscale: true, fitWholeImage: true,
-                       registryPathID: card.pathID)
+                       registryPathID: card.pathID, usesOriginalCover: card.usesOriginalAvfanCover)
                 .frame(width: metrics.width, height: metrics.heroHeight)
                 .clipped()
                 .allowsHitTesting(false)
@@ -695,7 +695,7 @@ final class HomeViewModel: ObservableObject {
             )
             let html = result.html
             let parsed = await HTMLParser.detached {
-                (cards: HTMLParser.home(from: html).listCards,
+                (cards: HTMLParser.resolvedCards(HTMLParser.home(from: html).listCards, fromPath: target),
                  next: HTMLParser.autoNextPath(in: html, page: pageNo, path: target))
             }
             let known = Set(listCards.map(\.pathID))
@@ -728,7 +728,7 @@ final class HomeViewModel: ObservableObject {
             )
             let html = result.html
             let parsed = await HTMLParser.detached {
-                (cards: HTMLParser.home(from: html).listCards,
+                (cards: HTMLParser.resolvedCards(HTMLParser.home(from: html).listCards, fromPath: filtered),
                  next: HTMLParser.autoNextPath(in: html, page: 1, path: filtered))
             }
             listCards = parsed.cards
@@ -944,7 +944,7 @@ struct CatalogListView: View {
             )
             let html = result.html
             let parsed = await HTMLParser.detached {
-                (cards: HTMLParser.movieCards(in: html),
+                (cards: HTMLParser.movieCards(in: html, fromPath: fetchPath),
                  form: HTMLParser.listFilterForm(in: html),
                  next: HTMLParser.autoNextPath(in: html, page: page, path: fetchPath),
                  collect: HTMLParser.listCollectState(in: html))

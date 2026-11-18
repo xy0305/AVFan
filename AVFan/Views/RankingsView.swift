@@ -428,6 +428,18 @@ private struct RankingGridCell: View {
     let source: RankingSource
     @ObservedObject private var store = RankingMatchStore.shared
 
+    private var matchedCard: MovieCard? {
+        guard let code = entry.code else { return nil }
+        return store.resolvedCards[RankingMatchStore.key(for: code)]
+    }
+
+    /// Build 57: original-cover display only for an avfan-matched
+    /// row whose type is known. Unmatched rows stay as they are;
+    /// type is never guessed from the ranking code alone.
+    private var usesOriginalCover: Bool {
+        matchedCard?.usesOriginalAvfanCover == true
+    }
+
     var body: some View {
         VStack(spacing: 5) {
             ZStack(alignment: .topLeading) {
@@ -446,12 +458,14 @@ private struct RankingGridCell: View {
                     // the matched movie's AVFan cover, and never use
                     // a JavDB-hosted cover. MissAV's own thumbnails
                     // stay as its source cover under the same
-                    // HQ-first rule.
-                    CoverImage(url: store.resolvedCards[RankingMatchStore.key(for: entry.code ?? "")]?.coverURL
+                    // HQ-first rule. Build 57: avfan-matched 欧美 /
+                    // 无码 titles skip HQ and letterbox the page cover.
+                    CoverImage(url: matchedCard?.coverURL
                                    ?? (source == .missav ? entry.coverURL : nil),
-                               code: entry.code,
+                               code: usesOriginalCover ? nil : entry.code,
+                               usesOriginalCover: usesOriginalCover,
                                registryCode: entry.code,
-                               probeDisplaysWinner: true)
+                               probeDisplaysWinner: !usesOriginalCover)
                         .aspectRatio(3.0 / 4.0, contentMode: .fill)
                         .clipped()
                         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))

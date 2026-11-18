@@ -535,6 +535,21 @@ struct NativeFitImage: View {
     }
 }
 
+/// Build 57 thumbnail presentation for 欧美 / 无码 originals: the
+/// whole bitmap scaledToFit inside the existing cell, letterboxed
+/// on the page background. No blur, no zoom-fill of a 2:3 slot.
+struct LetterboxFitImage: View {
+    let image: UIImage
+    let size: CGSize
+
+    var body: some View {
+        Image(uiImage: image)
+            .resizable()
+            .scaledToFit()
+            .frame(width: size.width, height: size.height)
+    }
+}
+
 /// Front-cropped cover that paints the original bitmap with a 332 crop window.
 struct CoverImage: View {
     let url: String?
@@ -579,24 +594,37 @@ struct CoverImage: View {
     /// and never repaint with a decode that is not larger than
     /// what is already on screen — the hero paints once, at size.
     var paintOnce: Bool = false
+    /// Build 57: 欧美 / 无码 titles use the avfan original cover.
+    /// Heroes use NativeFitImage; thumbnails letterbox (scaledToFit,
+    /// no blur) inside the existing cell. HQ lookup is skipped.
+    var usesOriginalCover: Bool = false
 
     @StateObject private var model = PosterImageModel()
     @State private var lastURL: String?
     @State private var lastPinURL: String?
+    @State private var lastOriginal = false
 
     var body: some View {
         GeometryReader { proxy in
             ZStack {
-                placeholder
                 if let image = model.image {
-                    if (pinned?.wholeImage ?? fitWholeImage), Self.shouldShowWhole(image: image, source: displayedSource) {
+                    if usesOriginalCover {
+                        if isHeroPresentation {
+                            NativeFitImage(image: image, size: proxy.size)
+                        } else {
+                            LetterboxFitImage(image: image, size: proxy.size)
+                        }
+                    } else if (pinned?.wholeImage ?? fitWholeImage), Self.shouldShowWhole(image: image, source: displayedSource) {
                         NativeFitImage(image: image, size: proxy.size)
                     } else {
                         HomeAnchoredFill(image: image, size: proxy.size, source: displayedSource,
                                          anchorY: pinned?.anchorY ?? anchorY, allowUpscale: allowUpscale)
                     }
-                } else if !model.failed {
-                    ProgressView().tint(.secondary)
+                } else {
+                    placeholder
+                    if !model.failed {
+                        ProgressView().tint(.secondary)
+                    }
                 }
             }
             .frame(width: proxy.size.width, height: proxy.size.height)
@@ -609,6 +637,7 @@ struct CoverImage: View {
                 }
             }
             .onChange(of: url) { _, _ in reload(size: proxy.size) }
+            .onChange(of: usesOriginalCover) { _, _ in reload(size: proxy.size) }
             .onChange(of: model.image) { _, newImage in
                 guard let newImage else { return }
                 emitDisplayed(newImage)
@@ -624,7 +653,7 @@ struct CoverImage: View {
 
     private func emitDisplayed(_ image: UIImage) {
         guard let shown = model.displayedURL else { return }
-        let whole = (pinned?.wholeImage ?? fitWholeImage) && Self.shouldShowWhole(image: image, source: shown)
+        let whole = usesOriginalCover || ((pinned?.wholeImage ?? fitWholeImage) && Self.shouldShowWhole(image: image, source: shown))
         let snapshot = DisplayedCoverSnapshot(url: shown, wholeImage: whole, anchorY: pinned?.anchorY ?? anchorY)
         onDisplayed?(snapshot)
         // Registry writes only when the caller opted in with
@@ -646,11 +675,15 @@ struct CoverImage: View {
         return true
     }
 
+    /// Heroes (detail / home) pass fitWholeImage or a pin; thumbnails do not.
+    private var isHeroPresentation: Bool { fitWholeImage || pinned != nil }
+
     private func reload(size: CGSize) {
-        if lastURL != url || lastPinURL != pinned?.url || model.image == nil {
+        if lastURL != url || lastPinURL != pinned?.url || lastOriginal != usesOriginalCover || model.image == nil {
             lastURL = url
             lastPinURL = pinned?.url
-            model.load(url: url, code: code, displayPoints: size, allowUpscale: allowUpscale, actors: actors, pinnedURL: pinned?.url, probeDisplaysWinner: probeDisplaysWinner, paintOnce: paintOnce)
+            lastOriginal = usesOriginalCover
+            model.load(url: url, code: usesOriginalCover ? nil : code, displayPoints: size, allowUpscale: allowUpscale, actors: actors, pinnedURL: pinned?.url, probeDisplaysWinner: usesOriginalCover ? false : probeDisplaysWinner, paintOnce: paintOnce)
         }
     }
 
@@ -674,7 +707,7 @@ enum CoverPrefetch {
         guard !cards.isEmpty else { return }
         Task {
             for card in cards {
-                let winner = card.code.flatMap { HQCoverResolver.cachedWinner(for: $0) }
+                let winner = card.usesOriginalAvfanCover ? nil : card.code.flatMap { HQCoverResolver.cachedWinner(for: $0) }
                 await ImageLoader.shared.warm(winner ?? card.coverURL)
             }
         }

@@ -337,7 +337,7 @@ struct SearchView: View {
             let kind = resultKind
             let section = linkSection
             let parsed = await HTMLParser.detached {
-                (cards: HTMLParser.movieCards(in: html),
+                (cards: HTMLParser.movieCards(in: html, fromPath: path),
                  casts: HTMLParser.castCards(in: html),
                  links: HTMLParser.searchLinkRows(in: html, section: section),
                  types: HTMLParser.searchTypes(in: html),
@@ -388,7 +388,7 @@ struct SearchView: View {
             let html = result.html
             let section = linkSection
             let parsed = await HTMLParser.detached {
-                (cards: HTMLParser.movieCards(in: html),
+                (cards: HTMLParser.movieCards(in: html, fromPath: target),
                  casts: HTMLParser.castCards(in: html),
                  links: HTMLParser.searchLinkRows(in: html, section: section),
                  next: HTMLParser.autoNextPath(in: html, page: pageNo, path: target))

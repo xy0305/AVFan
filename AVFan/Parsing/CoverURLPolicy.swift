@@ -173,7 +173,8 @@ enum CoverURLPolicy {
 /// AVDB-style DVD-front crop window (Build 332 geometry).
 /// Pure numbers: the front of a standard jacket is the right-aligned ~0.70·height slice.
 enum FrontPosterPolicy {
-    static func cropRect(width: Int, height: Int, source: String, validatedJacket: Bool = false) -> CGRect? {
+    static func cropRect(width: Int, height: Int, source: String, validatedJacket: Bool = false, usesOriginalCover: Bool = false) -> CGRect? {
+        if usesOriginalCover { return nil }
         guard width > 0, height > 0 else { return nil }
         if CoverURLPolicy.isOfficialFrontPortrait(source) { return nil }
         let known = CoverURLPolicy.isLikelyJacketURL(source) || validatedJacket
@@ -186,5 +187,99 @@ enum FrontPosterPolicy {
         let frontWidth = Int((Double(height) * frontRatio).rounded())
         guard frontWidth > 0, frontWidth < width else { return nil }
         return CGRect(x: width - frontWidth, y: 0, width: frontWidth, height: height)
+    }
+}
+
+/// Build 57: 欧美 / 无码 titles keep the avfan page cover as-is — no
+/// FrontPosterPolicy crop and no HQCoverResolver swap. Type comes from
+/// explicit list context, then a parsed detail-page type, then a tight
+/// code/maker heuristic used only when the type is still unknown.
+enum CatalogCoverPolicy {
+    static func usesOriginalAvfanCover(_ type: CatalogType?) -> Bool {
+        type == .western || type == .uncensored
+    }
+
+    static func usesOriginalAvfanCover(explicit: CatalogType?, code: String?, makers: [String] = []) -> Bool {
+        usesOriginalAvfanCover(resolvedType(explicit: explicit, code: code, makers: makers))
+    }
+
+    static func resolvedType(explicit: CatalogType?, code: String?, makers: [String] = []) -> CatalogType? {
+        if let explicit { return explicit }
+        return inferredType(code: code, makers: makers)
+    }
+
+    /// Heuristic only: western `studio.YYYY.MM.DD` codes, or well-known
+    /// uncensored makers. FC2 / FC2-PPV never counts as 无码 here.
+    static func inferredType(code: String?, makers: [String] = []) -> CatalogType? {
+        if isWesternDateCode(code) { return .western }
+        if isUncensoredMaker(code: code, makers: makers) { return .uncensored }
+        return nil
+    }
+
+    static func isWesternDateCode(_ code: String?) -> Bool {
+        guard let code, !code.isEmpty else { return false }
+        let trimmed = code.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.range(
+            of: #"^[A-Za-z][A-Za-z0-9]*(?:\.[A-Za-z0-9]+)*\.\d{4}\.\d{2}\.\d{2}$"#,
+            options: .regularExpression
+        ) != nil
+    }
+
+    static func isFC2(_ code: String?) -> Bool {
+        guard let code else { return false }
+        let n = code.lowercased()
+            .replacingOccurrences(of: "_", with: "-")
+            .replacingOccurrences(of: " ", with: "")
+        return n.hasPrefix("fc2")
+    }
+
+    private static let uncensoredMarkers = [
+        "1pondo", "一本道",
+        "caribbeancom", "caribbean", "カリビアンコム", "カリビアン",
+        "heyzo",
+        "tokyohot", "tokyo-hot", "tokyo_hot", "東京熱", "东京热",
+        "pacopacomama", "10musume", "muramura",
+        "kin8tengoku", "gachinco", "heydouga",
+    ]
+
+    static func isUncensoredMaker(code: String?, makers: [String]) -> Bool {
+        if isFC2(code) { return false }
+        let parts = ([code].compactMap { $0 } + makers)
+        for raw in parts {
+            let n = normalizeMarker(raw)
+            if n.hasPrefix("fc2") { continue }
+            for marker in uncensoredMarkers {
+                if n.contains(normalizeMarker(marker)) { return true }
+            }
+        }
+        return false
+    }
+
+    private static func normalizeMarker(_ raw: String) -> String {
+        raw.lowercased()
+            .replacingOccurrences(of: " ", with: "")
+            .replacingOccurrences(of: "_", with: "")
+            .replacingOccurrences(of: "-", with: "")
+            .replacingOccurrences(of: ".", with: "")
+    }
+}
+
+extension MovieCard {
+    var usesOriginalAvfanCover: Bool {
+        CatalogCoverPolicy.usesOriginalAvfanCover(explicit: catalogType, code: code)
+    }
+
+    var hqCoverCode: String? { usesOriginalAvfanCover ? nil : code }
+}
+
+extension MovieDetail {
+    var usesOriginalAvfanCover: Bool {
+        CatalogCoverPolicy.usesOriginalAvfanCover(explicit: catalogType, code: code, makers: makers.map(\.name))
+    }
+}
+
+extension BookmarkItem {
+    var usesOriginalAvfanCover: Bool {
+        CatalogCoverPolicy.usesOriginalAvfanCover(explicit: catalogType, code: code)
     }
 }

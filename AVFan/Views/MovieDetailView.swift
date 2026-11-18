@@ -34,7 +34,8 @@ private struct FilmographyStripCell: View {
             VStack(alignment: .leading, spacing: 6) {
                 CoverImage(
                     url: card.coverURL,
-                    code: card.code,
+                    code: card.hqCoverCode,
+                    usesOriginalCover: card.usesOriginalAvfanCover,
                     probeDisplaysWinner: false,
                     onDisplayed: { displayed = $0 }
                 )
@@ -66,7 +67,7 @@ private struct FilmographyStripCell: View {
     /// anchorY, so CoverImage's default 0.22) — and nothing else
     /// (LOCK-1.3-build47 B11).
     private static func unlandedSnapshot(for card: MovieCard) -> DisplayedCoverSnapshot? {
-        card.coverURL.map { DisplayedCoverSnapshot(url: $0, wholeImage: false, anchorY: 0.22) }
+        card.coverURL.map { DisplayedCoverSnapshot(url: $0, wholeImage: card.usesOriginalAvfanCover, anchorY: 0.22) }
     }
 }
 
@@ -84,7 +85,7 @@ struct MovieDetailView: View {
         if let hit = DisplayedCoverRegistry.shared.snapshot(pathID: card.pathID, code: card.code) {
             pin = hit
         } else if let cover = card.coverURL, !cover.isEmpty {
-            pin = DisplayedCoverSnapshot(url: cover, wholeImage: false, anchorY: 0.18)
+            pin = DisplayedCoverSnapshot(url: cover, wholeImage: card.usesOriginalAvfanCover, anchorY: 0.18)
         } else {
             pin = nil
         }
@@ -212,7 +213,8 @@ struct MovieDetailView: View {
             casts: [],
             tags: [],
             magnets: [],
-            watchStreams: []
+            watchStreams: [],
+            catalogType: card.catalogType
         )
     }
 
@@ -450,7 +452,16 @@ struct MovieDetailView: View {
     /// movie's or another source's image). A strip entry whose
     /// snapshot is missing shows the card's own cover, front
     /// window, and nothing else.
+    private func resolvedOriginalCover(_ detail: MovieDetail) -> Bool {
+        CatalogCoverPolicy.usesOriginalAvfanCover(
+            explicit: detail.catalogType ?? card.catalogType,
+            code: detail.code ?? card.code,
+            makers: detail.makers.map(\.name)
+        )
+    }
+
     private func heroCover(_ detail: MovieDetail) -> CoverImage {
+        let original = resolvedOriginalCover(detail)
         if isStripEntry {
             if let pin = frozenPin {
                 // Failure fallback is only the same-file card cover
@@ -467,15 +478,16 @@ struct MovieDetailView: View {
                     code: nil,
                     anchorY: pin.anchorY,
                     allowUpscale: true,
-                    fitWholeImage: pin.wholeImage,
+                    fitWholeImage: original || pin.wholeImage,
                     actors: [],
                     pinned: pin,
-                    paintOnce: true
+                    paintOnce: true,
+                    usesOriginalCover: original
                 )
             }
-            return CoverImage(url: card.coverURL, code: nil, anchorY: 0.18, allowUpscale: true, fitWholeImage: false, actors: [], paintOnce: true)
+            return CoverImage(url: card.coverURL, code: nil, anchorY: 0.18, allowUpscale: true, fitWholeImage: original, actors: [], paintOnce: true, usesOriginalCover: original)
         }
-        return CoverImage(url: detail.coverURL ?? card.coverURL, code: detail.code ?? card.code, anchorY: 0.18, allowUpscale: true, fitWholeImage: true, actors: detail.casts.map(\.name), pinned: frozenPin, paintOnce: true)
+        return CoverImage(url: detail.coverURL ?? card.coverURL, code: original ? nil : (detail.code ?? card.code), anchorY: 0.18, allowUpscale: true, fitWholeImage: true, actors: detail.casts.map(\.name), pinned: frozenPin, paintOnce: true, usesOriginalCover: original)
     }
 
     private func portraitHero(_ detail: MovieDetail, geometry: DetailPortraitGeometry) -> some View {
@@ -1853,6 +1865,9 @@ final class MovieDetailViewModel: ObservableObject {
             if parsed.title.isEmpty { parsed.title = card.titleWithoutCodePrefix }
             if parsed.coverURL == nil { parsed.coverURL = card.coverURL }
             if parsed.pageURL.isEmpty { parsed.pageURL = url.absoluteString }
+            // List context on the card outranks a type parsed from the
+            // page; the page fills in only when the card had none.
+            if parsed.catalogType == nil { parsed.catalogType = card.catalogType }
             // A superseded load (the view was reused for another
             // card and .task(id:) cancelled this one) must not land
             // its movie on screen.
@@ -1878,7 +1893,8 @@ final class MovieDetailViewModel: ObservableObject {
                 series: [],
                 casts: [],
                 tags: [],
-                magnets: []
+                magnets: [],
+                catalogType: card.catalogType
             )
         }
     }

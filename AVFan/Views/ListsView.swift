@@ -137,7 +137,7 @@ struct ListsView: View {
             MovieDetailView(card: item.asCard)
         } label: {
             HStack(spacing: 12) {
-                CoverImage(url: item.coverURL, code: item.code, registryPathID: item.pathID)
+                CoverImage(url: item.coverURL, code: item.usesOriginalAvfanCover ? nil : item.code, usesOriginalCover: item.usesOriginalAvfanCover, registryPathID: item.pathID, registryCode: item.code)
                     .frame(width: 84, height: 56)
                     .clipped()
                     .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
@@ -295,7 +295,7 @@ struct AccountPageView: View {
             MovieDetailView(card: card)
         } label: {
             HStack(spacing: 12) {
-                CoverImage(url: card.coverURL, code: card.code, registryPathID: card.pathID)
+                CoverImage(url: card.coverURL, code: card.hqCoverCode, usesOriginalCover: card.usesOriginalAvfanCover, registryPathID: card.pathID, registryCode: card.code)
                     .frame(width: 84, height: 56)
                     .clipped()
                     .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
@@ -332,7 +332,7 @@ struct AccountPageView: View {
             )
             let html = result.html
             let parsed = await HTMLParser.detached {
-                (movies: HTMLParser.movieCards(in: html),
+                (movies: HTMLParser.movieCards(in: html, fromPath: fetchPath),
                  casts: HTMLParser.castCards(in: html),
                  lists: HTMLParser.relatedListRows(in: html),
                  links: HTMLParser.collectionLinks(in: html),

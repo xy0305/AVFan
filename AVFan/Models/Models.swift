@@ -19,6 +19,9 @@ struct MovieCard: Identifiable, Hashable, Codable {
     var ratingText: String?
     var badges: [String]
     var canPlay: Bool
+    /// Confirmed catalog type (list context, detail page, or heuristic).
+    /// Travels with the card so later openings keep the same cover path.
+    var catalogType: CatalogType? = nil
 
     var id: String { pathID }
 
@@ -142,6 +145,8 @@ struct MovieDetail: Hashable {
     /// inside `.movie-number`). Nil when the page has no such link;
     /// never invented.
     var prefixLink: NamedLink? = nil
+    /// Confirmed catalog type; once set it stays with the detail.
+    var catalogType: CatalogType? = nil
 
     var displayCode: String { code ?? pathID }
     var displayTitle: String { title.isEmpty ? displayCode : title }
@@ -191,6 +196,7 @@ struct BookmarkItem: Identifiable, Hashable, Codable {
     var title: String
     var coverURL: String?
     var addedAt: Date
+    var catalogType: CatalogType? = nil
 
     var id: String { pathID }
 
@@ -204,7 +210,8 @@ struct BookmarkItem: Identifiable, Hashable, Codable {
             date: nil,
             ratingText: nil,
             badges: [],
-            canPlay: false
+            canPlay: false,
+            catalogType: catalogType
         )
     }
 }
@@ -270,6 +277,30 @@ enum RankingKind: String, CaseIterable, Identifiable {
 
     var isCastList: Bool {
         self == .weekCasts || self == .monthCasts
+    }
+}
+
+/// avfan catalog type. Raw values match the site's `t=` / `tfilter` tokens.
+enum CatalogType: String, Codable, Hashable {
+    case censored
+    case uncensored
+    case western
+    case anime
+    case fc2
+
+    /// Exact token or Chinese label. Does not treat 「无码破解」 as 无码.
+    static func parse(_ raw: String) -> CatalogType? {
+        let t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty else { return nil }
+        if let exact = CatalogType(rawValue: t.lowercased()) { return exact }
+        switch t {
+        case "有码", "有碼": return .censored
+        case "无码", "無碼": return .uncensored
+        case "欧美", "歐美": return .western
+        case "动漫", "動漫": return .anime
+        case "FC2", "fc2": return .fc2
+        default: return nil
+        }
     }
 }
 
