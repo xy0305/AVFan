@@ -1053,7 +1053,82 @@ enum ParserTests {
         expect(jrSubItems.dropFirst().first?.name == "DMM 本周热销榜",
                "jr second sublist, got \(jrSubItems.dropFirst().first?.name ?? "nil")")
 
-        print("PASS: home, detail magnets, ranking merge, hot casts, HQ cover sources, empty shell, block detection, cover policy, login signals, ranking tabs, pagination, news, series, detail cover identity, page map, cast cards, prefix links, filter form, homepage panel, auto-next, home main list, movie toolbar, tab hygiene, tab locale guard, drawer shortcuts, poster quality, javbus, tenhow, amazon, avbase catalogue, trailer and stills, library sync parsing, cast profile, comments sanitize, related lists, preview whitelist, filmography, real list fragments, number prefix, avfan trailer preference, hot searches, strip splice guard, real-page strip triples, canonical identity, same-file identity, javranking boards")
+        
+        // Build 55: strict CID reverse + FANZA same-day official list.
+        expect(DMMCID.numberFromCID("ipzz00936") == "IPZZ-936",
+               "ipzz00936 → IPZZ-936, got \(DMMCID.numberFromCID("ipzz00936") ?? "nil")")
+        expect(DMMCID.numberFromCID("mida00860") == "MIDA-860",
+               "mida00860 → MIDA-860, got \(DMMCID.numberFromCID("mida00860") ?? "nil")")
+        expect(DMMCID.numberFromCID("ssni00001") == "SSNI-1",
+               "ssni00001 → SSNI-1, got \(DMMCID.numberFromCID("ssni00001") ?? "nil")")
+        expect(DMMCID.numberFromCID("h_1240milk00311") == nil,
+               "h_ CID must not be reversed, got \(DMMCID.numberFromCID("h_1240milk00311") ?? "nil")")
+        expect(DMMCID.numberFromCID("1dldss00575") == nil,
+               "numeric-prefix CID 1dldss00575 must not be reversed")
+        expect(DMMCID.numberFromCID("63id00200") == nil,
+               "numeric-prefix CID 63id00200 must not be reversed")
+
+        var jstCalendar = Calendar(identifier: .gregorian)
+        jstCalendar.timeZone = FanzaTodayParser.tokyo
+        let jstToday = jstCalendar.date(from: DateComponents(year: 2026, month: 11, day: 18, hour: 15))!
+        expect(FanzaTodayParser.titleDate(from: jstToday) == "11/18",
+               "JST title date M/d, got \(FanzaTodayParser.titleDate(from: jstToday))")
+        // 15:00 JST on the 18th is still the 17th in UTC and may already
+        // be the 18th in Shanghai; the title date must stay on the Tokyo day.
+        expect(FanzaTodayParser.listURL(page: 1).absoluteString
+                == "https://video.dmm.co.jp/av/list/?release=recent&sort=date",
+               "page 1 is the official start URL, got \(FanzaTodayParser.listURL(page: 1).absoluteString)")
+        expect(FanzaTodayParser.listURL(page: 2).absoluteString.contains("page=2") == true,
+               "page 2 uses page= as advertised by the rendered pagination")
+
+        let fanzaToday = try fixture("fanza-today-list.html")
+        let fanzaPage = FanzaTodayParser.parse(fanzaToday, today: jstToday, currentPage: 1)
+        let fanzaNumbers = fanzaPage.todayItems.map(\.number)
+        expect(fanzaNumbers.contains("IPZZ-936"),
+               "letter-prefix CID ipzz00936 → IPZZ-936, got \(fanzaNumbers)")
+        expect(fanzaNumbers.contains("MIDA-860"),
+               "letter-prefix CID mida00860 → MIDA-860, got \(fanzaNumbers)")
+        expect(fanzaNumbers.contains("IPZZ-100"),
+               "title number preferred over CID ssni00999, got \(fanzaNumbers)")
+        expect(fanzaNumbers.contains("DLDSS-575"),
+               "title number DLDSS-575 kept even though CID is 1dldss00575, got \(fanzaNumbers)")
+        expect(!fanzaNumbers.contains("MILK-311") && !fanzaNumbers.contains(where: { $0.hasPrefix("MILK") }),
+               "h_1240milk00311 must be excluded, got \(fanzaNumbers)")
+        expect(!fanzaNumbers.contains("ID-200") && !fanzaNumbers.contains("63ID-200"),
+               "numeric-prefix 63id00200 must be excluded, got \(fanzaNumbers)")
+        expect(!fanzaNumbers.contains("DLDSS-999"),
+               "numeric-prefix 1dldss00999 without a title number must be excluded, got \(fanzaNumbers)")
+        expect(!fanzaNumbers.contains("PRED-400"),
+               "earlier JST date must not enter today, got \(fanzaNumbers)")
+        expect(fanzaPage.todayItems.count == 4,
+               "four today items with usable numbers, got \(fanzaPage.todayItems.count) \(fanzaNumbers)")
+        expect(fanzaPage.sawEarlierDate,
+               "a 2026/11/17 card must stop pagination")
+        expect(fanzaPage.nextPage == 2,
+               "rendered pagination advertises page=2, got \(fanzaPage.nextPage as Any)")
+        expect(fanzaPage.todayItems.first(where: { $0.number == "IPZZ-936" })?.coverURL?.contains("ipzz00936ps.jpg") == true,
+               "IPZZ-936 keeps the FANZA cover")
+        expect(fanzaPage.todayItems.first(where: { $0.number == "IPZZ-100" })?.cid == "ssni00999",
+               "preferred title number still keeps the original CID")
+
+        // A page of only JST-today cards should keep going when page=2 exists.
+        let todayOnlyHTML = """
+        <div data-e2eid="content-card">
+          <a href="/av/content/?id=ipzz00936" data-e2eid="title">今日だけ</a>
+          <div>配信日 : 2026/11/18</div>
+        </div>
+        <ul data-e2eid="pagination">
+          <a href="/av/list/?release=recent&sort=date&page=2">2</a>
+        </ul>
+        """
+        let todayOnly = FanzaTodayParser.parse(todayOnlyHTML, today: jstToday, currentPage: 1)
+        expect(todayOnly.todayItems.map(\.number) == ["IPZZ-936"],
+               "today-only page keeps the letter-prefix CID, got \(todayOnly.todayItems.map(\.number))")
+        expect(!todayOnly.sawEarlierDate, "today-only page must not stop paging")
+        expect(todayOnly.nextPage == 2, "today-only page still has page=2")
+
+        print("PASS: home, detail magnets, ranking merge, hot casts, HQ cover sources, empty shell, block detection, cover policy, login signals, ranking tabs, pagination, news, series, detail cover identity, page map, cast cards, prefix links, filter form, homepage panel, auto-next, home main list, movie toolbar, tab hygiene, tab locale guard, drawer shortcuts, poster quality, javbus, tenhow, amazon, avbase catalogue, trailer and stills, library sync parsing, cast profile, comments sanitize, related lists, preview whitelist, filmography, real list fragments, number prefix, avfan trailer preference, hot searches, strip splice guard, real-page strip triples, canonical identity, same-file identity, javranking boards, fanza today releases")
+
     }
 }
 

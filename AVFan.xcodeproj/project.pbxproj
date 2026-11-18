@@ -25,6 +25,10 @@
 		2C9C5A8528C646ADADF29DF3 /* Pan115SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19413134A71344EDB5B17B83 /* Pan115SettingsView.swift */; };
 		35F6D1BA83904864B15E95D5 /* RankingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 134A364F672D4390A9561B62 /* RankingsView.swift */; };
 		AF110000000000000000000093 /* NativeRankingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF110000000000000000000092 /* NativeRankingsView.swift */; };
+		AF11000000000000000000A1 /* FanzaTodayParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF11000000000000000000A0 /* FanzaTodayParser.swift */; };
+		AF11000000000000000000A3 /* FanzaWebFetcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF11000000000000000000A2 /* FanzaWebFetcher.swift */; };
+		AF11000000000000000000A5 /* FanzaTodayReleases.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF11000000000000000000A4 /* FanzaTodayReleases.swift */; };
+		AF11000000000000000000A7 /* FanzaTodayListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF11000000000000000000A6 /* FanzaTodayListView.swift */; };
 		3DE5EDD69CD446899C0B184F /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2274318EE999492AAF5C516E /* RootView.swift */; };
 		E78A984D13424E0BB08F86FE /* SearchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5DFB74DD53F24CBCABF3174C /* SearchView.swift */; };
 		AE5DB420ADB648148DD86AF4 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2DFCFC6CCA04F7EB8C1CE54 /* SettingsView.swift */; };
@@ -149,6 +153,10 @@
 		AF1100000000000000000058 /* HeroSwipePolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HeroSwipePolicy.swift; sourceTree = "<group>"; };
 		AF110000000000000000005A /* SiteLoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SiteLoginView.swift; sourceTree = "<group>"; };
 		AF110000000000000000005C /* DetailPlayPill.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DetailPlayPill.swift; sourceTree = "<group>"; };
+		AF11000000000000000000A0 /* FanzaTodayParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FanzaTodayParser.swift; sourceTree = "<group>"; };
+		AF11000000000000000000A2 /* FanzaWebFetcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FanzaWebFetcher.swift; sourceTree = "<group>"; };
+		AF11000000000000000000A4 /* FanzaTodayReleases.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FanzaTodayReleases.swift; sourceTree = "<group>"; };
+		AF11000000000000000000A6 /* FanzaTodayListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FanzaTodayListView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -208,6 +216,7 @@
 			children = (
 				07409F5948DC411C83654002 /* HTMLParser.swift */,
 				AF1100000000000000000050 /* CoverURLPolicy.swift */,
+				AF11000000000000000000A0 /* FanzaTodayParser.swift */,
 			);
 			path = Parsing;
 			sourceTree = "<group>";
@@ -217,6 +226,7 @@
 			children = (
 				7F66BB4001C14CAC81CC7AAE /* SiteClient.swift */,
 				12B9E7A874F74489B430EB67 /* WebViewFetcher.swift */,
+				AF11000000000000000000A2 /* FanzaWebFetcher.swift */,
 			);
 			path = Networking;
 			sourceTree = "<group>";
@@ -241,6 +251,7 @@
 				AF110000000000000000000084 /* LibrarySync.swift */,
 				AF110000000000000000000088 /* ExternalLibrary.swift */,
 				AF110000000000000000000090 /* RankingSources.swift */,
+				AF11000000000000000000A4 /* FanzaTodayReleases.swift */,
 				AF110000000000000000000082 /* CataloguePoster.swift */,
 				AF110000000000000000000080 /* TenhowActorLinks.swift */,
 				AF110000000000000000000078 /* TenhowPoster.swift */,
@@ -269,6 +280,7 @@
 				19413134A71344EDB5B17B83 /* Pan115SettingsView.swift */,
 				134A364F672D4390A9561B62 /* RankingsView.swift */,
 				AF110000000000000000000092 /* NativeRankingsView.swift */,
+				AF11000000000000000000A6 /* FanzaTodayListView.swift */,
 				2274318EE999492AAF5C516E /* RootView.swift */,
 				5DFB74DD53F24CBCABF3174C /* SearchView.swift */,
 				B2DFCFC6CCA04F7EB8C1CE54 /* SettingsView.swift */,
@@ -422,6 +434,10 @@
 				2C9C5A8528C646ADADF29DF3 /* Pan115SettingsView.swift in Sources */,
 				35F6D1BA83904864B15E95D5 /* RankingsView.swift in Sources */,
 				AF110000000000000000000093 /* NativeRankingsView.swift in Sources */,
+				AF11000000000000000000A1 /* FanzaTodayParser.swift in Sources */,
+				AF11000000000000000000A3 /* FanzaWebFetcher.swift in Sources */,
+				AF11000000000000000000A5 /* FanzaTodayReleases.swift in Sources */,
+				AF11000000000000000000A7 /* FanzaTodayListView.swift in Sources */,
 				3DE5EDD69CD446899C0B184F /* RootView.swift in Sources */,
 				E78A984D13424E0BB08F86FE /* SearchView.swift in Sources */,
 				AE5DB420ADB648148DD86AF4 /* SettingsView.swift in Sources */,
@@ -517,7 +533,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 54;
+				CURRENT_PROJECT_VERSION = 55;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -546,7 +562,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 54;
+				CURRENT_PROJECT_VERSION = 55;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;

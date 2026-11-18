@@ -22,6 +22,17 @@ enum DMMCID {
               let n = Int(m[2]), n > 0, !m[1].hasPrefix("fc2") else { return nil }
         return (m[1], n)
     }
+    /// Strict CID → catalog number. Letter prefix + digits only:
+    /// `ipzz00936` → `IPZZ-936`, `mida00860` → `MIDA-860`.
+    /// Rejects `h_`-prefixed CIDs (`h_1240milk00311`) and numeric-prefix
+    /// CIDs (`1dldss00575`, `63id00200`) — those are not guessed.
+    static func numberFromCID(_ cid: String) -> String? {
+        let s = cid.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if s.hasPrefix("h_") { return nil }
+        guard let m = JRHTML.matches(#"^([a-z]{2,10})0*([0-9]{1,6})$"#, s).first,
+              let n = Int(m[2]), n > 0 else { return nil }
+        return m[1].uppercased() + "-" + String(n)
+    }
     static func pad(_ n: Int, _ width: Int) -> String {
         let digits = String(n)
         return String(repeating: "0", count: max(0, width - digits.count)) + digits

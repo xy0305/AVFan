@@ -4,10 +4,13 @@ import UIKit
 struct HomeView: View {
     @EnvironmentObject private var settings: AppSettings
     @StateObject private var model = HomeViewModel()
+    @StateObject private var today = FanzaTodayHomeModel()
+    @ObservedObject private var matchStore = RankingMatchStore.shared
     @State private var scroll = HomeScrollState()
     @State private var goSearch = false
     @State private var openCard: MovieCard?
     @State private var openCatalog: CatalogDestination?
+    @State private var openTodayList = false
     @State private var showFilters = false
 
     var body: some View {
@@ -21,9 +24,15 @@ struct HomeView: View {
         .navigationDestination(item: $openCatalog) { dest in
             CatalogListView(title: dest.title, path: dest.path)
         }
-        .task { await model.load(settings: settings, force: false) }
+        .navigationDestination(isPresented: $openTodayList) {
+            FanzaTodayListView(model: today)
+        }
+        .task { await reloadHome(force: false) }
         .onChange(of: settings.locale) { _, _ in
-            Task { await model.load(settings: settings, force: true) }
+            Task { await reloadHome(force: true) }
+        }
+        .onChange(of: matchStore.movieIDs) { _, _ in
+            today.refreshResolvedCards()
         }
         .sheet(isPresented: $model.showWeb) {
             if let url = model.pageURL { InAppWebView(url: url, title: "首页") }
@@ -48,6 +57,7 @@ struct HomeView: View {
                     VStack(alignment: .leading, spacing: 0) {
                         quickActionRow(m)
                             .padding(.top, 18)
+                        todaySection(m)
                         FetchStatusBanner(source: model.source, error: model.errorMessage, webURL: model.pageURL) {
                             model.showWeb = true
                         }
@@ -78,7 +88,7 @@ struct HomeView: View {
             .coordinateSpace(.named(HomeScrollState.space))
             .onPreferenceChange(HomeScrollOffsetKey.self) { scroll.update($0) }
             .ignoresSafeArea(.container, edges: .top)
-            .refreshable { await model.load(settings: settings, force: true) }
+            .refreshable { await reloadHome(force: true) }
 
             HomeSearchButton(scroll: scroll) {
                 GlassHaptic.tap()
@@ -87,8 +97,34 @@ struct HomeView: View {
             .padding(.top, 6)
             .padding(.trailing, m.padding)
             .frame(maxWidth: .infinity, alignment: .trailing)
+
+            if let message = today.statusMessage {
+                Text(message)
+                    .font(.subheadline.weight(.semibold))
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .background(.black.opacity(0.82), in: Capsule())
+                    .foregroundStyle(.white)
+                    .padding(.bottom, 108)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                    .onChange(of: today.missedMessage) { _, value in
+                        guard value == message else { return }
+                        Task {
+                            try? await Task.sleep(nanoseconds: 2_200_000_000)
+                            await MainActor.run {
+                                if today.missedMessage == message { today.missedMessage = nil }
+                            }
+                        }
+                    }
+            }
         }
         .foregroundStyle(Color.primary)
+    }
+
+    private func reloadHome(force: Bool) async {
+        async let home: Void = model.load(settings: settings, force: force)
+        async let todayLoad: Void = today.load(settings: settings, force: force)
+        _ = await (home, todayLoad)
     }
 
     @ViewBuilder
@@ -150,6 +186,50 @@ struct HomeView: View {
         case .anime: return "sparkles.tv"
         case .fc2: return "person.crop.rectangle"
         case .watch: return "play.rectangle"
+        }
+    }
+
+    @ViewBuilder
+    private func todaySection(_ m: HomeMetrics) -> some View {
+        if today.loading && today.cards.isEmpty && today.errorMessage == nil {
+            VStack(alignment: .leading, spacing: 12) {
+                HomeRailHeader(title: today.sectionTitle, padding: m.padding)
+                ProgressView()
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 16)
+            }
+            .padding(.top, 22)
+        } else if let error = today.errorMessage, today.cards.isEmpty {
+            VStack(alignment: .leading, spacing: 12) {
+                HomeRailHeader(title: today.sectionTitle, padding: m.padding)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                    Button("重试") {
+                        Task { await today.load(settings: settings, force: true) }
+                    }
+                    .font(.caption.weight(.semibold))
+                }
+                .padding(.horizontal, m.padding)
+            }
+            .padding(.top, 22)
+        } else if !today.visibleCards.isEmpty {
+            VStack(alignment: .leading, spacing: 12) {
+                HomeRailHeader(title: today.sectionTitle, padding: m.padding, more: {
+                    openTodayList = true
+                })
+                HomePosterGrid(cards: today.visibleCards, metrics: m) { card in
+                    Task { await openToday(card) }
+                }
+            }
+            .padding(.top, 22)
+        }
+    }
+
+    private func openToday(_ card: MovieCard) async {
+        if let hit = await today.open(card, settings: settings) {
+            openCard = hit
         }
     }
 
