@@ -6,9 +6,11 @@ import Combine
 // 中指通, JAVLibrary (JavDB's own rankings were explicitly skipped).
 //
 // Data routes (none of them touches JavDB):
-//  - DMM / 中指通: the pre-matched feed AVDB publishes on
-//    its repo's `feed` branch (frozen 2026-11-14; the generated date is
-//    shown in the UI so the staleness is never hidden).
+//  - DMM: FANZA's official GraphQL, fetched live on device the
+//    same way AVDB fetches it (build 58, DMMRankings.swift). It
+//    rode AVDB's pre-matched feed until build 57; that feed is
+//    frozen 2026-11-14 and this board no longer reads it.
+//  - 中指通: the bundled full catalog (build 44).
 //  - JAV Ranking: javranking.cc's own list pages, parsed live on
 //    device (build 52; it used to ride the frozen feed's 20 picks).
 //  - JAVLibrary: the VPS snapshot API, through the same ExternalLibrary
@@ -50,8 +52,12 @@ enum RankingSourcesError: LocalizedError {
     }
 }
 
-// MARK: - Feed boards (DMM / 中指通)
+// MARK: - Feed boards (retired)
 
+// Build 58: RankingFeedLoader has no remaining caller — DMM, its
+// last board, fetches FANZA live now, and 中指通 moved to the
+// bundled catalog in build 44. Kept in place for now rather than
+// deleted; nothing reads the frozen feed anymore.
 enum RankingFeedLoader {
     static let rawBase = "https://raw.githubusercontent.com/xy0305/AVDB/feed/feed"
 

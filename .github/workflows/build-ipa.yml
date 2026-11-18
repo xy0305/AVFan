@@ -39,6 +39,7 @@ jobs:
             AVFan/Parsing/CoverURLPolicy.swift \
             AVFan/Services/JRHTML.swift \
             AVFan/Services/DMMCoverResolver.swift \
+            AVFan/Services/DMMRankings.swift \
             AVFan/Services/DMMLabelSeed.swift \
             AVFan/Services/PosterQuality.swift \
             AVFan/Services/JavBusPoster.swift \

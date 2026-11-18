@@ -320,17 +320,20 @@ private struct ExternalRankingsView: View {
                 entries = month.entries
                 updatedText = "中指通月度精选 · 2019–2026 年全量"
             case .dmm:
-                let result = try await RankingFeedLoader.load(board: source.rawValue, term: term)
-                // The feed's covers are JavDB-hosted (tp.spfcas.com)
-                // and unreachable on the owner's network — never
-                // display them (build 46). Grid covers resolve HQ
-                // first, then the matched movie's AVFan cover.
-                entries = result.entries.map { entry in
-                    var entry = entry
-                    entry.coverURL = nil
-                    return entry
+                // Live from FANZA's official GraphQL (build 58),
+                // the same verified queries AVDB uses — the frozen
+                // pre-matched feed is retired for this board, and a
+                // failed fetch lands in the error state instead of
+                // ever falling back to it. Entries carry the maker
+                // code and the official FANZA cover; matching and
+                // the grid's HQ-first cover rule are unchanged.
+                let rows = try await DMMRankings.load(term: term)
+                entries = rows.map { row in
+                    RankingBoardEntry(rank: row.rank, code: row.code,
+                                      title: row.title, coverURL: row.coverURL,
+                                      actresses: [], actorName: nil)
                 }
-                updatedText = result.generatedAt.map { "数据更新于 \(String($0.prefix(10)))" }
+                updatedText = "实时抓取自 FANZA (DMM)"
             case .javranking:
                 // Live from javranking.cc (build 52) — no frozen
                 // feed. The sublist chips' data loads alongside the
@@ -440,6 +443,16 @@ private struct RankingGridCell: View {
         matchedCard?.usesOriginalAvfanCover == true
     }
 
+    /// The cover shown until the HQ probe lands: the matched
+    /// AVFan cover, except DMM — whose entries bring an official
+    /// FANZA cover that outranks the watermarked AVFan one — and
+    /// MissAV, whose own CDN thumbnail is the fallback seed.
+    private var seedURL: String? {
+        if usesOriginalCover { return matchedCard?.coverURL }
+        if source == .dmm { return entry.coverURL ?? matchedCard?.coverURL }
+        return matchedCard?.coverURL ?? (source == .missav ? entry.coverURL : nil)
+    }
+
     var body: some View {
         VStack(spacing: 5) {
             ZStack(alignment: .topLeading) {
@@ -460,8 +473,10 @@ private struct RankingGridCell: View {
                     // stay as its source cover under the same
                     // HQ-first rule. Build 57: avfan-matched 欧美 /
                     // 无码 titles skip HQ and letterbox the page cover.
-                    CoverImage(url: matchedCard?.coverURL
-                                   ?? (source == .missav ? entry.coverURL : nil),
+                    // Build 58: DMM entries carry an official FANZA
+                    // cover, which seeds ahead of the (watermarked)
+                    // matched AVFan cover under the same HQ probe.
+                    CoverImage(url: seedURL,
                                code: usesOriginalCover ? nil : entry.code,
                                usesOriginalCover: usesOriginalCover,
                                registryCode: entry.code,

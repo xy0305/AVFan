@@ -1091,7 +1091,34 @@ enum ParserTests {
         let jacketDefault = FrontPosterPolicy.cropRect(width: 800, height: 538, source: "https://c1.avfan.com/covers/4j/4jOrgf.jpg")
         expect(jacketDefault != nil, "same jacket still crops when the original-cover flag is off")
 
-        print("PASS: home, detail magnets, ranking merge, hot casts, HQ cover sources, empty shell, block detection, cover policy, login signals, ranking tabs, pagination, news, series, detail cover identity, page map, cast cards, prefix links, filter form, homepage panel, auto-next, home main list, movie toolbar, tab hygiene, tab locale guard, drawer shortcuts, poster quality, javbus, tenhow, amazon, avbase catalogue, trailer and stills, library sync parsing, cast profile, comments sanitize, related lists, preview whitelist, filmography, real list fragments, number prefix, avfan trailer preference, hot searches, strip splice guard, real-page strip triples, canonical identity, same-file identity, javranking boards, original-cover types")
+        // Build 58: DMM board goes live — FANZA GraphQL parsing
+        // (fixtures trimmed from real api.video.dmm.co.jp responses,
+        // 2026-11-18: daily ranks 1–3 and their maker codes).
+        let dmmDaily = try fixture("dmm-graphql-daily.json")
+        let dmmItems = try DMMRankings.contentItems(data: Data(dmmDaily.utf8), expectedCount: 3)
+        expect(dmmItems.map(\.cid) == ["mkmp00659", "mkmp00588", "mdbk00339"],
+               "dmm daily cids, got \(dmmItems.map(\.cid))")
+        expect(dmmItems.map(\.rank) == [1, 2, 3], "dmm daily ranks in order")
+        expect(dmmItems.allSatisfy { !$0.title.isEmpty }, "dmm daily titles present")
+        let dmmCodes = try fixture("dmm-graphql-makercodes.json")
+        let dmmCodeMap = try DMMRankings.makerCodes(data: Data(dmmCodes.utf8),
+                                                    expectedCIDs: ["mkmp00659", "mkmp00588", "mdbk00339"])
+        expect(dmmCodeMap == ["mkmp00659": "MKMP-659", "mkmp00588": "MKMP-588", "mdbk00339": "MDBK-339"],
+               "dmm maker codes, got \(dmmCodeMap)")
+        expect(DMMRankings.manufacturerCode("MKMP-659") == "MKMP-659", "maker code passthrough")
+        expect(DMMRankings.manufacturerCode("mkmp-659") == "MKMP-659", "maker code uppercased")
+        expect(DMMRankings.manufacturerCode("MKMP659") == nil, "maker code needs the hyphen")
+        expect(DMMRankings.manufacturerCode("") == nil, "maker code empty rejected")
+        var dmmGateThrew = false
+        do {
+            _ = try DMMRankings.contentItems(data: Data("{\"errors\":[{\"message\":\"gate\"}]}".utf8),
+                                             expectedCount: 3)
+        } catch { dmmGateThrew = true }
+        expect(dmmGateThrew, "dmm errors payload is an access gate, not an empty board")
+        expect(DMMCoverURLs.digital("mkmp00659").first?.contains("awsimgsrc.dmm.co.jp") == true,
+               "dmm entry cover is the official FANZA image")
+
+        print("PASS: home, detail magnets, ranking merge, hot casts, HQ cover sources, empty shell, block detection, cover policy, login signals, ranking tabs, pagination, news, series, detail cover identity, page map, cast cards, prefix links, filter form, homepage panel, auto-next, home main list, movie toolbar, tab hygiene, tab locale guard, drawer shortcuts, poster quality, javbus, tenhow, amazon, avbase catalogue, trailer and stills, library sync parsing, cast profile, comments sanitize, related lists, preview whitelist, filmography, real list fragments, number prefix, avfan trailer preference, hot searches, strip splice guard, real-page strip triples, canonical identity, same-file identity, javranking boards, original-cover types, dmm graphql boards")
     }
 }
 
