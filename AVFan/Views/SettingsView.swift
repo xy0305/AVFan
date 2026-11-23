@@ -9,6 +9,11 @@ struct SettingsView: View {
     @State private var imageCleared = false
     @State private var imageCacheSize = "计算中…"
     @State private var signingOut = false
+    // Stage C: Metal post chain toggles (persisted by MPlayPostChain
+    // itself; these @State values are the UI mirrors).
+    @State private var postSDRToHDR = MPlayPostChain.shared.sdrToHDRLevel != .off
+    @State private var postUpscaling = MPlayPostChain.shared.upscalingLevel != .off
+    @State private var postInterpolation = MPlayPostChain.shared.frameInterpolationEnabled
 
     var body: some View {
         Form {
@@ -49,6 +54,24 @@ struct SettingsView: View {
                     }
                 }
                 Text("115 登录凭据只保存在本应用的钥匙串里，不会与 avfan 网站登录混用。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("画质增强（播放器后链）") {
+                Toggle("SDR 转 HDR 色调映射", isOn: $postSDRToHDR)
+                    .onChange(of: postSDRToHDR) { _, newValue in
+                        MPlayPostChain.shared.setSDRToHDRLevel(newValue ? .low : .off)
+                    }
+                Toggle("超分辨率（×1.5）", isOn: $postUpscaling)
+                    .onChange(of: postUpscaling) { _, newValue in
+                        MPlayPostChain.shared.setVideoUpscalingLevel(newValue ? .low : .off, animated: true)
+                    }
+                Toggle("插帧（补间中间帧）", isOn: $postInterpolation)
+                    .onChange(of: postInterpolation) { _, newValue in
+                        MPlayPostChain.shared.setVideoFrameInterpolationEnabled(newValue)
+                    }
+                Text("MPlayKit 的 Metal 帧后处理链（自研实现，效果与原版 SenPlayer 的闭源着色器不做等同声明）。默认全部关闭，开启后增加 GPU 占用与功耗。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

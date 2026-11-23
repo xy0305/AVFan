@@ -70,8 +70,25 @@ final class MPlayVideoView: UIView {
             self?.attachedPlayer?.noteSurfaceError(message)
         }
         frameStore.onVideoFrame = { [weak self] frame in
-            self?.scheduler.enqueue(frame)
-            self?.nudgeTimeSync(with: frame)
+            guard let self else { return }
+            // Stage C: the Metal post chain sits between the store
+            // and the scheduler (frame-after domain).  Disabled =
+            // direct enqueue, zero added latency.
+            let chain = MPlayPostChain.shared
+            if chain.isEnabled {
+                chain.process(frame) { [weak self] frames in
+                    guard let self else { return }
+                    for processed in frames {
+                        self.scheduler.enqueue(processed)
+                    }
+                    if let last = frames.last {
+                        self.nudgeTimeSync(with: last)
+                    }
+                }
+            } else {
+                self.scheduler.enqueue(frame)
+                self.nudgeTimeSync(with: frame)
+            }
         }
         frameStore.onSubtitleFrame = { [weak self] frame in
             self?.subtitleLayerController.update(frame)
