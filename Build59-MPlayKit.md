@@ -1,6 +1,8 @@
-# Build 59 — 播放器内核替换：KSPlayer → MPlayKit（libmpv + FFmpeg 8）
+# Build 59 — 播放器内核替换：KSPlayer → MPlayKit（libmpv + FFmpeg 8）+ 全量还原
 
-用户原话（2026-11-23）：「先使用 AVFan 换播放器内核，这个编译成 ipa 快」
+用户原话（2026-11-23）：「先使用 AVFan 换播放器内核，这个编译成 ipa 快」；
+同日晚间拍板「全部还原」：iOS 侧逆向（IOS-FINDINGS）里所有与播放有关的
+内容逐项实施，不再保留打包的「集中申报」。
 
 ## 与 AVDB Build 353 的关系
 
@@ -13,19 +15,14 @@ AVFan 的 IPA 构建快，所以先在 AVFan 落地验证同一套原生管线�
 再反哺 AVDB 的 CI 首跑判断。
 
 - 原生管线：`scripts/mplaykit59/`（自 AVDB `scripts/mplaykit353/` 移植）。
-  移植当初版本钉与 sha256 与 353 一字未动；**本轮已按 IOS-FINDINGS
-  修正**：mpv 0.42.0 → **0.41.0**（iOS 二进制 `mpv v0.41.0` 直证，
-  §5）、补构建 **uchardet 0.0.8 + lcms2 2.16** 并打开 mpv 两开关
-  （原版 meson 参数原文，§3.1）；libplacebo 7.387.0 保留（0.41 下限
-  仅 >= 6.338.2）。AVDB 353 侧待同步同一修正。产物
-  `Vendor/Libmpv.xcframework`（静态合并，见该目录 LINK-NOTES）。
-- Swift 层：`AVFan/Services/MPlayKit/` 7 文件（自 AVDB 同名目录移植），
-  另加四处扩展：`MPlayPlaybackEvent`/`onPlaybackEvent`、`videoSize()`、
-  `MPlayProgress.cacheSpeed`、`setRate(_:)`。`MPlayKernel.swift` 在 AVFan
-  缩减为单 case 描述（无内核开关，杜绝回落已删除的 KSPlayer）。本轮已
-  按 mpv 0.41.0 头文件逐项核对（与 0.42 的差异只有 API 版本 2.5↔2.6
-  与 node 命令 `_name` 键，本层不受影响），无需改代码，核对记录在
-  `MPlayPlayer.swift` 头部注释。
+  版本钉按 IOS-FINDINGS 修正：mpv **0.41.0**（iOS 二进制 `mpv v0.41.0`
+  直证）、**uchardet 0.0.8 + lcms2 2.16**、GL 已按原版关闭
+  （`-Dgl=disabled`，全量还原阶段 A）。AVDB 353 侧待同步同一修正。
+  产物 `Vendor/Libmpv.xcframework`（静态合并，见该目录 LINK-NOTES）。
+- Swift 层：`AVFan/Services/MPlayKit/`，自内核替换的 7 文件扩展为完整
+  还原面（帧管线、PiP、Metal 后链、Dolby Vision、空间音频、流协议、
+  字幕/翻译、捕获、扩展 API 等，逐项见下表）。已按 mpv 0.41.0 头文件
+  逐项核对，核对记录在各文件头部注释。
 
 ## 映射表（KSPlayer → MPlayKit）
 
@@ -44,7 +41,7 @@ AVFan 的 IPA 构建快，所以先在 AVFan 落地验证同一套原生管线�
 | 视频尺寸回调（presentationSize / naturalSize） | mpv `width/height`（当前视频轨尺寸，evidence=.track） |
 | `KSOptions.supportedInterfaceOrientations` | `OrientationLock.supportedMask`（AVFanApp delegate 读它） |
 | KSPlayer 的 LogHandler 隐私日志 | 删除（引擎诊断走 MPlayDiagnostics 结构化事件） |
-| 在线字幕：下载→解析→文字 overlay | 下载/校验路径**不变**（仍是 OnlineSubtitleModel 的加固下载，绝不让引擎碰远程字幕 URL）；解析后把已下载字节写本地临时文件 `sub-add` 给 libass 渲染；overlay 保留为兜底与位置编辑预览（见偏差 5） |
+| 在线字幕：下载→解析→文字 overlay | 下载/校验路径**不变**（仍是 OnlineSubtitleModel 的加固下载，绝不让引擎碰远程字幕 URL）；解析后把已下载字节写本地临时文件 `sub-add` 给 libass 渲染；overlay 保留为兜底与位置编辑预览 |
 | 预告 stage `.ksPlayer` | `.mplayKit`（链路顺序不变：MPlayKit → AVPlayer → WKWebView → failed） |
 
 调用点：Pan115PlayerView（115 播放）、WatchOnlinePlayerView（在线观看）、
@@ -53,24 +50,117 @@ MovieDetailView TrailerPlayerView（预告）三处全部换完；参数面不�
 managesOrientation / onSelectSource / onSelectEpisode /
 publicSubtitleQuery / onVideoMetrics / resumeKey / startFromBeginning）。
 
-## 偏差表
+## 全量还原逐项状态（IOS-FINDINGS 播放相关条目 × 状态）
 
-| # | 偏差 | 说明与后续路线 |
+状态口径：**landed** = 代码落地、落点明确；**partial** = 主体落地但有
+明示的缺口；**blocked** = 做不到且证据在案。本地无 Xcode/Swift/Cargo
+工具链，全部代码只做过静态自检，**没有声称编译或运行验证过**；
+真机/CI 首跑清单见文末。
+
+### 阶段 A — 像素帧显示管线
+
+| 条目 | 状态 | 落点 / 证据 |
 |---|---|---|
-| 1 | **画中画（PiP）未实现** | 本版仍未实现，**列为下一版第一项**。原版路线已查明（IOS-FINDINGS §一）：自研 vo `frame_output` 输出 CVPixelBuffer → FrameStore/FrameOutputScheduler 调度 → 包 CMSampleBuffer 入队 AVSampleBufferDisplayLayer；`MPlayKit.PictureInPictureController` 实现 AVPictureInPictureSampleBufferPlaybackDelegate 全套方法与时间同步；字幕为独立 CALayer，进 PiP 时移入 PiP 宿主视图、按 PiP 渲染尺寸单独设定。本版现状：dismantle 不再等 PiP 结束，直接 onStop → detach → close → audio.end；后台音频靠既有音频会话租约继续。此前「libmpv render API 在 iOS 没有 PiP 通路」的说法**已被推翻、删除**——原版主显示链根本不用 render API，PiP 是这条像素帧管线的自然延伸，且该路线不丢硬解直通（VideoToolbox 帧以 CVPixelBuffer 原生流动）。工作量判断见 IOS-FINDINGS §1.2。 |
-| 2 | **显示架构与原版不同**（本轮新增申报） | 原版是 `-Dgl=disabled` + 自研 vo `frame_output` 像素帧管线（CVPixelBuffer → CMSampleBuffer → AVSampleBufferDisplayLayer）；我们是 GL render API（mpv plain-gl + `MPlayVideoView` 的 CAEAGLLayer + mpv_render_context）。这是比 PiP 更底层的架构差异，与偏差 1 同批：下一版显示管线重构时一并处理。本轮管线保留 GL 正是为保住现有显示层（逐项对照写在管线脚本 docstring）。 |
-| 3 | 独立字幕层架构未复刻（原第 2 条改写） | 原版 iOS 有独立字幕层：字幕是独立 CALayer（另有 Metal 字幕层）、可在内嵌/PiP 宿主间迁移、渲染尺寸与视频帧解耦、带 HDR 增益管理——这正是安卓双 Surface 字幕面在 iOS 的对应物。此前文档写「iOS 无对应物」是错的，现予改掉。本版暂以 mpv/libass 同帧合成替代；`subtitles` 命令的 28-double 原始封送布局只实现可识别子集（sub-add 参数面）。字幕层的渲染者分工（核心 libass 位图 vs Swift/Metal）原版符号面未定案（IOS-FINDINGS §6）。 |
-| 4 | 硬解 / TLS 平台替换 | MediaCodec → VideoToolbox；OpenSSL → SecureTransport。与 AVDB 353 相同。 |
-| 5 | 在线字幕样式映射为近似值 | 引擎渲染激活时：offset → `sub-delay`（同号：正数延后）；字号 pt → `sub-font-size`（×3，锚点 18pt≈mpv 默认 55）；位置 y → `sub-pos`（×100）；x → `sub-align-x`（三等分 left/center/right）。ASS 特效由 libass 原生呈现（原 overlay 明确不支持）。写临时文件或 sub-add 失败时自动回落 overlay 渲染。 |
-| 6 | 续播在 MPlayKit 路径的行为 | 续播逻辑（PlaybackResumeStore/Policy、>95% 或末 15 秒从头、从头 toast）全保留，走 ready 后 `engine.seek(autoPlay:)`。与 AVDB 353「MPlayKit 路径暂未接续播」不同，AVFan 的续播在 chrome 层、本来就与引擎无关，故完整保留。 |
-| 7 | RE 未定名部分不逐一复刻（原第 6 条改写） | n8/n10/n13 在 iOS 侧均有正式命名的对应 API（`intProperty` / `setSpeed`·`setVolume` 系 / `stringProperty` + `EngineState`，IOS-FINDINGS §2.3），说明它们是安卓侧未接线、**并非语义不可知**；本版以属性访问面覆盖其功能，不单独复刻门面方法。n0 无对应物（功能由 coreVersion/ffmpegVersion 等只读属性覆盖）、n18 无一对一对应（iOS 为 source 作用域 async 方法群，属同位演化、推断不定案），仍不复刻。Playback$State 未命名下标仅下标等价（MPlayStateRaw）；iOS 的 EngineState 给出了完整命名字段集，未命名字段的候选语义可由此反推，但不逐下标定案。ncnn 不引入（iOS 侧亦 0 命中，其图像增强线是 Metal 原生）。 |
-| 8 | 音轨/字幕轨选择 UI | AVFan 此前就**没有**音轨/字幕轨选择 UI（全仓无此入口），不是本版删掉的。引擎侧能力已具备（`MPlayPlayer.selectTrack` + `mediaJSON()`），要加 UI 另行立项。 |
-| 9 | LUT | AVFan 从来没有生效的 LUT 路径（seek 预览卡上的「原始画面 · 不含 LUT」是唯一残留文案，未动）。本版不引入 LUT。 |
-| 10 | 缓存数值是我方取值（本轮新增） | 默认选项 `demuxer-max-bytes=256MiB` / `demuxer-max-back-bytes=128MiB` 是**我方取值**。原版 iOS 是 CachePolicy 分段缓存模型（capacity / directory / prefetchBytes / seconds / segmentBytes / segments），具体数值是代码常量、二进制里不可恢复（IOS-FINDINGS §3.2/§6），不得把这两个数字当作原版参数引用；分段缓存模型本身亦未复刻。 |
-| 11 | 空间音频线未复刻（本轮新增申报） | 原版有整条 MPlaySpatial 线：`MPlaySpatial.framework`（bundle id org.mplaykit.spatial，Rust 实现）以 NOTICE 钉版的 LibTrueHD / LibDTSX 开源组件做 TrueHD / DTS:X 对象音频解码，经 SpatialDecoder/ObjectAudioRenderer 按 5.1.2–9.1.6 布局渲染；核心另有自研 ao `audio_relay` 把音频编码为 APAC 7.1.4、经内存 HLS 喂 AVPlayer 借系统空间音频/Atmos 输出，并以静默 Atmos 流保活输出通路（IOS-FINDINGS §四）。我们完全未复刻，此前两份 Build 文档只字未提，本轮补申报。评估：与 AVFan 的内容场景关联低（115 常规 AAC/AC3/DTS 音轨不走对象音频路径，TrueHD/DTS:X 母带级音轨是少数场景），**本版只申报、不实现**；若日后立项，应按 FFmpegKit.bundle NOTICE 的钉版引入同一批开源组件 + 复刻接线层，而非逆向重写。 |
-| 12 | Metal 图像后链未复刻（本轮新增申报） | 原版 FrameStore 持有 MetalSDRToHDRMapper / MetalHDRVividMapper / MetalSpatialUpscaler / VideoFrameInterpolator / MetalVideoDeinterlacer：SDR→HDR、HDRVivid、空间超分、插帧、去隔行五件均未复刻，此前未申报、本轮补上。其中 SDR→HDR 是 CVPixelBuffer 域的帧后 Metal LUT 变换（sdr-hdr-\*.metallib 只有 `pkFrameKernel0` 一个 kernel），生效域是帧后处理而非 vo 内 libplacebo tone-mapping；libplacebo 在原版 iOS 更像编入而未走（桌面共用构建），我们的 libplacebo 只活在 GL render 域内，分工与原版不同（IOS-FINDINGS §3.2）。 |
-| 13 | 预加载非接管制（本轮新增） | 原版 iOS 的预加载是完整 Player 实例 + `promotePreloadedPlayback` 接管制：音轨/字幕/音量/起播位置一并交接，PiP 控制器还能在实例间转移（IOS-FINDINGS §2.5）。我们只是用相同 options 新建实例、共享 GL 上下文预热（`MPlayPlayer.makePreloadedPlayer`），媒体状态不共享、无接管语义；且「共享 GL 上下文」这一形态建立在我们的 GL 显示架构上，原版并无此前提。 |
-| 14 | 其余未复刻的原版面（集中申报，本轮新增） | 字幕翻译/实时字幕子系统、自定义流协议（`registerStreamProtocol`）、光盘支持（`mplay::DiscSession` / MediaInfo.disc）、NowPlaying 集成、VideoToolbox 故障切换（`beginDecoderSwitch` / `recoverVideoToolbox`）、显示匹配（帧率/动态范围 display criteria）、Dolby Vision RPU 解析与 P5 色彩校正（`dovi-fel` / `dovi-fel-hwdec`）——均未复刻，集中申报在此，避免被误认为已对齐（IOS-FINDINGS §2.5/§3.2）。与之相关：管线侧 libavdevice/avfoundation 与原版 meson 参数有差异（原版 enabled），因无设备/光盘源需求暂不补，记录在案。 |
+| 自研 vo `frame_output`（CVPixelBuffer 经 C 回调交宿主） | landed | `scripts/mplaykit59/patches/0001-vo-frame-output.patch`（对 pristine mpv 0.41.0 树 git-diff 生成、`git apply --check` 两次干净）；构建脚本按 sha256 戳幂等应用 |
+| 关 GL（原版 meson `-Dgl=disabled`） | landed | build_libmpv.py 构建参数对齐；libplacebo 保留为 mpv 硬依赖、关 vulkan/opengl 后端；modulemap 去 OpenGLES |
+| FrameStore / FrameOutputScheduler（帧队列、时间戳、丢帧） | landed | `MPlayFrameOutput.swift`：store 双通道（视频/字幕）+ scheduler（CMSampleBuffer 入队、控制时间基、层失败恢复、黑帧） |
+| AVSampleBufferDisplayLayer 显示 View + 时间同步 | landed | `MPlayVideoView.swift`（layerClass 即显示层；nudge 节奏对时基）；GL 版 `MPlayRenderContext.swift` 已删除，无双路 |
+| 字幕独立 CALayer（与视频帧解耦、渲染尺寸独立） | landed | vo 字幕通道（BGRA 位图）→ `MPlaySubtitleLayer.swift`；渲染尺寸经 sink 覆盖值与视频尺寸解耦（`setSubtitleRenderSize`） |
+
+### 阶段 B — 画中画
+
+| 条目 | 状态 | 落点 / 证据 |
+|---|---|---|
+| AVPictureInPictureController + SampleBufferPlaybackDelegate 全套 | landed | `MPlayPictureInPicture.swift`（ContentSource(sampleBufferDisplayLayer:)、播放委托与控制器委托全套、音频中断恢复） |
+| Player 侧时间同步 / PiP 状态面（start/stop/transfer/sync/setCanStart…AutomaticallyFromInline） | landed | 同上 + `MPlayPlayer` PiP 相关面；chrome 顶栏 PiP 按钮在 pipPossible‖pipActive 时显示 |
+| 进 PiP 时字幕层迁移 | partial | 采样缓冲 PiP 没有系统宿主视图：字幕层保持挂在显示层上（随 PiP 窗口走），迁移的是**渲染尺寸**（pictureInPictureSubtitleRenderSize 语义）；字面「移入宿主视图」仅在宿主提供视图时走 `moveSubtitleLayerToPictureInPictureHost` |
+| PiP 控制器在预加载接管时转移 | landed | `MPlayVideoView.attach` 的 PiP 活跃分支：sink 与控制器 player 引用切到接管实例、显示层不换手；dismantle 在 PiP 活跃时推迟拆解（恢复 KSPlayer 时代规则） |
+
+### 阶段 C — Metal 后链 + Dolby Vision
+
+| 条目 | 状态 | 落点 / 证据 |
+|---|---|---|
+| SDR→HDR 帧后变换 | landed（架构同位、效果非等同） | `MPlayPostChain.metal` `pkSDRToHDRKernel0` + `MPlayPostChain.swift`；生效域为帧后（store 与 scheduler 之间），与原版口径一致。**着色器是我方实现，与原版闭源 sdr-hdr-\*.metallib 不声称效果等同**（只查过其文件名/符号，未反编译） |
+| 空间超分 | landed（同上口径） | `pkUpscaleKernel0`（Lanczos-2），管线位置与开关面对齐 |
+| 插帧 | landed（同上口径） | `pkMotionKernel0` + `pkInterpKernel0`（块匹配运动估计 + 中间帧合成），忙时丢帧策略 |
+| HDRVivid | partial | 开关面在位（与 SDR→HDR 同层 pass 选择），无独立 Vivid 曲线实现，文档明示 |
+| 去隔行（MetalVideoDeinterlacer）/ MetalPreviewScaler | blocked（不立项级） | 原版符号在案；我方 vo 输出为逐行帧、无隔行源场景，PreviewReader 走 mpv SW 缩放。证据：IOS-FINDINGS §3.2 符号存在，但 AVFan 无隔行内容来源——列 blocked 而非假装 |
+| DV RPU 解析（reshaping / MMR / polynomial / NLQ） | landed（组件） | `MPlayDolbyVision.swift` `MPlayDoviRPU`：逐字段对 FFmpeg 8.0.1 `libavcodec/dovi_rpudec.c` 实读核对（增量 pivot、poly/MMR 段、NLQ、DM 颜色元数据）。限定：use-prev RPU 只解头、linear-interp 段按 FFmpeg 口径拒绝、扩展块不解、CRC 不验。**播放中不直接喂字节**：mpv 客户端 API 不导出原始 RPU，解析器消费宿主提供的 RPU 数据；profile/level/FEL 状态走轨道属性实时读取 |
+| DolbyP5ColorCorrection 类型 + Profile 5 校正 | landed（常量来源明示） | 类型形状按符号反射复刻（Map{profile5, yccToRGB, yccOffset, rgbToLMS}、convert(i:p:t:map:)）；profile5 常量为公开的 ITU-R BT.2124 IPT 矩阵、代码内求逆组合——**原版烘焙常量未提取（需反汇编），不声称数值等同** |
+| P5 校正在 Metal 后链（与 SDR→HDR 同层） | landed | `pkDoviP5Kernel0`（IPT 重建 → PQ EOTF → BT.2020 PQ 重编码），与色调 pass 互斥选择；视图按 1 秒节奏刷新链的 dolbyProfile；设置页开关（默认开） |
+| FEL 标记（dovi-fel / dovi-fel-hwdec 等价物） | landed（标记面） | `MPlayPlayer.setDolbyVisionFELHardwareDecode`（开启时钉 hwdec=videotoolbox）+ `dolbyVisionState`（profile/level/FEL 推断） |
+| FEL 双层合成完整等价 | blocked | 证据：原版 fork 有 `demux/dovi_split.c` / `f_dovi_rpu` / BSF 依赖，且其自身日志显示 BSF 不可用时回落基底渲染；stock mpv 0.41 + stock FFmpeg 无此链路，双层合成不复刻 |
+| PreviewReader Still.dolbyProfile 真实值 | landed | `MPlayPreviewReader.swift`：Int（0=非 DV），自 track-list 子属性读取（mpv 0.41 command.c 直证）；Still 另有 pixelBuffer/stride/frameIndex/image |
+| 截图 correctDolbyP5 开关 | landed（双路口径） | PreviewReader 路：CPU 逐像素（**通道域近似**：帧已经过 SW 渲染 YUV→RGB，文件头明示）；捕获路（MPlayCapture）：双平面原始域逐像素，为全保真口径 |
+
+### 阶段 D — 空间音频 + 预加载接管 + 缓存策略
+
+| 条目 | 状态 | 落点 / 证据 |
+|---|---|---|
+| 钉版开源组件（AetherEngine / LibTrueHD / LibDTSX） | landed | NOTICE 三钉版（AetherEngine fc6b412…、LibTrueHD 3eab2e7…、LibDTSX 6f0b321…）；`scripts/mplaykit59/build_spatial.py` 克隆后验 HEAD==钉版、走各仓自家 build.sh，失败回落仓内 xcframework 并响亮告警。勘误：AetherEngine 是**纯 SwiftPM 包、非 Rust/Cargo**（无 C ABI）；LibTrueHD/LibDTSX 是 Rust crate（工具链分别钉 Rust 1.98.1 / 1.99.0） |
+| MPlayNative 风格 ABI 桥（mplay_ 前缀转发） | landed | `Spatial/MPlaySpatialBridge.h/.c`：27 个转发函数（13 truehd_atmos_\* + 13 dtsx_\* + 组合自检），头文件逐字 vendored 自钉版仓库 |
+| 对象音频解码（TrueHD / DTS:X） | landed | `MPlaySpatial.swift`：push-pull 包装（块指针解码器所有、拉后即拷贝）；错误码/访问单元粒度按头文件语义（TrueHD 40 帧 @48k、DTSX 512 帧） |
+| 对象渲染 5.1.2–9.1.6 布局 | landed（渲染模型为我方） | `MPlaySpatialRender.swift` ObjectAudioRenderer：最近三声道逆距离分布 + 软限幅、48kHz 约束。原版渲染内幕无符号证据，不声称等同 |
+| APAC 编码 → 内存 HLS → AVPlayer（系统空间音频） | landed（iOS 26 门槛明示） | MPlayAPACEncoder 以 `#available(iOS 26.0, *)` 门控（依 AetherEngine 标注）；MPlayAPACStream 进程内回环 HLS |
+| 静默 Atmos 保通路 | partial | AtmosOutputActivator 已落地但**惰性**：静默样本由构建脚本在 CI 侧尝试用钉版仓库的 make-silent-atmos.swift 生成；样本不在仓内时激活器不动作（不假装保通） |
+| 空间链路喂活播放 | blocked（缺口明示） | 解码/渲染/APAC 链完整可调用，但**未由实时 mpv 播放喂数**：那需要原版自研 `audio_relay` ao 级别的核内组件，stock mpv 无此 ao。7.1 PCM 回落路在位（MPlayAudioRelay） |
+| EAC3PassthroughDecision / AudioRouteOutputOverride | landed（决策逻辑） | `MPlayAudioPolicy.swift`：符号字段逐字；iOS 栈无位流直通落点，决策用于空间路分叉，文档明示 |
+| 预加载完整实例接管（promotePreloadedPlayback） | landed | `MPlayPlayer.promotePreloadedPlayback` + 协调器 preload/open 接管分支 + PiP rebindPlayer 快路；chrome 侧因宿主懒解析流而 opt-in（preloadTarget） |
+| CachePolicy 分段模型 | landed（数值为我方） | `MPlayCachePolicy.swift`：字段名与原版逐字（capacity/directory/prefetchBytes/seconds/segmentBytes/segments）；值是我方 96×4MiB=384MiB / 32MiB / 120s——**原版数值是代码常量、不可恢复，不冒充**；到 mpv 选项的映射为近似（文件头明示） |
+
+### 字幕 / 流协议 / 光盘 / NowPlaying / 故障切换 / 显示匹配
+
+| 条目 | 状态 | 落点 / 证据 |
+|---|---|---|
+| SubtitleSettings 全字段面 | landed | `MPlaySubtitles.swift`：primary/secondary/secondaryActive/visible/fontsDirectory 真实应用；fontProvider、aspect 为记录字段（mpv 无对应，明示） |
+| subtitles(primary:secondary:) / setSubtitleDelay(secondary:) | landed | sid/secondary-sid、sub-delay/secondary-sub-delay 均为真实 mpv 属性 |
+| 字幕样式 style(_:secondary:) | partial | 主轨 sub-font-size/sub-color/sub-back-color/sub-bold 真实；**mpv 无副轨样式属性**，副轨仅记录（明示） |
+| setSubtitleHDR / 透明度 / 垂直偏移 | landed | HDR 增益走独立字幕层预乘位图重曝光；透明度走层 opacity；偏移走 sub-pos |
+| 字幕边缘处理（setSubtitleEdgeProcessingEnabled） | blocked（无对应物） | AVKit 文本样式概念，libass 位图无等价开关；仅记录 + 日志，明示 |
+| 字幕翻译 / 实时字幕子系统 | partial | 管线与 API 落地（SRT 逐 cue、译后文件 sub-add、translationTrack 注册表、liveSubtitles 快照含简繁/去换行处理）；**AVFan 未内置任何翻译后端/凭证，未注入 provider 时返回 -18**；内嵌轨不可译（只支持外置文件轨，即 AVFan 在线字幕的实际形态） |
+| 简繁转换（chineseConversion） | partial | 紧凑常用字表（约 140 对，抽验正确），**非完整 OpenCC 词典**，覆盖率部分 by construction |
+| 自定义流协议 registerStreamProtocol | landed | `MPlayStreamBridge.c/.h` + `MPlayStreamProtocol.swift`：mpv_stream_cb_add_ro 桥到 Swift 工厂（info 布局对 0.41 头文件核对 + 静态断言）；限制：桥注册表进程全局（同 scheme 跨 core 后注册覆盖）、libmpv 无注销、工厂保留到 core 关闭 |
+| 光盘播放（DiscSession / MediaInfo.disc） | partial（API 落地、本体 blocked） | `MPlayDisc.swift` 会话 API + mediaInfo 的 disc 块真实；**本体 blocked**：mpv 0.41 meson 有 libbluray/dvdnav 选项但管线 COMPONENTS 未引入两库，光盘源在 mpv 内失败并经 completion 如实上抛 |
+| NowPlaying（系统播放信息 + 远程控制） | landed | `MPlayNowPlaying.swift` + 协调器接线：poll 发布标题/时长/位置/速率，远程 play/pause/toggle/seek 路由回传输层；next/previous 仅在宿主提供回调时启用 |
+| VideoToolbox 故障切换（beginDecoderSwitch / decoderSwitchResult / recoverVideoToolbox） | landed（结果判定为观察式） | hwdec 属性运行时切换 + 以 hwdec-current 观察完成（stock mpv 能给的最强信号，与原版 fork 内显式结果不同，明示）；recover = 软解重载当前文件保位置 → 恢复 VT |
+| 显示匹配（帧率/色彩与显示设备匹配） | partial | 状态面 + generation 失效计数落地（setFrameRateMatchingEnabled / clearDisplayCriteriaImmediately）；应用形态是 iOS 的 CADisplayLink preferredFrameRateRange（ProMotion）——**tvOS 的 AVDisplayCriteria 在 iOS 无对应物**，色彩侧依赖系统对显示层的处理 |
+| AudioRelay 子选项（VideoHold / PCMSeekTrim / PCMMaxLead） | landed（策略值） | MPlayAudioRelay 存储 + 钳制；ao 本体不在我方核内（同空间喂活条目） |
+
+### PreviewReader 全面对齐
+
+| 条目 | 状态 | 落点 / 证据 |
+|---|---|---|
+| init 命名参数组（url/headers/height/timeout/percent/preferCover/nativeImage） | landed | `MPlayPreviewReaderConfiguration` + `init(configuration:)`；timeout 取代写死 15 秒 |
+| image(at:) percent 落点 | landed | 无时刻时先 metadata 探测时长再按 percent 落点抓帧 |
+| metadata() → PreviewMetadata | landed | 独立轻量 core（vo=null）；longName 以 format 兜底（mpv 无长名属性，明示）；逐轨 dolbyProfile |
+| Still 字段（time/duration/rotation/dolbyProfile/isCover/rgba/metadata + pixelBuffer/stride/frame） | landed | 见 MPlayPreviewReader.swift 文件头逐项对齐表 |
+
+### Player 99 公开方法面
+
+| 条目 | 状态 | 落点 / 证据 |
+|---|---|---|
+| 传输/打开族（open/close/pause/stop/load/PlaybackSource 形态、source 作用域 async 变体） | landed | MPlayPlayer + MPlayPlayerExtras（单源核：source 不匹配返回 -2） |
+| 属性族（intProperty/doubleProperty/stringProperty、option/setOption、configure、setVolume/setAudioDelay/ao-volume） | landed | 同上；即原 n8/n10/n13 的 iOS 正式对应面 |
+| 状态聚合（state/progress/playbackState/playbackSnapshot/trackSnapshot/mediaInfo/navigationInfo/chapters） | landed | MPlayState/MPlayProgress + Extras 聚合（EngineState 字段集按原版命名） |
+| 轨道选择（selectTrack、select(Choice,slot)、addSubtitle 全形态、removeSubtitle、prepareExternalSubtitleURL、clearExternalSubtitleCache） | landed | Extras；外置字幕走托管缓存目录，引擎永不抓远程字幕 URL（AVFan 既有纪律） |
+| 后链开关族（setSDRToHDRLevel/setHDRVividEnabled/setVideoUpscalingLevel/setVideoFrameInterpolationEnabled） | landed | MPlayPostChain 设置面（UserDefaults 持久化）+ 设置页 |
+| PiP 族（start/stop/transfer/sync/setCanStart…AutomaticallyFromInline） | landed | MPlayPictureInPicture.swift：startPictureInPicture/stopPictureInPicture/toggle/transfer(to:)/rebindPlayer/syncPictureInPicturePlaybackTime + 委托全套 |
+| PiP 族其余（preparePictureInPictureForExit / invalidatePictureInPicturePlaybackState / resetPictureInPictureController / restorePictureInPictureAfterForeground） | partial | 以 stop/unbind/rebind 的语义覆盖（退出准备 = stop 前的同步、状态失效 = unbind、重置 = 重新 bind、前台恢复 = 中断恢复路径），无四个独立方法，明示 |
+| 捕获族（captureVideoFrame/screenshot/renderBlackFrame/clearRenderView/setVideoGravity/mirrored） | landed（属主不同） | MPlayCapture.swift 在 MPlayVideoView 上（我方 FrameStore 属视图而非 Player，数据同、属主异，明示）；镜像输出为第二视图喂同帧 |
+| 预览族（preview(at:)/preparePreview/renderPreview/requestThumbnail/cancelPreview） | landed | Extras 转 MPlayPreviewReader；preparePreview/renderPreview 的像素缓冲直喂形态并入 still 管线（无独立落点，明示） |
+| configureAuxiliaryCache / configureManagedTracks / setPreloadedTrackOptionsProvider | partial | 缓存再应用已落地；轨道托管交接与预加载轨道选项提供者只有协调器接管语义、无独立 API 落点（明示） |
+| stopRendering / restoreDisplayFrame | partial | 我方架构下渲染停止 = 视图 detach（无播放器侧渲染环）；restoreDisplayFrame 无对应状态，返回 false 并在文档明示 |
+| CoreOption / CoreProperty / CoreCommand / CoreCustom 生成词汇镜像 | blocked（不镜像） | 原版是代码生成的全量词汇类型；我方是手写子集 + 通用 setProp/command 通道，功能可达、类型镜像不复刻。dovi-fel 等 CoreCustom 标记以专用方法落地（见 DV 行） |
+
+### 无落点条目（证据在案，不复刻）
+
+| 条目 | 结论 | 证据 |
+|---|---|---|
+| AppleSession | 不复刻 | IOS-FINDINGS：只有 handle + fileAccess 两个 ivar，角色未定案 |
+| CoreRenderView | 不复刻 | IOS-FINDINGS：角色未定案（符号面不足以定其职责） |
+| runtimePermit | 不复刻 | iOS 侧**无此符号**（安卓/网盘侧概念），无中生有不如实 |
+| libavdevice / avfoundation 输入 | 不补 | 原版 meson enabled、我方未启；无设备/光盘源需求（光盘条目已单独 blocked 在库缺失） |
+| 字幕渲染者分工（libass 位图 vs Swift/Metal） | 按可实现路线定案 | 我方走 vo 字幕通道的 libass 位图（阶段 A）；原版分工符号面未定案（IOS-FINDINGS §6），不冒充其选择 |
 
 ## KSPlayer 残留清单
 
@@ -81,18 +171,28 @@ publicSubtitleQuery / onVideoMetrics / resumeKey / startFromBeginning）。
   不再随包分发 KSPlayer 代码，可后续清理）。
 - `MPlayKernel.swift` 为单 case 描述文件（见上），无功能残留。
 
-## CI 首跑清单（本地无法编译 Swift / 无法冷构建 libmpv，以下必须首跑核）
+## CI 首跑清单（本地无法编译 Swift / 无法冷构建 libmpv / 无 Cargo，以下必须首跑核）
 
-1. `libmpv-353` 对应步（本仓为 build-ipa 单 job 内 Cache/Build/Assert 三步）：
-   冷构建是否跑通——重点 freetype 的 cmake harfbuzz 探测、libplacebo/mpv
-   在交叉环境下的 GL 探测、新增 uchardet（cmake）/lcms2（meson）两 stage
-   的 .pc 是否落进 prefix 并被 mpv 的 dependency() 找到（本轮新钉，
-   IOS-FINDINGS §3.1 对齐项）；job timeout 已 90 → 300。
-2. Swift 编译：C 枚举/GL 常量导入形态；`MPlayChromeCoordinator` 与
-   chrome 的 @MainActor 隔离。（`MPV_END_FILE_REASON_EOF` 已销项：
-   mpv 0.41.0 client.h 直证存在且 =0，与 ERROR 同枚举，见
-   `MPlayPlayer.swift` 头部核对记录。）
-3. pbxproj：Libmpv.xcframework 的 Frameworks + Embed & Sign、显式系统
-   框架/库清单（LINK-NOTES）是否足够/多余。
-4. 真机：115 播放起播与续播、预告三级链第一级、倍速、seek 落点、
-   在线字幕 sub-add 渲染与样式映射、横竖屏锁、后台音频。
+1. libmpv 冷构建：freetype 的 cmake harfbuzz 探测、uchardet（cmake）/
+   lcms2（meson）两 stage 的 .pc 落点；**阶段 A 新增**：vo 补丁在
+   pristine 0.41.0 树上的应用（本地已验 apply --check，CI 走构建脚本
+   戳路径）、frame_output 的格式协商（VideoToolbox CVPixelBuffer
+   直通与软解 planes 兜底）、关 GL 后 libplacebo 的实际链接形态。
+2. Swift 编译：全量新文件（MPlayKit 目录 + Spatial 子目录）一次过编；
+   重点：桥接头双 include（Spatial + StreamBridge）、首个 C 文件
+   （MPlaySpatialBridge.c / MPlayStreamBridge.c）进 target 的编译
+   形态、C 函数指针回调的导入形状、@convention(c) 签名匹配。
+3. Metal：`MPlayPostChain.metal` 进默认库（makeDefaultLibrary）编译，
+   四个 kernel + P5 kernel 的纹理格式在真机上的可用性。
+4. 空间音频 Cargo 阶段：两个钉版工具链（Rust 1.98.1 / 1.99.0）在
+   runner 上的构建时长与 rust_eh_personality 预链接；DTSX 动态库
+   Embed & Sign；静默 Atmos 样本生成（make-silent-atmos.swift）在
+   runner 上是否成功——失败时激活器保持惰性（设计内）。
+5. pbxproj：Libmpv/TrueHD/DTSX 的 Frameworks + Embed、显式系统框架
+   清单（含 MediaPlayer，已在链内）是否足够/多余。
+6. 真机：起播/续播/倍速/seek 落点、在线字幕 sub-add 与样式映射、
+   PiP 进出与字幕渲染尺寸、显示层时间基漂移、后链三 pass 与 P5
+   的实际观感（与原版效果差异以观感为准再调参）、DV 文件的
+   profile 读取与 RPU 解析对真实样本的回归、PreviewReader 的
+   SW 渲染方向（旋转源）与 dolby-vision-profile 回读。
+7. 版本号保持 59；本轮全部提交只在本地 `feat/mplaykit-59`，未 push。

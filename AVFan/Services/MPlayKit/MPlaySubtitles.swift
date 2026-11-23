@@ -69,7 +69,7 @@ struct SubtitleSettings {
 
 // MARK: - Simplified/traditional conversion (compact table)
 
-/// A compact common-character conversion table (~120 pairs).  This
+/// A compact common-character conversion table (~140 pairs).  This
 /// is deliberately NOT a full dictionary: it covers the characters
 /// that dominate subtitle text, and the docs state the partial
 /// coverage plainly.
