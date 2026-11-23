@@ -45,6 +45,22 @@ final class MPlaySubtitleLayerController {
 
     private var lastFrameID: UInt64 = .max
     private var lastPTS = -1.0
+    private var lastFrame: MPlayFrame?
+
+    /// HDR brightness gain for the subtitle bitmaps (the original's
+    /// setSubtitleHDR surface: on HDR content, SDR-authored subtitle
+    /// bitmaps are re-exposed so they don't render dim against the
+    /// HDR picture).  1.0 = identity.  Applied by scaling the
+    /// premultiplied RGB bytes during image conversion — the correct
+    /// domain for premultiplied bitmaps.  Changing the gain forces
+    /// the current frame to re-render.
+    var brightnessGain: Double = 1 {
+        didSet {
+            guard brightnessGain != oldValue else { return }
+            lastFrameID = .max
+            if let lastFrame { update(lastFrame) }
+        }
+    }
 
     /// Invoked when renderSize changes; MPlayVideoView wires this to
     /// the player's setSubtitleRenderSize so the vo re-renders at the
@@ -70,7 +86,9 @@ final class MPlaySubtitleLayerController {
         }
         lastFrameID = frame.frameID
         lastPTS = frame.ptsSeconds
-        guard let image = Self.makeImage(from: frame.pixelBuffer) else { return }
+        lastFrame = frame
+        guard let image = Self.makeImage(from: frame.pixelBuffer,
+                                         gain: brightnessGain) else { return }
         DispatchQueue.main.async { [weak self] in
             self?.layer.contents = image
         }
@@ -79,6 +97,7 @@ final class MPlaySubtitleLayerController {
     func clear() {
         lastFrameID = .max
         lastPTS = -1
+        lastFrame = nil
         DispatchQueue.main.async { [weak self] in
             self?.layer.contents = nil
         }
@@ -100,7 +119,8 @@ final class MPlaySubtitleLayerController {
     /// premultipliedFirst is the matching CGImage layout.  The bytes
     /// are copied out while the buffer is locked so the image never
     /// aliases the (short-lived) pixel buffer.
-    private static func makeImage(from buffer: CVPixelBuffer) -> CGImage? {
+    private static func makeImage(from buffer: CVPixelBuffer,
+                                  gain: Double = 1) -> CGImage? {
         guard CVPixelBufferGetPixelFormatType(buffer) == kCVPixelFormatType_32BGRA
         else { return nil }
         CVPixelBufferLockBaseAddress(buffer, .readOnly)
@@ -110,7 +130,27 @@ final class MPlaySubtitleLayerController {
         let height = CVPixelBufferGetHeight(buffer)
         let bytesPerRow = CVPixelBufferGetBytesPerRow(buffer)
         guard width > 0, height > 0, bytesPerRow >= width * 4 else { return nil }
-        let data = Data(bytes: base, count: bytesPerRow * height)
+        var data = Data(bytes: base, count: bytesPerRow * height)
+        if gain != 1 {
+            // Premultiplied BGRA: scaling RGB by the gain re-exposes
+            // the bitmap without touching alpha relationships.
+            let factor = max(0, gain)
+            data.withUnsafeMutableBytes { raw in
+                guard let bytes = raw.baseAddress?
+                    .assumingMemoryBound(to: UInt8.self) else { return }
+                for row in 0..<height {
+                    var offset = row * bytesPerRow
+                    for _ in 0..<width {
+                        for channel in 0..<3 {
+                            let value = Double(bytes[offset + channel]) * factor
+                            bytes[offset + channel] =
+                                UInt8(min(255, max(0, value.rounded())))
+                        }
+                        offset += 4
+                    }
+                }
+            }
+        }
         guard let provider = CGDataProvider(data: data as CFData) else { return nil }
         let bitmapInfo = CGBitmapInfo(
             rawValue: CGImageAlphaInfo.premultipliedFirst.rawValue

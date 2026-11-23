@@ -11,3 +11,4 @@
 //
 
 #import "Services/MPlayKit/Spatial/MPlaySpatialBridge.h"
+#import "Services/MPlayKit/MPlayStreamBridge.h"

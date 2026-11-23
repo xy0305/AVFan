@@ -97,6 +97,91 @@ final class MPlayPlayer {
     private var pendingOpens: [UInt64: (Result<Void, MPlayError>) -> Void] = [:]
     private var pendingSeeks: [(id: UInt64, completion: () -> Void)] = []
     private var nextSeekID: UInt64 = 1
+    /// Custom stream protocol factory contexts (MPlayStreamProtocol):
+    /// retained at registration, released in closeOnQueue().
+    private var streamContexts: [UnsafeMutableRawPointer] = []
+
+    // MARK: - Extension-surface state (MPlayPlayerExtras / MPlaySubtitles)
+    //
+    // Stored here because Swift extensions cannot hold state; all
+    // access hops onto the player queue like the rest of the core.
+
+    /// Subtitle HDR gain sink, registered by MPlayVideoView (drives
+    /// the independent subtitle layer's brightness gain).
+    var onSubtitleGainChange: ((Double) -> Void)?
+
+    /// Subtitle opacity sink, registered by MPlayVideoView (mpv has
+    /// no global subtitle opacity property; the layer carries it).
+    var onSubtitleOpacityChange: ((Double) -> Void)?
+
+    /// Last SubtitleSettings applied (MPlaySubtitles) and the edge
+    /// processing flag (recorded; no libass equivalent).
+    var subtitleSettingsStorage = SubtitleSettings()
+    var subtitleEdgeProcessingEnabled = false
+
+    private var frameRateMatching = false
+    private var displayCriteriaGen: UInt64 = 0
+    var frameRateMatchingEnabled: Bool {
+        get { onPlayerQueue { frameRateMatching } }
+        set {
+            queue.async { [weak self] in
+                guard let self, !self.closed else { return }
+                self.frameRateMatching = newValue
+                self.displayCriteriaGen &+= 1
+            }
+        }
+    }
+    var displayCriteriaGeneration: UInt64 {
+        onPlayerQueue { displayCriteriaGen }
+    }
+    func bumpDisplayCriteriaGeneration() {
+        queue.async { [weak self] in self?.displayCriteriaGen &+= 1 }
+    }
+
+    private var decoderSwitchCounter: UInt64 = 0
+    private var decoderSwitchState: (token: UInt64, hardware: Bool, completed: Bool) =
+        (token: 0, hardware: true, completed: true)
+    func beginDecoderSwitchRecord(hardware: Bool) -> UInt64 {
+        onPlayerQueue {
+            decoderSwitchCounter &+= 1
+            decoderSwitchState = (token: decoderSwitchCounter,
+                                  hardware: hardware, completed: false)
+            return decoderSwitchCounter
+        }
+    }
+    func markDecoderSwitchCompleted(token: UInt64) {
+        queue.async { [weak self] in
+            guard let self, self.decoderSwitchState.token == token else { return }
+            self.decoderSwitchState.completed = true
+        }
+    }
+    func decoderSwitchCompleted(token: UInt64) -> Bool {
+        onPlayerQueue {
+            decoderSwitchState.token == token && decoderSwitchState.completed
+        }
+    }
+
+    /// Retains a stream factory context until close().  Callable
+    /// from any thread; the append hops onto the player queue.
+    func retainStreamContext(_ context: UnsafeMutableRawPointer) {
+        let work = { self.streamContexts.append(context) }
+        if DispatchQueue.getSpecific(key: specificKey) != nil {
+            work()
+        } else {
+            queue.sync(execute: work)
+        }
+    }
+
+    /// Runs `work` with the live core on the player queue; nil after
+    /// close().  For extension files that must not touch the private
+    /// queue directly (stream registration, decoder switching).
+    func withCore<T>(_ work: (OpaquePointer) -> T) -> T? {
+        let body = { self.core.map(work) }
+        if DispatchQueue.getSpecific(key: specificKey) != nil {
+            return body()
+        }
+        return queue.sync(execute: body)
+    }
 
     private static let sourceLock = NSLock()
     private static var sourceCounter: Int64 = 0
@@ -327,6 +412,7 @@ final class MPlayPlayer {
                         "channelLayout": channelLayout,
                         "imageSubtitle": getFlag(prefix + "image") ?? false,
                         "external": getFlag(prefix + "external") ?? false,
+                        "externalFilename": getString(prefix + "external-filename") ?? "",
                         "selected": selected,
                     ])
                 }
@@ -558,6 +644,14 @@ final class MPlayPlayer {
             mpv_set_wakeup_callback(core, nil, nil)
             mpv_terminate_destroy(core)
             self.core = nil
+        }
+        // Stream protocol factories: callbacks can no longer fire
+        // once the core is destroyed, so the retains taken at
+        // registration time are balanced here.
+        let contexts = streamContexts
+        streamContexts.removeAll()
+        for context in contexts {
+            Unmanaged<MPlayStreamFactoryBox>.fromOpaque(context).release()
         }
         let opens = pendingOpens
         pendingOpens.removeAll()

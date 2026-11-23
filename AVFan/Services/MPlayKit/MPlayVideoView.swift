@@ -57,6 +57,15 @@ final class MPlayVideoView: UIView {
     private var lastSyncedRate: Double = -1
     private var lastSyncHostTime: CFTimeInterval = 0
 
+    /// Mirrored output (the original's setMirroredRenderView): a
+    /// second view fed the same post-chain frames this view enqueues.
+    /// Weak — the host owns the mirror.
+    private weak var mirrorView: MPlayVideoView?
+
+    /// Display matching state (see refreshDisplayCriteria).
+    private var displayLink: CADisplayLink?
+    private var displayCriteriaAppliedGeneration: UInt64 = .max
+
     /// Host view that receives the subtitle layer when it is moved
     /// out of the display layer (stage B: the PiP host).  Nil means
     /// the layer's external home is this view itself (an overlay
@@ -80,6 +89,7 @@ final class MPlayVideoView: UIView {
                     guard let self else { return }
                     for processed in frames {
                         self.scheduler.enqueue(processed)
+                        self.mirrorView?.receiveMirroredFrame(processed)
                     }
                     if let last = frames.last {
                         self.nudgeTimeSync(with: last)
@@ -87,6 +97,7 @@ final class MPlayVideoView: UIView {
                 }
             } else {
                 self.scheduler.enqueue(frame)
+                self.mirrorView?.receiveMirroredFrame(frame)
                 self.nudgeTimeSync(with: frame)
             }
         }
@@ -126,18 +137,29 @@ final class MPlayVideoView: UIView {
             sink?.unregister()
             attachedPlayer = player
             installSink(for: player)
+            wireSubtitleGain(player)
             pictureInPictureController.rebindPlayer(player)
             return
         }
         detach()
         attachedPlayer = player
         installSink(for: player)
+        wireSubtitleGain(player)
         // Initial subtitle render size follows the current bounds.
         subtitleLayerController.setRenderSize(bounds.size)
         player.setSubtitleRenderSize(
             width: Int(bounds.width), height: Int(bounds.height)
         )
         pictureInPictureController.bind(player: player, videoView: self)
+    }
+
+    private func wireSubtitleGain(_ player: MPlayPlayer) {
+        player.onSubtitleGainChange = { [weak self] gain in
+            self?.subtitleLayerController.brightnessGain = gain
+        }
+        player.onSubtitleOpacityChange = { [weak self] opacity in
+            self?.subtitleLayerController.layer.opacity = Float(opacity)
+        }
     }
 
     private func installSink(for player: MPlayPlayer) {
@@ -163,7 +185,12 @@ final class MPlayVideoView: UIView {
         scheduler.flush()
         frameStore.flush()
         subtitleLayerController.clear()
+        attachedPlayer?.onSubtitleGainChange = nil
+        attachedPlayer?.onSubtitleOpacityChange = nil
         attachedPlayer = nil
+        displayLink?.invalidate()
+        displayLink = nil
+        displayCriteriaAppliedGeneration = .max
         lastSyncedRate = -1
     }
 
@@ -191,6 +218,62 @@ final class MPlayVideoView: UIView {
             // Keep the post chain's DV profile current (drives the
             // Profile 5 correction pass; changes only per file).
             MPlayPostChain.shared.dolbyProfile = player.dolbyVisionProfile()?.profile ?? 0
+            refreshDisplayCriteria()
+        }
+    }
+
+    // MARK: - Mirrored output / display matching
+
+    /// Feed this view's post-chain frames to a second view as well
+    /// (the original's setMirroredRenderView(FrameOutputView?)).
+    func setMirroredRenderView(_ view: MPlayVideoView?) {
+        mirrorView = view
+    }
+
+    /// Intake for mirrored frames; enqueues directly (the mirror
+    /// shows the primary's already-processed output).
+    func receiveMirroredFrame(_ frame: MPlayFrame) {
+        scheduler.enqueue(frame)
+    }
+
+    /// Display matching (the original's setFrameRateMatchingEnabled
+    /// + clearDisplayCriteriaImmediately): when the player has
+    /// matching enabled, a CADisplayLink carries the content frame
+    /// rate as its preferred range — the iOS/ProMotion form of the
+    /// original's display-criteria application (tvOS's
+    /// AVDisplayCriteria has no iOS equivalent).  The criteria
+    /// generation counter is the invalidation channel: changing the
+    /// flag or clearing criteria bumps it, and the next 1-second
+    /// nudge re-applies.  The link's tick also gives display-layer
+    /// failure recovery a cadence independent of frame arrival.
+    private func refreshDisplayCriteria() {
+        guard let player = attachedPlayer else { return }
+        let generation = player.displayCriteriaGeneration
+        guard generation != displayCriteriaAppliedGeneration else { return }
+        displayCriteriaAppliedGeneration = generation
+        let fps = player.doubleProperty("container-fps") ?? 0
+        if player.frameRateMatchingEnabled, fps > 0 {
+            let link = displayLink ?? CADisplayLink(
+                target: self, selector: #selector(displayLinkTick))
+            displayLink = link
+            let maxFPS = Double(UIScreen.main.maximumFramesPerSecond)
+            let clamped = maxFPS > 0 ? min(fps, maxFPS) : fps
+            link.preferredFrameRateRange = CAFrameRateRange(
+                minimum: Float(clamped), maximum: Float(clamped),
+                preferred: Float(clamped))
+            if link.isPaused {
+                link.add(to: .main, forMode: .common)
+                link.isPaused = false
+            }
+        } else {
+            displayLink?.invalidate()
+            displayLink = nil
+        }
+    }
+
+    @objc private func displayLinkTick() {
+        if displayLayer.status == .failed {
+            scheduler.flush()
         }
     }
 

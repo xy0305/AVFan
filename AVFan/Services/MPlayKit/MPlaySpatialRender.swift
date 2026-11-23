@@ -463,6 +463,32 @@ final class MPlayAudioRelay {
     private let stream = MPlayAPACStream()
     private let activator = AtmosOutputActivator()
 
+    // MARK: Relay tuning (the original's ao sub-options)
+    //
+    // Policy values the relay consults; in the original these tune
+    // its audio_relay ao directly.  Ours are stored state consumed
+    // by the renderer's scheduling — the ao itself does not exist
+    // in our core (see Build59-MPlayKit.md, spatial section).
+
+    /// How long video waits for the relay to produce audio.
+    private(set) var videoHoldMilliseconds: Double = 250
+    /// PCM trimmed from the head after a seek.
+    private(set) var pcmSeekTrimMilliseconds: Double = 0
+    /// Maximum PCM lead the relay may run ahead of video.
+    private(set) var pcmMaxLeadMilliseconds: Double = 500
+
+    func setAudioRelayVideoHold(milliseconds: Double) {
+        videoHoldMilliseconds = max(0, milliseconds)
+    }
+
+    func setAudioRelayPCMSeekTrim(milliseconds: Double) {
+        pcmSeekTrimMilliseconds = max(0, milliseconds)
+    }
+
+    func setAudioRelayPCMMaxLead(milliseconds: Double) {
+        pcmMaxLeadMilliseconds = max(0, milliseconds)
+    }
+
     /// The AVPlayer consuming the HLS stream on the APAC route
     /// (play it through the system output to get system spatial
     /// audio).  Nil on the PCM route.

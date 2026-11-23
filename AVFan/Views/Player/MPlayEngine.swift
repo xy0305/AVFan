@@ -39,6 +39,10 @@ final class MPlayChromeCoordinator: ObservableObject {
     /// KSPlayer-era chrome reached the layer's pipController.
     weak var pictureInPictureController: MPlayPictureInPictureController?
 
+    /// Full restoration: system Now Playing / remote commands,
+    /// published from poll() and routed back into the transport.
+    let nowPlaying = MPlayNowPlayingController()
+
     // Polled snapshot, refreshed by poll().
     private(set) var phase: Phase = .idle
     private(set) var isPlaying = false
@@ -94,6 +98,16 @@ final class MPlayChromeCoordinator: ObservableObject {
         loadGeneration += 1
         let generation = loadGeneration
         currentURL = url
+        nowPlaying.onPlay = { [weak self] in self?.play() }
+        nowPlaying.onPause = { [weak self] in self?.pause() }
+        nowPlaying.onTogglePlayPause = { [weak self] in
+            guard let self else { return }
+            if self.isPlaying { self.pause() } else { self.play() }
+        }
+        nowPlaying.onSeek = { [weak self] position in
+            self?.seek(to: position, autoPlay: false)
+        }
+        nowPlaying.activate()
         readyFired = false
         failureFired = false
         endedFired = false
@@ -181,6 +195,7 @@ final class MPlayChromeCoordinator: ObservableObject {
     /// detach BEFORE this is called (the frame sink unregisters before
     /// the core is destroyed).
     func reset() {
+        nowPlaying.deactivate()
         discardPreload()
         pendingRetire?.close()
         pendingRetire = nil
@@ -358,5 +373,12 @@ final class MPlayChromeCoordinator: ObservableObject {
             break
         }
         if phase == .ready, progress.pausedForCache { phase = .buffering }
+        nowPlaying.update(
+            title: player.stringProperty("media-title") ?? "",
+            duration: duration,
+            position: position,
+            rate: player.doubleProperty("speed") ?? 1,
+            isPaused: !isPlaying
+        )
     }
 }
