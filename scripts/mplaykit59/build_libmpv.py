@@ -449,49 +449,81 @@ def apply_patches(mpv_src):
     landed: git apply can skip every file and still exit 0 (see
     _git_apply_dir_args), and exactly that left a valid-looking marker
     on an unpatched tree in CI.  The skip path therefore also requires
-    the series' signature file in the tree, and a real apply run ends
-    with the same existence assertions."""
+    the series' signature file in the tree and a passing reverse
+    --check of the series' head patch.
+
+    Applied-state accounting is by prefix digest: the marker records
+    the digest of the series as it stood when last applied here, and
+    the series only ever grows by appending, so a marker equal to the
+    digest of the first k patches means exactly those k are in the
+    tree and only the rest need applying.  (Per-patch reverse --check
+    cannot detect this state: it fails the moment a later patch
+    touches a file an earlier one created — the normal stacked state,
+    which killed the first version of this accounting in round 12.)"""
     patch_dir = HERE / "patches"
     patches = sorted(patch_dir.glob("*.patch"))
     if not patches:
         return
-    digest = hashlib.sha256()
+    prefix_digests = []
+    running = hashlib.sha256()
     for patch in patches:
-        digest.update(patch.read_bytes())
-    want = digest.hexdigest()
+        running.update(patch.read_bytes())
+        prefix_digests.append(running.hexdigest())
+    want = prefix_digests[-1]
     marker = mpv_src / ".mplaykit59-patches.stamp"
     sentinel = mpv_src / "include" / "mpv" / "frame_output.h"
-    if (marker.exists() and marker.read_text().strip() == want
-            and sentinel.is_file()):
+    recorded = (marker.read_text().strip() if marker.exists() else None)
+    args = _git_apply_dir_args(mpv_src)
+
+    def head_is_applied():
+        rev = subprocess.run(["git", "-C", str(mpv_src), "apply", *args,
+                              "--reverse", "--check", str(patches[-1])],
+                             capture_output=True, text=True)
+        return rev.returncode == 0
+
+    if recorded == want and sentinel.is_file() and head_is_applied():
         print("skip (marker) mpv patches", flush=True)
         return
-    args = _git_apply_dir_args(mpv_src)
+    applied = 0
+    if recorded is not None:
+        for k, d in enumerate(prefix_digests[:-1], start=1):
+            if recorded == d:
+                applied = k
+                break
+    if applied and not sentinel.is_file():
+        # The marker claims early patches are in, but the series'
+        # signature file is absent — the marker is lying (the
+        # git-apply skip era wrote exactly such markers onto pristine
+        # trees).  Recount from zero; the forward checks below sort
+        # out what is really there.
+        print("patch marker inconsistent with tree (no sentinel); "
+              "recounting from zero", flush=True)
+        applied = 0
     applied_any = False
-    for patch in patches:
+    for patch in patches[applied:]:
         fwd = subprocess.run(["git", "-C", str(mpv_src), "apply", *args,
                               "--check", str(patch)],
                              capture_output=True, text=True)
-        if fwd.returncode != 0:
-            rev = subprocess.run(["git", "-C", str(mpv_src), "apply",
-                                  *args, "--reverse", "--check",
-                                  str(patch)],
-                                 capture_output=True, text=True)
-            assert rev.returncode == 0, (
-                f"patch {patch.name} neither applies nor is applied "
-                f"(if the patch series changed, delete .cache59/src "
-                f"and re-run):\n{fwd.stdout}\n{fwd.stderr}")
-            print("already applied", patch.name, flush=True)
-            continue
+        assert fwd.returncode == 0, (
+            f"patch {patch.name} does not apply and the marker does "
+            f"not account for it (recorded series digest: {recorded}); "
+            f"the series is append-only — if a patch file was edited "
+            f"after being applied, delete .cache59/src and re-run:\n"
+            f"{fwd.stdout}\n{fwd.stderr}")
         run(["git", "-C", str(mpv_src), "apply", *args, str(patch)],
             f"patch-{patch.name}")
         applied_any = True
     # git apply's exit code is not evidence (it skips silently, above):
-    # verify the series' signature files are really in the tree.
+    # verify the series' signature files are really in the tree and
+    # the head patch's postimage really holds.
     assert sentinel.is_file(), (
         f"patches reported applied but {sentinel} is missing — "
         f"git apply must have skipped them (see _git_apply_dir_args)")
     assert (mpv_src / "video" / "out" / "vo_frame_output.c").is_file(), (
         "patches reported applied but vo_frame_output.c is missing")
+    assert head_is_applied(), (
+        "patches reported applied but the head patch's postimage "
+        "does not hold in the tree")
     marker.write_text(want + "\n")
     print("mpv patches applied:", ", ".join(p.name for p in patches),
           flush=True)
