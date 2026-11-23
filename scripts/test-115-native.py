@@ -37,8 +37,8 @@ assert 'addOfflineTask' in player
 assert 'waitUntilPlayable' in player or 'waitOfflineReady' in player
 assert 'listOfflineTasks' in player or 'findMatchedVideos' in player
 assert 'streamsForVideo' in player or 'originalStream' in player
-assert 'KSChromePlayer' in player
-print('PASS: AVFan 115 storage isolation and player uses KSPlayer push/wait/play APIs')
+assert 'MPlayChromePlayer' in player
+print('PASS: AVFan 115 storage isolation and player uses MPlayKit chrome push/wait/play APIs')
 with tempfile.TemporaryDirectory() as d:
     p = Path(d) / 'main.swift'
     p.write_text('import Foundation\nimport Security\nenum Pan115Error: Error { case api(String) }\n' + crypto + test)
