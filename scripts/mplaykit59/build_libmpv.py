@@ -417,6 +417,25 @@ def fetch_all(cache):
     return srcs
 
 # -------------------------------------------------------------- patches ----
+def _git_apply_dir_args(mpv_src):
+    """Extra git-apply arguments that make patch paths land inside
+    mpv_src even when the tree sits inside an enclosing git repository
+    (the CI layout: .cache59/src/mpv-0.41.0 inside the AVFan checkout).
+    git apply resolves patch paths against the enclosing repo's root
+    and silently SKIPS every file outside the current directory's
+    prefix — exit code 0, nothing applied, --check equally vacuous.
+    Through CI round 9 that meant the frame_output patch never landed
+    on the runner at all and libmpv was quietly built stock.
+    rev-parse --show-prefix gives the tree's path relative to the repo
+    root; feeding it back as --directory re-roots the patch paths into
+    the tree.  Outside a repo there is no prefix and plain git apply
+    already resolves against the tree itself."""
+    p = subprocess.run(["git", "-C", str(mpv_src), "rev-parse",
+                        "--show-prefix"], capture_output=True, text=True)
+    if p.returncode == 0 and p.stdout.strip():
+        return ["--directory=" + p.stdout.strip()]
+    return []
+
 def apply_patches(mpv_src):
     """Apply the vendored patch series (scripts/mplaykit59/patches/*.patch)
     to the extracted mpv tree.  Idempotent across cached re-runs: a
@@ -424,7 +443,14 @@ def apply_patches(mpv_src):
     and a reverse --check recognises an already-applied tree if the
     marker was lost.  A patch that neither applies nor is already
     applied is a hard failure — silently building unpatched mpv would
-    remove the frame_output vo the whole display pipeline rests on."""
+    remove the frame_output vo the whole display pipeline rests on.
+
+    The digest marker alone is NOT accepted as proof the patches
+    landed: git apply can skip every file and still exit 0 (see
+    _git_apply_dir_args), and exactly that left a valid-looking marker
+    on an unpatched tree in CI.  The skip path therefore also requires
+    the series' signature file in the tree, and a real apply run ends
+    with the same existence assertions."""
     patch_dir = HERE / "patches"
     patches = sorted(patch_dir.glob("*.patch"))
     if not patches:
@@ -434,15 +460,21 @@ def apply_patches(mpv_src):
         digest.update(patch.read_bytes())
     want = digest.hexdigest()
     marker = mpv_src / ".mplaykit59-patches.stamp"
-    if marker.exists() and marker.read_text().strip() == want:
+    sentinel = mpv_src / "include" / "mpv" / "frame_output.h"
+    if (marker.exists() and marker.read_text().strip() == want
+            and sentinel.is_file()):
         print("skip (marker) mpv patches", flush=True)
         return
+    args = _git_apply_dir_args(mpv_src)
+    applied_any = False
     for patch in patches:
-        fwd = subprocess.run(["git", "-C", str(mpv_src), "apply", "--check",
-                              str(patch)], capture_output=True, text=True)
+        fwd = subprocess.run(["git", "-C", str(mpv_src), "apply", *args,
+                              "--check", str(patch)],
+                             capture_output=True, text=True)
         if fwd.returncode != 0:
             rev = subprocess.run(["git", "-C", str(mpv_src), "apply",
-                                  "--reverse", "--check", str(patch)],
+                                  *args, "--reverse", "--check",
+                                  str(patch)],
                                  capture_output=True, text=True)
             assert rev.returncode == 0, (
                 f"patch {patch.name} neither applies nor is applied "
@@ -450,11 +482,33 @@ def apply_patches(mpv_src):
                 f"and re-run):\n{fwd.stdout}\n{fwd.stderr}")
             print("already applied", patch.name, flush=True)
             continue
-        run(["git", "-C", str(mpv_src), "apply", str(patch)],
+        run(["git", "-C", str(mpv_src), "apply", *args, str(patch)],
             f"patch-{patch.name}")
+        applied_any = True
+    # git apply's exit code is not evidence (it skips silently, above):
+    # verify the series' signature files are really in the tree.
+    assert sentinel.is_file(), (
+        f"patches reported applied but {sentinel} is missing — "
+        f"git apply must have skipped them (see _git_apply_dir_args)")
+    assert (mpv_src / "video" / "out" / "vo_frame_output.c").is_file(), (
+        "patches reported applied but vo_frame_output.c is missing")
     marker.write_text(want + "\n")
     print("mpv patches applied:", ", ".join(p.name for p in patches),
           flush=True)
+    if applied_any:
+        # The tree changed under already-stamped build stages — a
+        # restored cache can hold a stock mpv stamped as done.  Drop
+        # the mpv and framework stamps for every platform so the
+        # patched tree is what actually gets built and assembled.
+        cache = mpv_src.parents[1]
+        for platform in PLATFORMS:
+            build_dir = cache / "build" / platform
+            for stamp_file in build_dir.glob("mpv.stamp"):
+                stamp_file.unlink()
+            for stamp_file in build_dir.glob("framework-*.stamp"):
+                stamp_file.unlink()
+        print("invalidated mpv/framework stamps (patch state changed)",
+              flush=True)
 
 # --------------------------------------------------------- meson helpers ----
 def meson_option_names(src):
