@@ -535,7 +535,7 @@ def apply_patches(mpv_src):
         cache = mpv_src.parents[1]
         for platform in PLATFORMS:
             build_dir = cache / "build" / platform
-            for stamp_file in build_dir.glob("mpv.stamp"):
+            for stamp_file in build_dir.glob("mpv*.stamp"):
                 stamp_file.unlink()
             for stamp_file in build_dir.glob("framework-*.stamp"):
                 stamp_file.unlink()
@@ -901,7 +901,12 @@ def build_ffmpeg(src, build_dir, prefix, platform, env):
     stamp(build_dir, stage)
 
 def build_mpv(src, build_dir, prefix, cross, penv):
-    stage = "mpv"
+    # Stage name carries a version suffix for the same reason as the
+    # framework stage: the stamp is a plain existence check, so a
+    # wanted-table change must rename the stage or a restored cache
+    # would skip the rebuild and keep the old configuration.
+    # v2: ios-gl disabled (see the wanted table comment).
+    stage = "mpv-v2"
     if skip_if_stamped(build_dir, stage): return
     # Switch table (all defensive via meson_args): libmpv on, GL fully
     # off (stage A: the display pipeline is the vendored frame_output
@@ -925,6 +930,15 @@ def build_mpv(src, build_dir, prefix, cross, penv):
     # original player, not an accepted deviation: the original
     # fork's ao compiles on iOS, stock does not, and closing the
     # gap may mean porting that ao's iOS-usable parts.
+    # ios-gl is disabled explicitly: it is an auto feature whose probe
+    # (an OpenGLES header symbol) always succeeds against the iOS SDK,
+    # and upstream's gate for hwdec_ios_gl.m requires nothing else —
+    # the file then references the ra_gl backend (ra_gl_get,
+    # ra_create_wrapped_tex, ...) that gl=disabled leaves unbuilt,
+    # so the app link fails with undefined _ra_* symbols (CI round
+    # 15).  The frame_output pipeline takes VT frames as
+    # CVPixelBuffers and never uses the GL interop hwdec, so nothing
+    # is lost; the original fork necessarily did the equivalent.
     # uchardet/lcms2 are enabled to match the original's meson parameters
     # (IOS-FINDINGS §3.1); both are built into the prefix above.
     # Option names verified against mpv 0.41.0 meson.options: there is no
@@ -939,6 +953,7 @@ def build_mpv(src, build_dir, prefix, cross, penv):
         # with the macOS-SDK -isysroot its objc probe injects.
         "cplayer": False,
         "libmpv": True, "gl": "disabled", "plain-gl": "disabled",
+        "ios-gl": "disabled",
         "videotoolbox-gl": "disabled", "videotoolbox-pl": "disabled",
         "audiounit": "enabled", "uchardet": "enabled", "lcms2": "enabled",
         "vulkan": "disabled", "gl-cocoa": "disabled", "cocoa": "disabled",
@@ -974,8 +989,9 @@ def assemble_framework(platform, cache, env):
     # stamp-skipped and never takes effect.  v1 = flat header layout
     # (round 7), v2 = Headers/mpv/ layout but angled umbrella includes
     # (round 8), v3 = quoted umbrella includes + frame_output.h taken
-    # from the patched source tree.
-    stage = f"framework-{platform}-v3"
+    # from the patched source tree, v4 = libmpv rebuilt without the
+    # ios-gl hwdec object (mpv stage v2) — the assembled input changed.
+    stage = f"framework-{platform}-v4"
     build_dir = cache / "build" / platform
     if skip_if_stamped(build_dir, stage):
         return build_dir / "Libmpv.framework"
