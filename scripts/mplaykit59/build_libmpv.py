@@ -31,16 +31,27 @@ meson parameters vs. ours, item by item:
             -Dauto_features=disabled -Ddefault_library=static
   ours:     lcms2=enabled and uchardet=enabled now match (both
             components are built below); lua/audiounit/libmpv/static
-            already matched.  Deliberate divergences:
-            * GL stays ON (plain-gl=enabled): our MPlayVideoView renders
-              through the libmpv render API into a CAEAGLLayer, while
-              the original uses a private pixel-frame vo with
-              -Dgl=disabled.  Display-pipeline rework is a declared
-              deviation (Build59-MPlayKit.md), not done in this round.
+            already matched.  Since the full-restoration round
+            (Build 59 stage A), GL matches too: the display pipeline
+            is now the original's pixel-frame design, so mpv is built
+            -Dgl=disabled and a vendored patch adds the private
+            frame_output vo (patches/0001-vo-frame-output.patch,
+            applied to the extracted mpv tree by fetch_all()).
+            Remaining deliberate divergences:
             * libavdevice/avfoundation stay off: no device/disc input
               sources are needed (recorded in the Build doc).
             * -Dauto_features stays unset; instead every unwanted
               feature is disabled explicitly in build_mpv().
+            * libplacebo is still built (it is a hard dependency of
+              mpv 0.41 — meson.build declares it without required:
+              false), but with vulkan=disabled and opengl=disabled:
+              upstream libplacebo explicitly supports a
+              no-graphics-API build (src/meson.build only warns), and
+              in the pixel-frame design nothing consumes a GPU
+              backend at runtime — the original's iOS build likewise
+              carries libplacebo compiled-but-unused (IOS-FINDINGS
+              §3.2).  Our Metal post chain (stage C) replaces its
+              tone-mapping role in the frame-after domain.
 
 Platform notes (verified against the mpv 0.41.0 / 0.42.0 sources by
 direct diff, not guessed):
@@ -60,10 +71,14 @@ direct diff, not guessed):
     get_option('vulkan').require(libplacebo-has-vulkan).  libplacebo is
     therefore built -Dvulkan=disabled -Dopengl=enabled (the OpenGL backend
     needs neither glslang nor shaderc).
-  * iOS GL is plain-gl: plain_gl.allowed() sets features['gl'] and compiles
-    opengl/libmpv_gl.c + ra_gl.c; the host app supplies a GLES context via
-    the libmpv render API.  The darwin branch would otherwise look for the
-    (macOS-only) OpenGL framework via gl-cocoa, so -Dgl-cocoa=disabled.
+  * GL is fully disabled (stage A): -Dgl=disabled also turns off
+    plain-gl / videotoolbox-gl / videotoolbox-pl (all are .require()
+    chains on gl or libplacebo in mpv's meson logic, and meson_args()
+    passes them as disabled explicitly so the intent is visible in
+    the configure log).  The libmpv render API is still available in
+    its software form (MPV_RENDER_API_TYPE_SW), which is what
+    MPlayPreviewReader uses for offscreen still capture; the main
+    display path does not use the render API at all.
   * ao_audiounit (audiounit) only requires darwin and works on iOS;
     coreaudio does not exist on iOS.
   * Every optional mpv/libplacebo/libass/... -D flag goes through
@@ -221,7 +236,48 @@ def fetch_all(cache):
                 cands[0].rename(dest)
         assert dest.is_dir(), dest
         srcs[name] = dest
+    apply_patches(srcs["mpv"])
     return srcs
+
+# -------------------------------------------------------------- patches ----
+def apply_patches(mpv_src):
+    """Apply the vendored patch series (scripts/mplaykit59/patches/*.patch)
+    to the extracted mpv tree.  Idempotent across cached re-runs: a
+    marker file inside the (cache-local) source tree records success,
+    and a reverse --check recognises an already-applied tree if the
+    marker was lost.  A patch that neither applies nor is already
+    applied is a hard failure — silently building unpatched mpv would
+    remove the frame_output vo the whole display pipeline rests on."""
+    patch_dir = HERE / "patches"
+    patches = sorted(patch_dir.glob("*.patch"))
+    if not patches:
+        return
+    digest = hashlib.sha256()
+    for patch in patches:
+        digest.update(patch.read_bytes())
+    want = digest.hexdigest()
+    marker = mpv_src / ".mplaykit59-patches.stamp"
+    if marker.exists() and marker.read_text().strip() == want:
+        print("skip (marker) mpv patches", flush=True)
+        return
+    for patch in patches:
+        fwd = subprocess.run(["git", "-C", str(mpv_src), "apply", "--check",
+                              str(patch)], capture_output=True, text=True)
+        if fwd.returncode != 0:
+            rev = subprocess.run(["git", "-C", str(mpv_src), "apply",
+                                  "--reverse", "--check", str(patch)],
+                                 capture_output=True, text=True)
+            assert rev.returncode == 0, (
+                f"patch {patch.name} neither applies nor is applied "
+                f"(if the patch series changed, delete .cache59/src "
+                f"and re-run):\n{fwd.stdout}\n{fwd.stderr}")
+            print("already applied", patch.name, flush=True)
+            continue
+        run(["git", "-C", str(mpv_src), "apply", str(patch)],
+            f"patch-{patch.name}")
+    marker.write_text(want + "\n")
+    print("mpv patches applied:", ", ".join(p.name for p in patches),
+          flush=True)
 
 # --------------------------------------------------------- meson helpers ----
 def meson_option_names(src):
@@ -451,13 +507,22 @@ def build_platform(platform, srcs, cache, env, force):
     build_uchardet(srcs["uchardet"], build_dir, prefix, platform, env)
     build_lcms2(srcs["lcms2"], build_dir, prefix, cross, penv)
 
-    # libplacebo: OpenGL backend only; vulkan off (no glslang/shaderc
-    # needed), xxhash from the vendored build above.  jinja2 comes from
-    # the bootstrap venv (its bin/ is first on PATH in env).
+    # libplacebo: no graphics API at all (stage A pixel-frame design).
+    # mpv 0.41 hard-depends on libplacebo (its meson.build declares the
+    # dependency without required:false), so the stage stays, but with
+    # vulkan and opengl both disabled libplacebo builds in its
+    # upstream-supported "no graphics API" form (src/meson.build only
+    # warns; the dummy GPU and shader-generation utilities remain).
+    # Nothing consumes a libplacebo GPU backend at runtime in this
+    # profile: vo_gpu/vo_gpu_next are compiled out with gl=disabled,
+    # and tone mapping lives in our frame-after Metal chain (stage C),
+    # exactly like the original iOS build (IOS-FINDINGS §3.2).
+    # xxhash from the vendored build above.  jinja2 comes from the
+    # bootstrap venv (its bin/ is first on PATH in env).
     if not skip_if_stamped(build_dir, "libplacebo"):
         meson_build(srcs["libplacebo"], build_dir / "libplacebo", prefix,
                     cross, penv,
-                    {"vulkan": "disabled", "opengl": "enabled",
+                    {"vulkan": "disabled", "opengl": "disabled",
                      "demos": False, "tests": False, "bench": False,
                      "lcms": "disabled", "dovi": "disabled",
                      "xxhash": "enabled", "glslang": "disabled",
@@ -519,10 +584,19 @@ def build_ffmpeg(src, build_dir, prefix, platform, env):
 def build_mpv(src, build_dir, prefix, cross, penv):
     stage = "mpv"
     if skip_if_stamped(build_dir, stage): return
-    # Switch table (all defensive via meson_args): libmpv + plain-gl +
-    # audiounit on; everything platform-foreign or doc/test off.  vulkan
-    # disabled is legitimate — see module docstring.  gl-cocoa/cocoa and
-    # coreaudio are macOS-only and must not be probed on iOS.
+    # Switch table (all defensive via meson_args): libmpv on, GL fully
+    # off (stage A: the display pipeline is the vendored frame_output
+    # vo, matching the original's -Dgl=disabled meson parameters,
+    # IOS-FINDINGS §3.1); everything platform-foreign or doc/test off.
+    # With gl disabled, plain-gl / videotoolbox-gl / videotoolbox-pl
+    # are disabled explicitly as well — they are .require() chains on
+    # gl/libplacebo and would otherwise sit at "auto".  The
+    # VideoToolbox *decoder* path is unaffected: it is FFmpeg hwaccel
+    # plus mpv's hwdec_vt device driver, neither needs GL, and frames
+    # reach the vo as IMGFMT_VIDEOTOOLBOX (planes[3] =
+    # CVPixelBufferRef).
+    # gl-cocoa/cocoa and coreaudio are macOS-only and must not be
+    # probed on iOS.
     # uchardet/lcms2 are enabled to match the original's meson parameters
     # (IOS-FINDINGS §3.1); both are built into the prefix above.
     # Option names verified against mpv 0.41.0 meson.options: there is no
@@ -530,7 +604,8 @@ def build_mpv(src, build_dir, prefix, cross, penv):
     # no plain `sdl2` (split into sdl2-audio/video/gamepad, all already
     # default-disabled), and no `test` (only the `tests` boolean).
     wanted = {
-        "libmpv": True, "plain-gl": "enabled", "videotoolbox-gl": "enabled",
+        "libmpv": True, "gl": "disabled", "plain-gl": "disabled",
+        "videotoolbox-gl": "disabled", "videotoolbox-pl": "disabled",
         "audiounit": "enabled", "uchardet": "enabled", "lcms2": "enabled",
         "vulkan": "disabled", "gl-cocoa": "disabled", "cocoa": "disabled",
         "coreaudio": "disabled",
@@ -555,7 +630,8 @@ EXPECTED_LIBS = ["libmpv.a", "libavformat.a", "libavcodec.a",
                  "libdav1d.a", "libfreetype.a", "libharfbuzz.a",
                  "libfribidi.a", "libxxhash.a", "libuchardet.a",
                  "liblcms2.a"]
-MPV_HEADERS = ["client.h", "render.h", "render_gl.h", "stream_cb.h"]
+MPV_HEADERS = ["client.h", "render.h", "render_gl.h", "stream_cb.h",
+               "frame_output.h"]
 
 def assemble_framework(platform, cache, env):
     stage = f"framework-{platform}"
@@ -601,7 +677,6 @@ def assemble_framework(platform, cache, env):
         '  link framework "CoreMedia"\n'
         '  link framework "CoreVideo"\n'
         '  link framework "VideoToolbox"\n'
-        '  link framework "OpenGLES"\n'
         '  link framework "Security"\n'
         '  link framework "Foundation"\n'
         '  link framework "CoreFoundation"\n'

@@ -16,7 +16,7 @@ libharfbuzz / libfribidi / libxxhash 全部合并成单个 `Libmpv` 二进制。
 
 | 类别 | 条目 |
 |---|---|
-| 系统框架 | `AVFoundation`、`AudioToolbox`、`CoreMedia`、`CoreVideo`、`VideoToolbox`、`OpenGLES`、`Security`、`Foundation`、`CoreFoundation` |
+| 系统框架 | `AVFoundation`、`AudioToolbox`、`CoreMedia`、`CoreVideo`、`VideoToolbox`、`Security`、`Foundation`、`CoreFoundation`、`Metal`、`QuartzCore` |
 | 系统库 | `c++`（libc++）、`z`（libz）、`iconv`（libiconv）、`bz2`（libbz2） |
 
 Clang module 的 `link framework` / `link` 声明会让 Swift/Clang 在
@@ -28,7 +28,7 @@ target 的 Frameworks 即可，不必再逐个添加上面这批。
 
 autolink 有两个已知不可靠点，所以协调者在 pbxproj 里请**显式**添加：
 
-1. **全部 9 个系统框架**（同上表）显式加进 App target 的
+1. **全部系统框架**（同上表）显式加进 App target 的
    “Link Binary With Libraries”。理由：xcframework 里 framework 的
    modulemap autolink 在某些 Xcode 版本下对纯 Swift target、或经
    `OTHER_LDFLAGS` 混排时不生效；显式添加无副作用（重复链接会被去重）。
@@ -36,10 +36,11 @@ autolink 有两个已知不可靠点，所以协调者在 pbxproj 里请**显式
    （以 `.tbd` 形式：`libc++.tbd`、`libz.tbd`、`libiconv.tbd`、
    `libbz2.tbd`）。其中 `libc++` 是必需的硬依赖：libplacebo / harfbuzz /
    dav1d 含 C++ 代码，缺了会先报 C++ 标准库符号未定义。
-3. **`UIKit`**：mpv 本体不直接依赖，但宿主 App 通过 libmpv render API
-   提供 GLES 上下文、audiounit 输出也经 AVAudioSession——App target
-   本来就链接 UIKit，这里列出只是提醒它属于**间接依赖**，不要在
-   精简 target 依赖时误删。
+3. **`UIKit`**：mpv 本体不直接依赖，但宿主 App 的显示视图与
+   audiounit 输出经 AVAudioSession 都要用——App target 本来就链接
+   UIKit，这里列出只是提醒它属于**间接依赖**，不要在精简 target
+   依赖时误删。libmpv render API 只剩 PreviewReader 的软件渲染在用
+   （MPV_RENDER_API_TYPE_SW，不需要任何 GL 框架）。
 
 ## 3. 对照表（来源 → 需要它的组件）
 
@@ -48,9 +49,9 @@ autolink 有两个已知不可靠点，所以协调者在 pbxproj 里请**显式
 | AVFoundation | mpv audiounit / 宿主播放会话（间接） |
 | AudioToolbox | mpv `ao_audiounit` |
 | CoreMedia | FFmpeg VideoToolbox hwaccel（CMTime/CMFormatDescription） |
-| CoreVideo | FFmpeg VideoToolbox（CVPixelBuffer）、libplacebo GL 互操作 |
+| CoreVideo | FFmpeg VideoToolbox（CVPixelBuffer）、frame_output vo 的帧交接、宿主帧管线 |
+| Metal / QuartzCore | 宿主 Metal 后链（阶段 C）与 AVSampleBufferDisplayLayer 显示层（阶段 A） |
 | VideoToolbox | FFmpeg `--enable-videotoolbox` 硬解 |
-| OpenGLES | mpv plain-gl / libplacebo OpenGL 后端（宿主提供 GLES 上下文） |
 | Security | FFmpeg SecureTransport TLS（`--enable-securetransport`） |
 | Foundation | mpv/libass 的 darwin 代码（CoreText 路径等） |
 | CoreFoundation | libass CoreText、FFmpeg darwin 代码 |
