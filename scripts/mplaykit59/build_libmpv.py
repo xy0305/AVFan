@@ -41,22 +41,27 @@ meson parameters vs. ours, item by item:
             * libavdevice (FFmpeg device input) stays off: no
               device/disc input sources are needed (recorded in the
               Build doc).
-            * mpv's avfoundation AO is explicitly disabled — a
-              proven divergence from the original's
-              -Davfoundation=enabled, forced by stock mpv: the
-              feature is `auto` and autodetects ON against the iOS
-              SDK, and stock ao_avfoundation.m cannot compile there
+            * mpv's avfoundation AO is explicitly disabled — an
+              UNRESOLVED difference (not an accepted deviation),
+              forced by stock mpv for now: the feature is `auto`
+              and autodetects ON against the iOS SDK, and stock
+              ao_avfoundation.m cannot compile there
               (setAudioOutputDeviceUniqueID: is API_UNAVAILABLE on
               iOS); worse, HAVE_AVFOUNDATION un-guards the macOS-only
               AudioDeviceID/AudioStreamID declarations in
               ao_coreaudio_utils.h / ao_coreaudio_chmap.h, which
               ao_audiounit.m includes unconditionally, so the iOS AO
               itself fails (CI round 6: 10 errors in ao_audiounit.m).
-              The original is a modified fork whose ao code need not
-              match stock.  With coreaudio and avfoundation both off,
+              The original fork's ao code compiles on iOS, stock
+              does not.  With coreaudio and avfoundation both off,
               audiounit stays enabled and everything it calls from
-              those headers is declared outside the guard.  Recorded
-              in the Build doc.
+              those headers is declared outside the guard.  Whether
+              the audio output path and perceived sound match the
+              original's is to be judged by a same-title device A/B
+              against the original player; if they fall short, the
+              iOS-usable parts of that ao are to be ported following
+              the original's symbol surface.  Recorded in the
+              Build doc.
             * -Dauto_features stays unset; instead every unwanted
               feature is disabled explicitly in build_mpv().
             * libplacebo is still built (it is a hard dependency of
@@ -829,10 +834,11 @@ def build_mpv(src, build_dir, prefix, cross, penv):
     # against the iOS SDK and breaks stock mpv twice (its own AO
     # uses an iOS-unavailable API, and HAVE_AVFOUNDATION un-guards
     # macOS device types in headers ao_audiounit.m includes) — see
-    # the module docstring's divergence list.  This is the one place
-    # we knowingly diverge from the original's embedded flags,
-    # because the original is a fork and stock sources are what we
-    # compile.
+    # the module docstring's divergence list.  This is an unresolved
+    # difference pending a same-title device A/B against the
+    # original player, not an accepted deviation: the original
+    # fork's ao compiles on iOS, stock does not, and closing the
+    # gap may mean porting that ao's iOS-usable parts.
     # uchardet/lcms2 are enabled to match the original's meson parameters
     # (IOS-FINDINGS §3.1); both are built into the prefix above.
     # Option names verified against mpv 0.41.0 meson.options: there is no

@@ -160,7 +160,7 @@ publicSubtitleQuery / onVideoMetrics / resumeKey / startFromBeginning）。
 | CoreRenderView | 不复刻 | IOS-FINDINGS：角色未定案（符号面不足以定其职责） |
 | runtimePermit | 不复刻 | iOS 侧**无此符号**（安卓/网盘侧概念），无中生有不如实 |
 | libavdevice 输入 | 不补 | 原版 meson enabled、我方未启；无设备/光盘源需求（光盘条目已单独 blocked 在库缺失） |
-| mpv avfoundation AO | 明确关闭（与原版参数相左，有实证） | 原版内嵌参数有 `-Davfoundation=enabled`，但原版是魔改 fork；stock mpv 0.41.0/0.42.0（源码实读）该特性为 auto 且对 iOS SDK 自动开启，随后 ao_avfoundation.m 用 iOS 不可用的 `setAudioOutputDeviceUniqueID:`、且 HAVE_AVFOUNDATION 会解开 ao_coreaudio_utils.h/ao_coreaudio_chmap.h 中 macOS 专属 AudioDeviceID/AudioStreamID 声明的守卫，而 ao_audiounit.m 无条件包含这两个头——第六轮 CI 实证 AVFan 死于 ao_audiounit.m 10 个 error。故 build_mpv() 显式 `-Davfoundation=disabled`；coreaudio 本已关闭，audiounit（iOS AO）保持开启，其调用的共享函数均在守卫外声明。不假装与原版参数一致 |
+| mpv avfoundation AO | 未消除项（临时关闭，待消除） | 原版内嵌参数有 `-Davfoundation=enabled`，且原版 fork 的 ao 代码能在 iOS 编译；stock mpv 0.41.0/0.42.0（源码实读）该特性为 auto 且对 iOS SDK 自动开启，随后 ao_avfoundation.m 用 iOS 不可用的 `setAudioOutputDeviceUniqueID:`、且 HAVE_AVFOUNDATION 会解开 ao_coreaudio_utils.h/ao_coreaudio_chmap.h 中 macOS 专属 AudioDeviceID/AudioStreamID 声明的守卫，而 ao_audiounit.m 无条件包含这两个头——第六轮 CI 实证 AVFan 死于 ao_audiounit.m 10 个 error。故 build_mpv() 显式 `-Davfoundation=disabled`，这是当前让 stock mpv 在 iOS 编译通过的唯一可行路，不是已接受的差异：音频输出路径与听感的效果等价性待装机与原版同片对比后判定，必要时按原版符号面把该 ao 的 iOS 可用部分移植过来。coreaudio 本已关闭，audiounit（iOS AO）保持开启，其调用的共享函数均在守卫外声明 |
 | 字幕渲染者分工（libass 位图 vs Swift/Metal） | 按可实现路线定案 | 我方走 vo 字幕通道的 libass 位图（阶段 A）；原版分工符号面未定案（IOS-FINDINGS §6），不冒充其选择 |
 
 ## KSPlayer 残留清单
