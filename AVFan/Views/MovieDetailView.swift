@@ -2027,7 +2027,7 @@ struct ListPickerSheet: View {
 /// re-bridge cookies, then (when signed in) bypassCache refetch
 /// the movie page so a logged-out cache cannot be reused;
 /// prefer an avfan-hosted URL from that HTML over a DMM sample;
-/// play KSPlayer → AVPlayer → in-app official-player WKWebView
+/// play MPlayKit → AVPlayer → in-app official-player WKWebView
 /// (shared cookie store, that movie page, player only).
 /// When SiteSession already says signed in, the failure overlay
 /// has no 登录 button.
@@ -2043,7 +2043,7 @@ struct TrailerPlayerView: View {
     @State private var showLogin = false
     @State private var signedIn = false
 
-    private enum Stage { case preparing, ksPlayer, avPlayer, pageWeb, failed }
+    private enum Stage { case preparing, mplayKit, avPlayer, pageWeb, failed }
 
     private var headers: [String: String] {
         guard let mediaURL else { return [:] }
@@ -2057,9 +2057,9 @@ struct TrailerPlayerView: View {
             case .preparing:
                 ProgressView()
                     .tint(.white)
-            case .ksPlayer:
+            case .mplayKit:
                 if let mediaURL {
-                    KSChromePlayer(
+                    MPlayChromePlayer(
                         url: mediaURL,
                         title: title,
                         subtitle: "预告片",
@@ -2067,7 +2067,7 @@ struct TrailerPlayerView: View {
                         onPlaybackFailure: { stage = .avPlayer },
                         publicSubtitleQuery: ""
                     )
-                    .id("ks-\(reloadTick)")
+                    .id("mp-\(reloadTick)")
                     .ignoresSafeArea()
                 }
             case .avPlayer:
@@ -2171,7 +2171,7 @@ struct TrailerPlayerView: View {
         mediaURL = resolved
         reloadTick += 1
         if resolved != nil {
-            stage = .ksPlayer
+            stage = .mplayKit
         } else if pageURL != nil {
             stage = .pageWeb
         } else {

@@ -3,7 +3,6 @@ import AVFoundation
 import AVKit
 import MediaPlayer
 import SwiftUI
-import KSPlayer
 
 /// Pure shipping ownership policy, also executed by the CI regression harness.
 struct PlaybackAudioOwnership {
@@ -33,7 +32,7 @@ final class PlaybackAudioSession {
 
     func acquire(_ id: UUID) {
         ownership.acquire(id)
-        // KSPlayer/AVKit may activate too, even if our own attempt was refused.
+        // The engine/AVKit may activate too, even if our own attempt was refused.
         needsDeactivation = true
         do {
             if !active {
@@ -80,61 +79,68 @@ final class PlaybackAudioLease: ObservableObject {
 }
 
 /// The underlying representable's destruction, not onDisappear, is the terminal boundary.
-/// KSAVPlayer/KSMEPlayer activate internally in their constructors and on resume;
-/// acquire BEFORE makeView so those activations are accounted for by our owner.
-struct AudioOwnedKSVideoPlayer: UIViewRepresentable {
-    let player: KSVideoPlayer.Coordinator
+/// Build 59: MPlayPlayer (libmpv) renders into MPlayVideoView. Audio ownership
+/// is acquired BEFORE the player core is created in makeUIView, as before.
+struct AudioOwnedMPlayVideoView: UIViewRepresentable {
+    let engine: MPlayChromeCoordinator
     let audio: PlaybackAudioLease
     let url: URL
-    let options: KSOptions
+    let headers: [String: String]
     let onStop: () -> Void
     final class Coordinator {
-        let player: KSVideoPlayer.Coordinator
+        let engine: MPlayChromeCoordinator
         let audio: PlaybackAudioLease
         let onStop: () -> Void
-        init(player: KSVideoPlayer.Coordinator, audio: PlaybackAudioLease, onStop: @escaping () -> Void) {
-            self.player = player
+        weak var videoView: MPlayVideoView?
+        var openedURL: URL?
+        init(engine: MPlayChromeCoordinator, audio: PlaybackAudioLease, onStop: @escaping () -> Void) {
+            self.engine = engine
             self.audio = audio
             self.onStop = onStop
         }
     }
-    func makeCoordinator() -> Coordinator { Coordinator(player: player, audio: audio, onStop: onStop) }
-    func makeUIView(context: Context) -> UIView {
+    func makeCoordinator() -> Coordinator { Coordinator(engine: engine, audio: audio, onStop: onStop) }
+    func makeUIView(context: Context) -> MPlayVideoView {
         audio.begin()
-        let view = player.makeView(url: url, options: options)
-        installStopCommand()
+        let view = MPlayVideoView()
+        context.coordinator.videoView = view
+        engine.open(url: url, headers: headers)
+        context.coordinator.openedURL = url
+        if let player = engine.player { view.attach(player: player) }
+        installStopCommand(context: context)
         return view
     }
-    private func installStopCommand() {
-        // KSPlayer's default stopCommand only calls player.shutdown(), leaving the layer/session
-        // owned. Replace ONLY that command; preserve play/pause/seek/rate and all other controls.
+    private func installStopCommand(context: Context) {
+        // Replace ONLY the stop command; preserve play/pause/seek/rate and all other controls.
+        let coordinator = context.coordinator
         let command = MPRemoteCommandCenter.shared().stopCommand
         command.removeTarget(nil)
-        command.addTarget { [weak player, weak audio] _ in
+        command.addTarget { _ in
             Task { @MainActor in
-                player?.playerLayer?.stop()
-                audio?.end()
+                coordinator.engine.pause()
+                coordinator.audio.end()
             }
             return .success
         }
     }
-    func updateUIView(_ view: UIView, context: Context) {
-        if player.playerLayer?.url != url {
+    func updateUIView(_ view: MPlayVideoView, context: Context) {
+        if context.coordinator.openedURL != url {
             audio.begin()
-            _ = player.makeView(url: url, options: options)
-            installStopCommand()
+            engine.open(url: url, headers: headers)
+            context.coordinator.openedURL = url
+            if let player = engine.player { view.attach(player: player) }
+            installStopCommand(context: context)
         }
     }
-    static func dismantleUIView(_ view: UIView, coordinator: Coordinator) {
-        // Retain a detached, legitimate PiP player until PiP actually ends.
-        // A mere background transition or temporary covering presentation does not dismantle this view.
+    static func dismantleUIView(_ view: MPlayVideoView, coordinator: Coordinator) {
+        // Build 59 deviation: libmpv has no iOS PiP, so there is no PiP wait
+        // here (the KSPlayer-era dismantle deferred teardown while PiP was
+        // active). Teardown is immediate: stop callback, detach the render
+        // surface BEFORE closing the core, then release audio ownership.
         Task { @MainActor in
-            while coordinator.player.playerLayer?.player.pipController?.isPictureInPictureActive == true {
-                try? await Task.sleep(nanoseconds: 250_000_000)
-            }
             coordinator.onStop()
-            coordinator.player.playerLayer?.pause()
-            coordinator.player.resetPlayer()
+            view.detach()
+            coordinator.engine.reset()
             coordinator.audio.end()
         }
     }

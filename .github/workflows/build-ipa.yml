@@ -17,7 +17,7 @@ jobs:
   ipa:
     name: Build Release IPA
     runs-on: macos-26
-    timeout-minutes: 90
+    timeout-minutes: 300
 
     steps:
       - name: Checkout source
@@ -51,6 +51,24 @@ jobs:
 
       - name: Native 115 crypto tests (macOS, no simulator)
         run: python3 scripts/test-115-native.py
+
+      - name: Cache Libmpv sources, build tree and xcframework
+        id: libmpv-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            .cache59
+            Vendor/Libmpv.xcframework
+          key: libmpv-59-v1-${{ runner.os }}-${{ hashFiles('scripts/mplaykit59/**') }}
+          restore-keys: |
+            libmpv-59-v1-${{ runner.os }}-
+
+      - name: Build Libmpv.xcframework (pinned sources, sha256-verified)
+        if: steps.libmpv-cache.outputs.cache-hit != 'true'
+        run: python3 scripts/mplaykit59/build_libmpv.py "$GITHUB_WORKSPACE"
+
+      - name: Assert Libmpv.xcframework exists
+        run: test -d Vendor/Libmpv.xcframework
 
       - name: Resolve Swift packages
         run: |

@@ -104,7 +104,7 @@ struct SettingsView: View {
 
             Section("关于") {
                 LabeledContent("版本", value: "1.2 (3)")
-                Text("AVFan 是独立的个人侧载应用，不是 avfan.com 的官方客户端，也不做公开分发。抓取范围仅限公开 HTML 目录字段，且按页面按需请求。播放器使用 KSPlayer（GPL-3.0）。")
+                Text("AVFan 是独立的个人侧载应用，不是 avfan.com 的官方客户端，也不做公开分发。抓取范围仅限公开 HTML 目录字段，且按页面按需请求。播放器使用 MPlayKit（libmpv，GPL-2.0-or-later；FFmpeg 为 LGPL-2.1 配置）。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

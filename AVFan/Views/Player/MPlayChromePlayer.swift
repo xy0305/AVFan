@@ -1,20 +1,22 @@
 //
-//  KSChromePlayer.swift
+//  MPlayChromePlayer.swift
 //  AVFan
 //
-//  Ported from AVDB's KSChromePlayer (build 351 tree; playback sources unchanged
-//  from 332). KSPlayer render layer + AVFan chrome. LUT and live ASR stacks are
-//  not included (LUT is AVDB-asset-tied; live subtitles need WhisperKit models).
-//  Online file subtitles, resume, speed, PiP, gestures, and quality hooks remain.
+//  Build 59: the player chrome, unchanged in UI and behaviour from the
+//  KSPlayer-era KSChromePlayer (itself ported from AVDB build 351/332),
+//  re-bound to the restored MPlayKit engine (libmpv + FFmpeg 8) via
+//  MPlayChromeCoordinator (MPlayEngine.swift). No kernel switch: MPlayKit
+//  is the only engine. Deviations vs the KSPlayer era (PiP above all) are
+//  listed in Build59-MPlayKit.md. LUT never had an effective path in AVFan
+//  (the seek-preview card still says so) and still does not.
 //
 
 import SwiftUI
 import UIKit
 import MediaPlayer
 import AVFoundation
-import KSPlayer
 
-struct KSChromePlayer: View {
+struct MPlayChromePlayer: View {
     let url: URL
     var title: String = ""
     var subtitle: String = ""
@@ -31,7 +33,7 @@ struct KSChromePlayer: View {
     @State private var playbackDiagnostic: PlaybackDiagnostic?
 
     @Environment(\.dismiss) private var dismiss
-    @StateObject private var coordinator = KSVideoPlayer.Coordinator()
+    @StateObject private var engine = MPlayChromeCoordinator()
     @StateObject private var audio = PlaybackAudioLease()
     @StateObject private var seekPreview = SeekPreviewController()
     private let resumeScope = "avfan"
@@ -76,9 +78,15 @@ struct KSChromePlayer: View {
     @State private var fillMode: FillMode = .fit
     /// Build 323 倍速: session choice, re-applied to a replaced item / reset player layer.
     @State private var playbackRate: Float = 1.0
+    /// Build 59: true while the selected online subtitle is rendered by the
+    /// engine (libass via sub-add of the downloaded file). The text overlay
+    /// is then suppressed except in position-edit mode (its preview).
+    @State private var engineSubtitleActive = false
+    @AppStorage("subtitle.fontPoints") private var subtitleFontPoints = SubtitleStyleDefaults.size
+    @AppStorage("subtitle.positionX") private var subtitlePositionX = SubtitleStyleDefaults.x
+    @AppStorage("subtitle.positionY") private var subtitlePositionY = SubtitleStyleDefaults.y
     /// Build 323: measured network bytes/s (AVPlayerItem access log); nil = not measurable → hidden.
     @State private var downloadSpeed: Double?
-    @State private var throughput = PlaybackThroughputSampler()
 
     private enum OverlayKind { case brightness, volume, seek }
     private enum FillMode: String, CaseIterable {
@@ -91,16 +99,45 @@ struct KSChromePlayer: View {
         var seconds: Int
     }
 
-    private var playerOptions: KSOptions {
-        KSOptions.logger = PlaybackPrivateLogger()
-        let o = KSOptions()
-        if !headers.isEmpty { o.appendHeader(headers) }
-        if let ua = headers["User-Agent"] { o.userAgent = ua }
-        if let referer = headers["Referer"] { o.referer = referer }
-        KSOptions.isAutoPlay = true
-        o.videoAdaptable = fillMode != .stretch
-        o.canStartPictureInPictureAutomaticallyFromInline = false
-        return o
+    /// Build 59 subtitle wiring: when the model finishes loading a selection
+    /// (cues set + downloaded bytes retained), hand the local file to the
+    /// engine. mpv only ever sees a local path — the hardened download path
+    /// in OnlineSubtitleModel stays the only network fetch, so no playback
+    /// headers/cookies can leak to subtitle CDNs.
+    private func syncEngineSubtitle() {
+        guard engineSubtitleActive else { return }
+        engine.setSubtitleDelay(onlineSubtitles.offset)
+        engine.setSubtitleFontSize(points: subtitleFontPoints)
+        engine.setSubtitlePosition(y: subtitlePositionY)
+        engine.setSubtitleAlignmentX(x: subtitlePositionX)
+    }
+
+    private func activateEngineSubtitleIfPossible() {
+        guard !onlineSubtitles.cues.isEmpty,
+              let data = onlineSubtitles.selectedFileData,
+              let ext = onlineSubtitles.selectedFileExt else {
+            engineSubtitleActive = false
+            return
+        }
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("avfan-subtitles", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let file = dir.appendingPathComponent("selected.\(ext)")
+        do {
+            try data.write(to: file, options: .atomic)
+        } catch {
+            // Fall back to the text overlay; cues are already parsed.
+            engineSubtitleActive = false
+            return
+        }
+        engine.removeExternalSubtitles()
+        engine.addSubtitle(localFile: file, encodingHint: onlineSubtitles.encodingHint)
+        engineSubtitleActive = true
+        syncEngineSubtitle()
+    }
+
+    private func deactivateEngineSubtitle() {
+        if engineSubtitleActive { engine.removeExternalSubtitles() }
+        engineSubtitleActive = false
     }
 
     var body: some View {
@@ -153,23 +190,30 @@ struct KSChromePlayer: View {
                 return
             }
             playbackActive = true
-            coordinator.isMaskShow = false
-            // Audio ownership starts in AudioOwnedKSVideoPlayer.makeUIView, before KSPlayer construction.
-            wireCoordinator()
+            // Audio ownership starts in AudioOwnedMPlayVideoView.makeUIView, before MPlayPlayer creation.
+            wireEngine()
             startTicker()
             scheduleHide()
         }
         .onChange(of: progressID) { _, _ in onlineSubtitles.clear() }
         .onChange(of: publicSubtitleQuery) { _, _ in onlineSubtitles.clear() }
+        .onChange(of: onlineSubtitles.cues) { _, _ in activateEngineSubtitleIfPossible() }
+        .onChange(of: onlineSubtitles.selected) { _, _ in
+            if onlineSubtitles.selected == nil { deactivateEngineSubtitle() }
+        }
+        .onChange(of: onlineSubtitles.offset) { _, _ in syncEngineSubtitle() }
+        .onChange(of: subtitleFontPoints) { _, _ in syncEngineSubtitle() }
+        .onChange(of: subtitlePositionX) { _, _ in syncEngineSubtitle() }
+        .onChange(of: subtitlePositionY) { _, _ in syncEngineSubtitle() }
         .onChange(of: url) { _, _ in
             qualityGeneration += 1
             playbackDiagnostic = nil
             failureReported = false
             editingSubtitlePosition = false
+            deactivateEngineSubtitle()
             onlineSubtitles.clear()
             seekGeneration += 1
             seekPending = false
-            throughput.reset()
             downloadSpeed = nil
             cancelPlayerDrag()
             configureSeekPreview()
@@ -204,6 +248,7 @@ struct KSChromePlayer: View {
 
 
     private func stopPlayback() {
+        deactivateEngineSubtitle()
         onlineSubtitles.clear()
         seekPreview.close()
         playbackActive = false
@@ -212,18 +257,20 @@ struct KSChromePlayer: View {
         cancelPlayerDrag()
         hideTask?.cancel()
         tickTask?.cancel()
-        coordinator.playerLayer?.pause()
+        engine.pause()
     }
 
     @ViewBuilder
     private func videoArea(height: CGFloat, width: CGFloat, safeArea: EdgeInsets) -> some View {
         ZStack {
             Color.black
-            AudioOwnedKSVideoPlayer(player: coordinator, audio: audio, url: url, options: playerOptions, onStop: stopPlayback)
+            AudioOwnedMPlayVideoView(engine: engine, audio: audio, url: url, headers: headers, onStop: stopPlayback)
                 .onAppear { applyFillMode() }
             TimelineView(.periodic(from: .now, by: 0.1)) { _ in
-                let clock = coordinator.playerLayer?.player.currentPlaybackTime ?? 0
-                let text = OnlineSubtitleParser.display(onlineSubtitles.cues, at: clock, offset: onlineSubtitles.offset)
+                let clock = engine.position
+                let text = (engineSubtitleActive && !editingSubtitlePosition)
+                    ? ""
+                    : OnlineSubtitleParser.display(onlineSubtitles.cues, at: clock, offset: onlineSubtitles.offset)
                 SubtitlePresentationOverlay(text: text, safeArea: safeArea, editing: editingSubtitlePosition) {
                     editingSubtitlePosition = false
                     showChrome = true
@@ -237,7 +284,7 @@ struct KSChromePlayer: View {
                     .padding(.trailing, safeArea.trailing)
                     .padding(.bottom, safeArea.bottom)
             }
-            // KSVideoPlayer renders only the underlying player view (no official pan).
+            // MPlayVideoView renders only the video surface (no chrome of its own).
             // This transparent sibling owns the only pan output; chrome stays above it.
             PlayerGestureLayer(
                 excludedTop: safeArea.top + 80,
@@ -326,12 +373,11 @@ struct KSChromePlayer: View {
 
     /// Read the engine now, not the asynchronously refreshed chrome state.
     private func toggleActualPlayback() {
-        guard let layer = coordinator.playerLayer else { return }
-        if layer.player.isPlaying {
-            layer.pause()
+        if engine.engineIsPlaying {
+            engine.pause()
         } else {
             audio.begin()
-            layer.play()
+            engine.play()
         }
         if showChrome { scheduleHide() }
     }
@@ -510,9 +556,9 @@ struct KSChromePlayer: View {
                 }
                 .accessibilityLabel("画面与方向")
 
-                // Real network throughput only (AVPlayerItem access-log bytes); hidden when it cannot be measured.
+                // Real network throughput only (mpv cache-speed); hidden when it cannot be measured.
                 if let downloadSpeed {
-                    Text(PlaybackThroughputSampler.display(downloadSpeed))
+                    Text(Self.throughputDisplay(downloadSpeed))
                         .font(.system(size: 13, weight: .regular).monospacedDigit())
                         .foregroundStyle(.white)
                         .shadow(color: .black.opacity(0.35), radius: 1, y: 0.5)
@@ -536,10 +582,10 @@ struct KSChromePlayer: View {
             HStack(spacing: 18) {
                 Button {
                     if isPlaying {
-                        coordinator.playerLayer?.pause()
+                        engine.pause()
                     } else {
                         audio.begin()
-                        coordinator.playerLayer?.play()
+                        engine.play()
                     }
                 } label: {
                     Group {
@@ -626,22 +672,28 @@ struct KSChromePlayer: View {
 
     static let playbackRates: [Float] = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0]
 
+    static func throughputDisplay(_ bytesPerSecond: Double) -> String {
+        let mb = 1024.0 * 1024.0
+        if bytesPerSecond >= mb { return String(format: "%.1f MB/s", bytesPerSecond / mb) }
+        return String(format: "%.0f KB/s", max(0, bytesPerSecond) / 1024.0)
+    }
+
     static func rateTitle(_ rate: Float) -> String {
         let tenths = Double(rate) * 10
         return String(format: tenths == tenths.rounded() ? "%.1fx" : "%.2fx", Double(rate))
     }
 
-    /// 倍速: KSAVPlayer/KSMEPlayer `playbackRate` (AVPlayer only applies it while playing, so no paused autoplay).
+    /// 倍速: mpv `speed` property via MPlayPlayer.setRate (applies while paused too; value is re-asserted on ready and every tick).
     private func selectPlaybackRate(_ rate: Float) {
         playbackRate = rate
         applyPlaybackRate()
         scheduleHide()
     }
 
-    /// Re-applied on readyToPlay and every tick, so a replaced item / reset layer in this session keeps the choice.
+    /// Re-applied when the engine reports ready and on every tick, so a
+    /// replaced source in this session keeps the session's rate choice.
     private func applyPlaybackRate() {
-        guard let player = coordinator.playerLayer?.player else { return }
-        if player.playbackRate != playbackRate { player.playbackRate = playbackRate }
+        engine.setRate(Double(playbackRate))
     }
 
     private var progressBar: some View {
@@ -746,68 +798,61 @@ struct KSChromePlayer: View {
     }
 
     private func applyFillMode() {
-        guard let player = coordinator.playerLayer?.player else { return }
         switch fillMode {
-        case .fit:
-            player.contentMode = .scaleAspectFit
-        case .fill:
-            player.contentMode = .scaleAspectFill
-        case .stretch:
-            player.contentMode = .scaleToFill
+        case .fit: engine.applyFillMode(.fit)
+        case .fill: engine.applyFillMode(.fill)
+        case .stretch: engine.applyFillMode(.stretch)
         }
     }
 
-    private func wireCoordinator() {
-        coordinator.isMaskShow = false
-        coordinator.onFinish = { layer, error in
-            guard let error else { return }
-            // Reduce synchronously; never move NSError/userInfo into UI state or logs.
-            let safe = PlaybackDiagnostic.system(error, stage: .decode, url: url)
-            Task { @MainActor in
-                guard playbackActive, coordinator.playerLayer === layer else { return }
-                playbackDiagnostic = safe
+    /// Build 59: engine callbacks replace KSVideoPlayer.Coordinator's
+    /// onFinish/onStateChanged. The load generation is the identity guard
+    /// (the old `playerLayer === layer` check): events from a replaced
+    /// source carry an older generation and are ignored.
+    private func wireEngine() {
+        engine.onReady = { generation in
+            guard playbackActive, generation == engine.loadGeneration else { return }
+            hasStarted = true
+            isBuffering = false
+            if resumeHandledURL != url {
+                resumeHandledURL = url
+                applyResume()
+            }
+            audio.begin()
+            engine.play()
+            applyFillMode()
+            applyPlaybackRate()
+            syncEngineSubtitle()
+            syncTime()
+        }
+        engine.onFailure = { generation in
+            guard playbackActive, generation == engine.loadGeneration else { return }
+            // Typed diagnostic only; engine free-text errors never reach UI state or logs.
+            if playbackDiagnostic == nil {
+                playbackDiagnostic = PlaybackDiagnostic(stage: .decode, category: .unknown,
+                    host: PlaybackDiagnostic.resourceHost(url))
+            }
+            audio.end()
+            if !failureReported {
+                failureReported = true
+                onPlaybackFailure?()
             }
         }
-        coordinator.onStateChanged = { layer, state in
-            Task { @MainActor in
-                // Ignore stale completion from a source that has already been replaced.
-                guard coordinator.playerLayer === layer else { return }
-                if state.isPlaying { audio.begin() } // Includes system remote/PiP resume after completion.
-                if state == .playedToTheEnd || state == .error {
-                    guard layer.state == state else { return } // A newer source/retry already superseded this terminal event.
-                    // Stop output without overwriting KSPlayerLayer's terminal state: play() must
-                    // still see playedToTheEnd (seek to zero) / error (prepare retry).
-                    layer.player.pause()
-                    audio.end()
-                }
-                if state == .error, !failureReported {
-                    if playbackDiagnostic == nil {
-                        playbackDiagnostic = PlaybackDiagnostic(stage: .decode, category: .unknown,
-                            host: PlaybackDiagnostic.resourceHost(url))
-                    }
-                    failureReported = true
-                    onPlaybackFailure?()
-                }
-                isPlaying = state.isPlaying
-                if state == .paused { flushHistory(force: true) }
-                if state == .playedToTheEnd { flushHistory(force: true, position: max(currentTime, duration)) }
-                isBuffering = state == .buffering || state == .preparing
-                if state.isPlaying || state == .readyToPlay || state == .paused {
-                    hasStarted = true
-                }
-                if state == .readyToPlay {
-                    if resumeHandledURL != url {
-                        resumeHandledURL = url
-                        applyResume()
-                    }
-                    audio.begin()
-                    coordinator.playerLayer?.play()
-                    applyFillMode()
-                    applyPlaybackRate()
-                    syncTime()
-                }
-            }
+        engine.onEnded = { generation in
+            guard playbackActive, generation == engine.loadGeneration else { return }
+            engine.pause()
+            audio.end()
+            isPlaying = false
+            flushHistory(force: true, position: max(currentTime, duration))
         }
+    }
+
+    /// Per-tick engine state fold-in (called from startTicker's loop).
+    private func pollEngine() {
+        engine.poll()
+        isPlaying = engine.isPlaying
+        isBuffering = engine.phase == .preparing || engine.phase == .buffering
+        if engine.phase == .ready || engine.phase == .buffering { hasStarted = true }
     }
 
     /// Build 280: 番号+来源 position first, then the legacy per-item PlaybackProgressStore (115 / 糖心).
@@ -819,14 +864,14 @@ struct KSChromePlayer: View {
         } else if let progressID, let legacy = PlaybackProgressStore.progress(for: progressID) {
             saved = (legacy.time, legacy.duration)
         }
-        let engineDuration = coordinator.playerLayer?.player.duration ?? 0
+        let engineDuration = engine.duration
         guard let saved,
               let start = PlaybackResumePolicy.startPosition(position: saved.0, length: saved.1 > 1 ? saved.1 : engineDuration,
                                                              fromBeginning: startFromBeginning) else { return }
         seekGeneration += 1
         let token = seekGeneration
         seekPending = true
-        coordinator.playerLayer?.seek(time: start, autoPlay: true) { finished in
+        engine.seek(to: start, autoPlay: true) {
             Task { @MainActor in
                 guard seekGeneration == token else { return }
                 seekPending = false
@@ -895,6 +940,7 @@ struct KSChromePlayer: View {
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 500_000_000)
                 guard !Task.isCancelled else { return }
+                pollEngine()
                 syncTime()
                 applyPlaybackRate()
                 sampleThroughput()
@@ -908,14 +954,14 @@ struct KSChromePlayer: View {
     }
 
 
-    /// Real downloaded bytes from the AVPlayerItem access log, sampled over time. Never the encoded/indicated bitrate.
-    /// KSMEPlayer (FFmpeg) exposes no byte counter, so the label stays hidden there.
+    /// Build 59: mpv's cache-speed (demuxer cache fill rate, bytes/s) is the
+    /// throughput source now; there is no AVPlayerItem access log under
+    /// libmpv. Zero / negative readings hide the label, as before.
     @MainActor
     private func sampleThroughput() {
-        let item = (coordinator.playerLayer?.player as? KSAVPlayer)?.player.currentItem
-        let total = item.flatMap { PlaybackThroughputSampler.transferredBytes($0) }
-        throughput.sample(totalBytes: total, at: ProcessInfo.processInfo.systemUptime)
-        if downloadSpeed != throughput.bytesPerSecond { downloadSpeed = throughput.bytesPerSecond }
+        let speed = engine.cacheSpeed
+        let value: Double? = speed > 0 ? Double(speed) : nil
+        if downloadSpeed != value { downloadSpeed = value }
     }
 
 
@@ -923,17 +969,10 @@ struct KSChromePlayer: View {
     private func publishVideoMetrics(timedOut: Bool) {
         guard onVideoMetrics != nil, playbackActive else { return }
         var value: PlaybackVideoMetrics?
-        if let engine = coordinator.playerLayer?.player {
-            if let av = engine as? KSAVPlayer {
-                // Public KSAVPlayer.player is AVQueuePlayer. Unlike KS naturalSize
-                // (loaded asset track), presentationSize follows the playing HLS rendition.
-                let size = av.player.currentItem?.presentationSize ?? .zero
-                value = PlaybackVideoMetrics(width: Double(size.width), height: Double(size.height), evidence: .presentation)
-            } else {
-                // KSMEPlayer exposes selected-track naturalSize, not per-frame evidence.
-                let size = engine.naturalSize
-                value = PlaybackVideoMetrics(width: Double(size.width), height: Double(size.height), evidence: .track)
-            }
+        if let size = engine.videoSize {
+            // mpv width/height are the current video track's dimensions
+            // (track-level evidence, like the old FFmpeg-core path).
+            value = PlaybackVideoMetrics(width: size.width, height: size.height, evidence: .track)
         }
         let settled = hasStarted || timedOut || failureReported
         guard value != lastVideoMetrics || settled != metricsSettled else { return }
@@ -943,9 +982,9 @@ struct KSChromePlayer: View {
     }
 
     private func syncTime() {
-        guard !isSeeking, !seekPending, let layer = coordinator.playerLayer else { return }
-        currentTime = layer.player.currentPlaybackTime
-        let d = layer.player.duration
+        guard !isSeeking, !seekPending else { return }
+        currentTime = engine.position
+        let d = engine.duration
         if d.isFinite, d > 0 { duration = d }
         if let progressID {
             PlaybackProgressStore.save(movieID: progressID, time: currentTime, duration: duration)
@@ -961,16 +1000,15 @@ struct KSChromePlayer: View {
     }
 
     private func seek(to time: TimeInterval) {
-        guard let layer = coordinator.playerLayer, time.isFinite else { return }
+        guard time.isFinite else { return }
         seekGeneration += 1
         let token = seekGeneration
         seekPending = true
-        if layer.options.isSeekedAutoPlay { audio.begin() }
-        layer.seek(time: time, autoPlay: layer.options.isSeekedAutoPlay) { finished in
-            Task { @MainActor in
-                guard seekGeneration == token else { return }
-                seekPending = false
-            }
+        // Seek auto-plays (the old KSOptions.isSeekedAutoPlay == true behaviour).
+        audio.begin()
+        engine.seek(to: time, autoPlay: true) {
+            guard seekGeneration == token else { return }
+            seekPending = false
         }
     }
 
@@ -1000,49 +1038,6 @@ struct KSChromePlayer: View {
     }
 }
 
-/// Build 323: network download speed from cumulative transferred bytes (delta bytes / delta time over a short window).
-struct PlaybackThroughputSampler: Equatable {
-    private var lastBytes: Int64?
-    private var lastTime: TimeInterval = 0
-    private var window: [Sample] = []
-    private(set) var bytesPerSecond: Double?
-    private struct Sample: Equatable { var bytes: Int64; var seconds: Double }
-    static let windowSeconds: Double = 2.0
-
-    /// Sum of `numberOfBytesTransferred` over the item's access-log events; nil when there is no network log.
-    static func transferredBytes(_ item: AVPlayerItem) -> Int64? {
-        guard let events = item.accessLog()?.events, !events.isEmpty else { return nil }
-        let total = events.reduce(Int64(0)) { $0 + max(0, $1.numberOfBytesTransferred) }
-        return total > 0 ? total : nil
-    }
-
-    mutating func reset() {
-        lastBytes = nil
-        window.removeAll()
-        bytesPerSecond = nil
-    }
-
-    mutating func sample(totalBytes: Int64?, at time: TimeInterval) {
-        guard let totalBytes, totalBytes > 0 else { reset(); return }
-        defer { lastBytes = totalBytes; lastTime = time }
-        guard let previous = lastBytes, time > lastTime else { return }
-        guard totalBytes >= previous else { window.removeAll(); bytesPerSecond = nil; return } // new item / log
-        window.append(Sample(bytes: totalBytes - previous, seconds: time - lastTime))
-        var seconds = window.reduce(0) { $0 + $1.seconds }
-        while window.count > 1, seconds - window[0].seconds >= Self.windowSeconds {
-            seconds -= window[0].seconds
-            window.removeFirst()
-        }
-        let bytes = window.reduce(Int64(0)) { $0 + $1.bytes }
-        bytesPerSecond = seconds > 0 ? Double(bytes) / seconds : nil
-    }
-
-    static func display(_ bytesPerSecond: Double) -> String {
-        let mb = 1024.0 * 1024.0
-        if bytesPerSecond >= mb { return String(format: "%.1f MB/s", bytesPerSecond / mb) }
-        return String(format: "%.0f KB/s", max(0, bytesPerSecond) / 1024.0)
-    }
-}
 
 /// Route lifetime, not source-item or sheet visibility, owns orientation.
 struct PlaybackOrientationHost: UIViewControllerRepresentable {
@@ -1064,13 +1059,16 @@ struct PlaybackOrientationHost: UIViewControllerRepresentable {
 
 @MainActor
 enum OrientationLock {
+    /// Build 59: replaces KSOptions.supportedInterfaceOrientations (the app
+    /// delegate reads this). Defaults to .all until a player locks it.
+    static var supportedMask: UIInterfaceOrientationMask = .all
     private static var generation = 0
     static func set(_ mask: UIInterfaceOrientationMask, keepLocked: Bool = false) {
         guard UIDevice.current.userInterfaceIdiom != .pad else { return }
         generation += 1
         let token = generation
         let target: UIInterfaceOrientationMask = UIDevice.current.userInterfaceIdiom == .pad && mask == .portrait ? .all : mask
-        KSOptions.supportedInterfaceOrientations = target
+        OrientationLock.supportedMask = target
         request(target, token: token, attempt: 0)
     }
     private static func request(_ mask: UIInterfaceOrientationMask, token: Int, attempt: Int) {
@@ -1275,8 +1273,3 @@ struct PlayerGestureLayer: UIViewRepresentable {
     }
 }
 
-// KSPlayer emits full request/errors to its logger. App diagnostics are typed;
-// third-party free-text messages must not become our diagnostic log stream.
-private struct PlaybackPrivateLogger: LogHandler {
-    func log(level: LogLevel, message: CustomStringConvertible, file: String, function: String, line: UInt) {}
-}

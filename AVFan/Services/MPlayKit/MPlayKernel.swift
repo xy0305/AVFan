@@ -2,25 +2,23 @@
 //  MPlayKernel.swift
 //  AVFan
 //
-//  Build 59: 播放内核选择。默认仍是 KSPlayer；MPlayKit 是按
-//  ~/workspace/p115-player-re/RE-REPORT.md 逆向出的接口形状、用 libmpv C API
-//  在本目录复刻的第二内核。集成层只通过 PlaybackKernelSettings.current 读选择，
-//  切换写 UserDefaults 后下次建播放器生效。
+//  Build 59: AVFan is a hard kernel swap, not AVDB's dual-kernel switch:
+//  MPlayKit (restored from ~/workspace/p115-player-re/RE-REPORT.md, libmpv
+//  C API) is the ONLY playback kernel. This file is kept from the AVDB
+//  port for shape parity, reduced to a single-case descriptor so no code
+//  can select or fall back to the removed KSPlayer engine.
 //
 
 import Foundation
 
-/// 播放内核。rawValue 同时是设置页展示名与持久化值，不要改名。
+/// 播放内核。AVFan 只有一个内核；rawValue 是展示名，不要改名。
 enum PlaybackKernel: String, CaseIterable, Identifiable {
-    case ksPlayer = "KSPlayer"
     case mplayKit = "MPlayKit"
     var id: String { rawValue }
 }
 
 enum PlaybackKernelSettings {
     static let defaultsKey = "avfan.playback.kernel"
-    /// 当前选择；从未写过或值无法识别时回落到 KSPlayer（现行行为不变）。
-    static var current: PlaybackKernel {
-        PlaybackKernel(rawValue: UserDefaults.standard.string(forKey: defaultsKey) ?? "") ?? .ksPlayer
-    }
+    /// 恒为 MPlayKit：AVFan 没有内核开关，旧版本写入的任何值都忽略。
+    static var current: PlaybackKernel { .mplayKit }
 }

@@ -47,9 +47,29 @@
 		AF1100000000000000000015 /* OnlineSubtitle.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF1100000000000000000016 /* OnlineSubtitle.swift */; };
 		AF1100000000000000000017 /* OnlineSubtitleModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF1100000000000000000018 /* OnlineSubtitleModel.swift */; };
 		AF1100000000000000000019 /* SubtitleCatProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF110000000000000000001A /* SubtitleCatProvider.swift */; };
-		AF110000000000000000001B /* KSChromePlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF110000000000000000001C /* KSChromePlayer.swift */; };
+		AF110000000000000000001B /* MPlayChromePlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF110000000000000000001C /* KSChromePlayer.swift */; };
 		AF110000000000000000001D /* WatchOnlinePlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF110000000000000000001E /* WatchOnlinePlayerView.swift */; };
-		AF1100000000000000000021 /* KSPlayer in Frameworks */ = {isa = PBXBuildFile; productRef = AF1100000000000000000023 /* KSPlayer */; };
+		AF110000000000000000009A /* MPlayPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF1100000000000000000099 /* MPlayPlayer.swift */; };
+		AF110000000000000000009C /* MPlayState.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF110000000000000000009B /* MPlayState.swift */; };
+		AF110000000000000000009E /* MPlayDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF110000000000000000009D /* MPlayDiagnostics.swift */; };
+		AF11000000000000000000A0 /* MPlayVideoView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF110000000000000000009F /* MPlayVideoView.swift */; };
+		AF11000000000000000000A2 /* MPlayPreviewReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF11000000000000000000A1 /* MPlayPreviewReader.swift */; };
+		AF11000000000000000000A4 /* MPlayRenderContext.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF11000000000000000000A3 /* MPlayRenderContext.swift */; };
+		AF11000000000000000000A6 /* MPlayKernel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF11000000000000000000A5 /* MPlayKernel.swift */; };
+		AF11000000000000000000A8 /* MPlayEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF11000000000000000000A7 /* MPlayEngine.swift */; };
+		AF11000000000000000000AA /* Libmpv.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = AF11000000000000000000A9 /* Libmpv.xcframework */; };
+		AF11000000000000000000AB /* Libmpv.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = AF11000000000000000000A9 /* Libmpv.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		AF11000000000000000000AE /* AudioToolbox.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AF11000000000000000000AD /* AudioToolbox.framework */; };
+		AF11000000000000000000B0 /* CoreMedia.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AF11000000000000000000AF /* CoreMedia.framework */; };
+		AF11000000000000000000B2 /* CoreVideo.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AF11000000000000000000B1 /* CoreVideo.framework */; };
+		AF11000000000000000000B4 /* VideoToolbox.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AF11000000000000000000B3 /* VideoToolbox.framework */; };
+		AF11000000000000000000B6 /* OpenGLES.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AF11000000000000000000B5 /* OpenGLES.framework */; };
+		AF11000000000000000000B8 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AF11000000000000000000B7 /* Foundation.framework */; };
+		AF11000000000000000000BA /* CoreFoundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AF11000000000000000000B9 /* CoreFoundation.framework */; };
+		AF11000000000000000000BC /* libc++.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = AF11000000000000000000BB /* libc++.tbd */; };
+		AF11000000000000000000BE /* libz.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = AF11000000000000000000BD /* libz.tbd */; };
+		AF11000000000000000000C0 /* libiconv.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = AF11000000000000000000BF /* libiconv.tbd */; };
+		AF11000000000000000000C2 /* libbz2.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = AF11000000000000000000C1 /* libbz2.tbd */; };
 		AF1100000000000000000024 /* MediaPlayer.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AF1100000000000000000025 /* MediaPlayer.framework */; };
 		AF1100000000000000000040 /* JRHTML.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF1100000000000000000041 /* JRHTML.swift */; };
 		AF1100000000000000000042 /* OnlineFailure.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF1100000000000000000043 /* OnlineFailure.swift */; };
@@ -122,8 +142,28 @@
 		AF1100000000000000000016 /* OnlineSubtitle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnlineSubtitle.swift; sourceTree = "<group>"; };
 		AF1100000000000000000018 /* OnlineSubtitleModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnlineSubtitleModel.swift; sourceTree = "<group>"; };
 		AF110000000000000000001A /* SubtitleCatProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubtitleCatProvider.swift; sourceTree = "<group>"; };
-		AF110000000000000000001C /* KSChromePlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KSChromePlayer.swift; sourceTree = "<group>"; };
+		AF110000000000000000001C /* MPlayChromePlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MPlayChromePlayer.swift; sourceTree = "<group>"; };
 		AF110000000000000000001E /* WatchOnlinePlayerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchOnlinePlayerView.swift; sourceTree = "<group>"; };
+		AF1100000000000000000099 /* MPlayPlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MPlayPlayer.swift; sourceTree = "<group>"; };
+		AF110000000000000000009B /* MPlayState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MPlayState.swift; sourceTree = "<group>"; };
+		AF110000000000000000009D /* MPlayDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MPlayDiagnostics.swift; sourceTree = "<group>"; };
+		AF110000000000000000009F /* MPlayVideoView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MPlayVideoView.swift; sourceTree = "<group>"; };
+		AF11000000000000000000A1 /* MPlayPreviewReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MPlayPreviewReader.swift; sourceTree = "<group>"; };
+		AF11000000000000000000A3 /* MPlayRenderContext.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MPlayRenderContext.swift; sourceTree = "<group>"; };
+		AF11000000000000000000A5 /* MPlayKernel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MPlayKernel.swift; sourceTree = "<group>"; };
+		AF11000000000000000000A7 /* MPlayEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MPlayEngine.swift; sourceTree = "<group>"; };
+		AF11000000000000000000A9 /* Libmpv.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = Libmpv.xcframework; path = Vendor/Libmpv.xcframework; sourceTree = SOURCE_ROOT; };
+		AF11000000000000000000AD /* AudioToolbox.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AudioToolbox.framework; path = System/Library/Frameworks/AudioToolbox.framework; sourceTree = SDKROOT; };
+		AF11000000000000000000AF /* CoreMedia.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreMedia.framework; path = System/Library/Frameworks/CoreMedia.framework; sourceTree = SDKROOT; };
+		AF11000000000000000000B1 /* CoreVideo.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreVideo.framework; path = System/Library/Frameworks/CoreVideo.framework; sourceTree = SDKROOT; };
+		AF11000000000000000000B3 /* VideoToolbox.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = VideoToolbox.framework; path = System/Library/Frameworks/VideoToolbox.framework; sourceTree = SDKROOT; };
+		AF11000000000000000000B5 /* OpenGLES.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = OpenGLES.framework; path = System/Library/Frameworks/OpenGLES.framework; sourceTree = SDKROOT; };
+		AF11000000000000000000B7 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = System/Library/Frameworks/Foundation.framework; sourceTree = SDKROOT; };
+		AF11000000000000000000B9 /* CoreFoundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreFoundation.framework; path = System/Library/Frameworks/CoreFoundation.framework; sourceTree = SDKROOT; };
+		AF11000000000000000000BB /* libc++.tbd */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.text-based-dylib-definition"; name = libc++.tbd; path = usr/lib/libc++.tbd; sourceTree = SDKROOT; };
+		AF11000000000000000000BD /* libz.tbd */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.text-based-dylib-definition"; name = libz.tbd; path = usr/lib/libz.tbd; sourceTree = SDKROOT; };
+		AF11000000000000000000BF /* libiconv.tbd */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.text-based-dylib-definition"; name = libiconv.tbd; path = usr/lib/libiconv.tbd; sourceTree = SDKROOT; };
+		AF11000000000000000000C1 /* libbz2.tbd */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.text-based-dylib-definition"; name = libbz2.tbd; path = usr/lib/libbz2.tbd; sourceTree = SDKROOT; };
 		AF1100000000000000000025 /* MediaPlayer.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = MediaPlayer.framework; path = System/Library/Frameworks/MediaPlayer.framework; sourceTree = SDKROOT; };
 		AF1100000000000000000041 /* JRHTML.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JRHTML.swift; sourceTree = "<group>"; };
 		AF1100000000000000000043 /* OnlineFailure.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnlineFailure.swift; sourceTree = "<group>"; };
@@ -163,11 +203,36 @@
 				5DE54A0CCB1F4EB7A43F71CB /* AVFoundation.framework in Frameworks */,
 				72965330C15B4157804EF71C /* Security.framework in Frameworks */,
 				AF1100000000000000000024 /* MediaPlayer.framework in Frameworks */,
-				AF1100000000000000000021 /* KSPlayer in Frameworks */,
+				AF11000000000000000000AA /* Libmpv.xcframework in Frameworks */,
+				AF11000000000000000000AE /* AudioToolbox.framework in Frameworks */,
+				AF11000000000000000000B0 /* CoreMedia.framework in Frameworks */,
+				AF11000000000000000000B2 /* CoreVideo.framework in Frameworks */,
+				AF11000000000000000000B4 /* VideoToolbox.framework in Frameworks */,
+				AF11000000000000000000B6 /* OpenGLES.framework in Frameworks */,
+				AF11000000000000000000B8 /* Foundation.framework in Frameworks */,
+				AF11000000000000000000BA /* CoreFoundation.framework in Frameworks */,
+				AF11000000000000000000BC /* libc++.tbd in Frameworks */,
+				AF11000000000000000000BE /* libz.tbd in Frameworks */,
+				AF11000000000000000000C0 /* libiconv.tbd in Frameworks */,
+				AF11000000000000000000C2 /* libbz2.tbd in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		AF11000000000000000000AC /* Embed Frameworks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				AF11000000000000000000AB /* Libmpv.xcframework in Embed Frameworks */,
+			);
+			name = "Embed Frameworks";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXGroup section */
 
@@ -244,6 +309,7 @@
 				AF110000000000000000000088 /* ExternalLibrary.swift */,
 				AF110000000000000000000090 /* RankingSources.swift */,
 				AF110000000000000000000096 /* DMMRankings.swift */,
+				AF1100000000000000000098 /* MPlayKit */,
 				AF110000000000000000000082 /* CataloguePoster.swift */,
 				AF110000000000000000000080 /* TenhowActorLinks.swift */,
 				AF110000000000000000000078 /* TenhowPoster.swift */,
@@ -298,12 +364,38 @@
 				1E37F36ED144475EA5D19285 /* AVFoundation.framework */,
 				A1C94BD1F2F447B89003D2A2 /* Security.framework */,
 				AF1100000000000000000025 /* MediaPlayer.framework */,
+				AF11000000000000000000A9 /* Libmpv.xcframework */,
+				AF11000000000000000000AD /* AudioToolbox.framework */,
+				AF11000000000000000000AF /* CoreMedia.framework */,
+				AF11000000000000000000B1 /* CoreVideo.framework */,
+				AF11000000000000000000B3 /* VideoToolbox.framework */,
+				AF11000000000000000000B5 /* OpenGLES.framework */,
+				AF11000000000000000000B7 /* Foundation.framework */,
+				AF11000000000000000000B9 /* CoreFoundation.framework */,
+				AF11000000000000000000BB /* libc++.tbd */,
+				AF11000000000000000000BD /* libz.tbd */,
+				AF11000000000000000000BF /* libiconv.tbd */,
+				AF11000000000000000000C1 /* libbz2.tbd */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
 		};
 
 
+		AF1100000000000000000098 /* MPlayKit */ = {
+			isa = PBXGroup;
+			children = (
+				AF1100000000000000000099 /* MPlayPlayer.swift */,
+				AF110000000000000000009B /* MPlayState.swift */,
+				AF110000000000000000009D /* MPlayDiagnostics.swift */,
+				AF110000000000000000009F /* MPlayVideoView.swift */,
+				AF11000000000000000000A1 /* MPlayPreviewReader.swift */,
+				AF11000000000000000000A3 /* MPlayRenderContext.swift */,
+				AF11000000000000000000A5 /* MPlayKernel.swift */,
+			);
+			path = MPlayKit;
+			sourceTree = "<group>";
+		};
 		AF110000000000000000001F /* Theme */ = {
 			isa = PBXGroup;
 			children = (
@@ -324,7 +416,8 @@
 				AF1100000000000000000016 /* OnlineSubtitle.swift */,
 				AF1100000000000000000018 /* OnlineSubtitleModel.swift */,
 				AF110000000000000000001A /* SubtitleCatProvider.swift */,
-				AF110000000000000000001C /* KSChromePlayer.swift */,
+				AF110000000000000000001C /* MPlayChromePlayer.swift */,
+				AF11000000000000000000A7 /* MPlayEngine.swift */,
 				AF110000000000000000001E /* WatchOnlinePlayerView.swift */,
 			);
 			path = Player;
@@ -339,6 +432,7 @@
 			buildPhases = (
 				85E5FADFC0DE4316A9A8FC7D /* Sources */,
 				3702E5C5930549E69D98863E /* Frameworks */,
+				AF11000000000000000000AC /* Embed Frameworks */,
 				3EDC53300CDE4D15BE53E037 /* Resources */,
 			);
 			buildRules = (
@@ -346,9 +440,6 @@
 			dependencies = (
 			);
 			name = AVFan;
-			packageProductDependencies = (
-				AF1100000000000000000023 /* KSPlayer */,
-			);
 			productName = AVFan;
 			productReference = FA24C521C2E146E79612314E /* AVFan.app */;
 			productType = "com.apple.product-type.application";
@@ -378,9 +469,6 @@
 				"zh-Hans",
 			);
 			mainGroup = 540B77516E524134A44282E6;
-			packageReferences = (
-				AF1100000000000000000022 /* XCRemoteSwiftPackageReference "KSPlayer" */,
-			);
 			productRefGroup = 1909AAC9EE1E417483F70233 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -441,8 +529,16 @@
 				AF1100000000000000000015 /* OnlineSubtitle.swift in Sources */,
 				AF1100000000000000000017 /* OnlineSubtitleModel.swift in Sources */,
 				AF1100000000000000000019 /* SubtitleCatProvider.swift in Sources */,
-				AF110000000000000000001B /* KSChromePlayer.swift in Sources */,
+				AF110000000000000000001B /* MPlayChromePlayer.swift in Sources */,
 				AF110000000000000000001D /* WatchOnlinePlayerView.swift in Sources */,
+				AF110000000000000000009A /* MPlayPlayer.swift in Sources */,
+				AF110000000000000000009C /* MPlayState.swift in Sources */,
+				AF110000000000000000009E /* MPlayDiagnostics.swift in Sources */,
+				AF11000000000000000000A0 /* MPlayVideoView.swift in Sources */,
+				AF11000000000000000000A2 /* MPlayPreviewReader.swift in Sources */,
+				AF11000000000000000000A4 /* MPlayRenderContext.swift in Sources */,
+				AF11000000000000000000A6 /* MPlayKernel.swift in Sources */,
+				AF11000000000000000000A8 /* MPlayEngine.swift in Sources */,
 				AF1100000000000000000040 /* JRHTML.swift in Sources */,
 				AF1100000000000000000042 /* OnlineFailure.swift in Sources */,
 				AF1100000000000000000051 /* CoverURLPolicy.swift in Sources */,
@@ -596,24 +692,6 @@
 		};
 /* End XCConfigurationList section */
 
-/* Begin XCRemoteSwiftPackageReference section */
-		AF1100000000000000000022 /* XCRemoteSwiftPackageReference "KSPlayer" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/kingslay/KSPlayer.git";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 2.3.4;
-			};
-		};
-/* End XCRemoteSwiftPackageReference section */
-
-/* Begin XCSwiftPackageProductDependency section */
-		AF1100000000000000000023 /* KSPlayer */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = AF1100000000000000000022 /* XCRemoteSwiftPackageReference "KSPlayer" */;
-			productName = KSPlayer;
-		};
-/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = A5AF112A58B34532A4981C52 /* Project object */;
 }

@@ -9,6 +9,11 @@ import SwiftUI
     @Published var languages: [String: [OnlineSubtitleCandidate]] = [:] { didSet { rebuildDisplayRows() } }
     @Published var detailStates: [String: String] = [:]
     @Published var selected: OnlineSubtitleCandidate?
+    /// Build 59: the validated downloaded bytes + ext of the current
+    /// selection, retained so the chrome can write them to a local file and
+    /// sub-add them into the engine. Nil whenever no selection is loaded.
+    @Published var selectedFileData: Data?
+    @Published var selectedFileExt: String?
     @Published var cues: [OnlineSubtitleCue] = []
     @Published var offset: Double = 0
     @Published var encodingHint = "auto"
@@ -72,12 +77,12 @@ import SwiftUI
         if status == "下载选中字幕…" || status == "搜索中…" { status = "已取消未完成请求；已加载字幕保留" }
     }
     func clear() {
-        cancelPending(); cues = []; selected = nil; results = []; languages = [:]; detailStates = [:]
+        cancelPending(); cues = []; selected = nil; selectedFileData = nil; selectedFileExt = nil; results = []; languages = [:]; detailStates = [:]
         rowStates = [:]; selectionStatus = nil
         offset = 0; cache = [:]; query = ""; encodingHint = "auto"; sourceStates = [:]; status = "尚未搜索"
     }
     func disable() {
-        cancelPending(); cues = []; selected = nil; offset = 0; status = "字幕已关闭"
+        cancelPending(); cues = []; selected = nil; selectedFileData = nil; selectedFileExt = nil; offset = 0; status = "字幕已关闭"
     }
     func search() {
         cancelPending()
@@ -148,6 +153,7 @@ import SwiftUI
                 self.rowStates[row.id] = nil
                 self.downloading = false; self.busy = !self.state.pending.isEmpty
                 self.cues = cues; self.selected = row; self.offset = 0
+                self.selectedFileData = data; self.selectedFileExt = row.ext
                 self.status = "已加载（来源：\(row.source.title) · \(row.language)）"; self.selectionStatus = self.status
                 #if os(iOS) && !SUBTITLE_CORE_TEST
                 GlassHaptic.tap()

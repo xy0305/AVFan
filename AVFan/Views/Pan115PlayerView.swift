@@ -2,11 +2,10 @@
 //  Pan115PlayerView.swift
 //  AVFan
 //
-//  按番号全盘搜索 115 文件（对齐 Forward 模块 files/search），KSPlayer 播最高清晰度。
+//  按番号全盘搜索 115 文件（对齐 Forward 模块 files/search），MPlayKit（libmpv）播最高清晰度。
 //
 
 import SwiftUI
-import KSPlayer
 
 struct Pan115PlayerView: View {
     let detail: MovieDetail
@@ -25,7 +24,7 @@ struct Pan115PlayerView: View {
             Color.black.ignoresSafeArea()
             if let url = vm.playURL, vm.errorMessage == nil, !vm.isLoading {
                 let metricsGeneration = vm.metricsGeneration
-                KSChromePlayer(
+                MPlayChromePlayer(
                     url: url,
                     title: detail.displayCode,
                     subtitle: vm.qualityLabel,

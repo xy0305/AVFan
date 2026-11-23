@@ -9,7 +9,7 @@ struct WatchOnlinePlayerView: View {
     var startFromBeginning: Bool = false
 
     var body: some View {
-        KSChromePlayer(
+        MPlayChromePlayer(
             url: url,
             title: title,
             subtitle: "在线观看",

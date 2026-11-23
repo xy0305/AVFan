@@ -1,10 +1,9 @@
-import KSPlayer
 import SwiftUI
 import UIKit
 
 final class AVFanAppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication, supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask {
-        UIDevice.current.userInterfaceIdiom == .pad ? .all : KSOptions.supportedInterfaceOrientations
+        UIDevice.current.userInterfaceIdiom == .pad ? .all : OrientationLock.supportedMask
     }
 }
 
