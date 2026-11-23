@@ -4,8 +4,10 @@
 //
 //  Build 59: 用 libmpv C API 复刻原版 com.mplaykit.Player 的接口形状
 //  （RE 报告一、二：n3 命令通道 / n4 预加载派生 / n5 创建 / n7 setProp /
-//  n9 暂停 / n14 状态 / n15 进度 / n16 异步 seek / n19 销毁 / n30 共享渲染
-//  上下文）。原版内核本身就是 libmpv + FFmpeg 的融合构建（报告三），属性
+//  n9 暂停 / n14 状态 / n15 进度 / n16 异步 seek / n19 销毁）。原版
+//  n30 的共享渲染上下文在阶段 A 的像素帧管线下没有对应物（实例间不
+//  共享渲染状态，帧经 frame_output sink 按名路由，见 frameSinkName）。
+//  原版内核本身就是 libmpv + FFmpeg 的融合构建（报告三），属性
 //  词汇与 mpv 同构，所以这里直接以 mpv client API 落地；C 函数签名与事件
 //  结构体以 mpv 0.41 的头文件为准（管线钉版 0.41.0，依据 IOS-FINDINGS §5
 //  的原版版本串直证）。0.41 ↔ 0.42 头文件已逐项 diff 核对（client.h /
@@ -64,13 +66,15 @@ private func mplayWakeupCallback(_ context: UnsafeMutableRawPointer?) {
 }
 
 final class MPlayPlayer {
-    /// libmpv 句柄（mpv_handle）。init 时创建一次、close() 时置 nil；
-    /// MPlayVideoView 建 render context 时读它，因此声明为 internal。
+    /// libmpv 句柄（mpv_handle）。init 时创建一次、close() 时置 nil。
     var core: OpaquePointer? = nil
-    /// n30 的等价物：共享渲染上下文。传入 sharedContext 时复用，否则自建；
-    /// GL 上下文建不出来时为 nil（降级：能播声音、无画面，视图 attach 会记
-    /// surfaceError）。
-    var renderContext: MPlayRenderContext?
+    /// frame_output vo 的 sink 名（全量还原阶段 A 的像素帧管线）：
+    /// 视图按这个名字注册帧回调（mp_frame_output_register），init
+    /// 把它作为 vo-frame-output-sink 选项强制写给 core——入参
+    /// options 不能覆盖，否则 vo 找不到消费者、画面全丢。原版
+    /// n30 的「共享渲染上下文」在像素帧架构下没有对应物：实例间
+    /// 不再共享任何渲染状态，帧经 sink 注册表按名路由。
+    let frameSinkName: String
 
     /// 播放事件回调（Build 59 扩展）：在 player 串行队列上发出，
     /// 消费方自行切队列。事件时机见 handleEvents / handleEndFile。
@@ -103,24 +107,27 @@ final class MPlayPlayer {
         return sourceCounter
     }
 
-    init(options: [String: String] = [:], sharedContext: MPlayRenderContext? = nil) throws {
+    init(options: [String: String] = [:]) throws {
         let assignedSource = Self.nextSource()
         source = assignedSource
+        frameSinkName = "avfan-\(assignedSource)"
         queue = DispatchQueue(label: "avfan.mplaykit.player.\(assignedSource)")
         queue.setSpecific(key: specificKey, value: 1)
 
         // 默认选项与原版创建选项的对应（报告 1.3）：
         //   hwdec：原版 Android 注入 mediacodec；iOS 对应 videotoolbox。
         //   hwdec-software-fallback：原版注入 yes，此处一致。
-        // 其余为 libmpv render API 的必要形态：vo=libmpv 才能用
-        // mpv_render_context 出画面；keep-open 是播放器侧的常规取值；
+        // vo=frame_output 是阶段 A 像素帧管线（与原版 iOS 同构：
+        // frame_output vo → CVPixelBuffer → AVSampleBufferDisplayLayer，
+        // IOS-FINDINGS §1/§3）；keep-open 是播放器侧的常规取值；
         // cache 上限（demuxer-max-bytes / -back-bytes）是**我方取值**：
         // 原版 iOS 是 CachePolicy 分段缓存模型（capacity / prefetchBytes /
         // segmentBytes / segments），具体数值在二进制里不可恢复
         // （IOS-FINDINGS §3.2/§6），这两个数字不得当作原版参数引用。
-        // 入参 options 覆盖默认值。
+        // 入参 options 覆盖默认值，但 vo-frame-output-sink 在合并后
+        // 强制写回本实例的 sink 名（见 frameSinkName 的注释）。
         var merged: [String: String] = [
-            "vo": "libmpv",
+            "vo": "frame_output",
             "hwdec": "videotoolbox",
             "hwdec-software-fallback": "yes",
             "keep-open": "yes",
@@ -129,8 +136,8 @@ final class MPlayPlayer {
             "demuxer-max-back-bytes": "128MiB",
         ]
         for (key, value) in options { merged[key] = value }
+        merged["vo-frame-output-sink"] = frameSinkName
         mergedOptions = merged
-        renderContext = sharedContext ?? MPlayRenderContext()
 
         guard let handle = mpv_create() else { throw MPlayError.createFailed }
         core = handle
@@ -436,12 +443,12 @@ final class MPlayPlayer {
 
     /// n4 等价：派生一个预加载实例。偏差（与原版不同）：原版 iOS 的预加载
     /// 是完整 Player 实例 + promotePreloadedPlayback 接管制（含 PiP 控制
-    /// 器在实例间转移，IOS-FINDINGS §2.5）；libmpv 没有跨实例共享媒体
-    /// 上下文的 API，这里只能用相同 options 新建实例、共享同一
-    /// renderContext（GL 上下文），起到预热解码/渲染栈的作用，媒体状态
-    /// 不共享、更无接管语义。偏差表第 13 条。
+    /// 器在实例间转移，IOS-FINDINGS §2.5）；这里先用相同 options 新建
+    /// 实例预热解码栈，媒体状态不共享。阶段 A 已去掉原先的 GL 上下文
+    /// 共享（像素帧管线下不存在共享渲染上下文）；接管制在阶段 D 落地，
+    /// 偏差表第 13 条在阶段 D 后改写。
     func makePreloadedPlayer() throws -> MPlayPlayer {
-        try MPlayPlayer(options: mergedOptions, sharedContext: renderContext)
+        try MPlayPlayer(options: mergedOptions)
     }
 
     /// n19 等价，幂等。先清 wakeup 回调再销毁 core，保证 passUnretained
@@ -482,6 +489,15 @@ final class MPlayPlayer {
             guard let self, !self.closed else { return }
             self.lastSurfaceError = message
         }
+    }
+
+    /// 字幕渲染尺寸（阶段 A）：转发给 frame_output vo 的 sink 覆盖值。
+    /// 对应原版 Player 的 updatePictureInPictureSubtitleRenderSize
+    /// 语义——字幕渲染分辨率与视频帧尺寸解耦，跟随宿主（行内视图
+    /// bounds 或 PiP 窗口 render size）。0 表示回到视频尺寸。
+    /// mp_frame_output_set_subtitle_size 本身线程安全，不经 queue。
+    func setSubtitleRenderSize(width: Int, height: Int) {
+        mp_frame_output_set_subtitle_size(frameSinkName, Int32(width), Int32(height))
     }
 
     // MARK: - 事件处理（只在 queue 上运行）

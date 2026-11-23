@@ -3,9 +3,12 @@
 //  AVFan
 //
 //  Build 59: 对应原版 com.mplaykit.PreviewReader（RE 报告二.10：
-//  n21–n26）——独立于播放实例的抓帧管线：一台自己的 mpv core +
-//  自己的 GL 上下文 + 离屏 FBO，seek 到目标时刻渲染一帧后
-//  glReadPixels 读回 RGBA。原版 Still 的字段（宽/高/时刻/时长/
+//  n21–n26）——独立于播放实例的抓帧管线：一台自己的 mpv core，
+//  seek 到目标时刻渲染一帧后读回 RGBA。渲染后端在全量还原阶段 A
+//  由 GL（离屏 FBO + glReadPixels）换成 libmpv 的软件渲染 API
+//  （MPV_RENDER_API_TYPE_SW）：主显示管线已关 GL（-Dgl=disabled），
+//  render context 只能以 SW 形态创建；SW 渲染直接写进内存缓冲，
+//  行序自上而下，不再需要翻行。原版 Still 的字段（宽/高/时刻/时长/
 //  旋转/Dolby 档/是否封面图/RGBA/元数据）逐项保留；dolbyProfile 在
 //  mpv 属性面没有对应物，恒为 nil（偏差表「未复刻的原版面」条）。
 //
@@ -19,10 +22,8 @@
 //  读取、mpv_node 之外的标量属性读取均照同一套惯例）。
 //
 
-import Darwin
 import Foundation
 import Libmpv
-import OpenGLES
 import UIKit
 
 /// 原版 PreviewReader$Still 的等价物。
@@ -38,7 +39,7 @@ struct MPlayStill {
     let dolbyProfile: String?
     /// 选中视频轨是图片轨（封面）时为 true。
     let cover: Bool
-    /// RGBA8，行序自上而下（读回时已翻行，见 captureStill）。
+    /// RGBA8，行序自上而下（SW 渲染直接按图像方向输出）。
     let rgba: Data
     let metadata: [String: String]
 
@@ -55,16 +56,6 @@ struct MPlayStill {
                                   intent: .defaultIntent) else { return nil }
         return UIImage(cgImage: image).jpegData(compressionQuality: CGFloat(quality))
     }
-}
-
-/// 文件级 C 回调：GL 过程地址。RTLD_DEFAULT 在 Darwin 上是 (void *)-2，
-/// 在已加载的全部镜像里按名查符号（与 MPlayVideoView 里同名私有函数
-/// 同一写法；那份是 file-private，模块内无法复用，故此处自带一份）。
-private func mplayPreviewGLGetProcAddress(_ context: UnsafeMutableRawPointer?,
-                                          _ name: UnsafePointer<CChar>?) -> UnsafeMutableRawPointer? {
-    _ = context
-    guard let name else { return nil }
-    return dlsym(UnsafeMutableRawPointer(bitPattern: -2), name)
 }
 
 /// 文件级 C 回调：mpv 唤醒（只转投 reader 的串行队列）。
@@ -99,11 +90,8 @@ final class MPlayPreviewReader {
     // 以下状态只在 queue 上访问。
     private var core: OpaquePointer?
     private var renderContextPointer: OpaquePointer?
-    private var glContext: EAGLContext?
-    private var framebuffer: GLuint = 0
-    private var renderbuffer: GLuint = 0
-    private var framebufferWidth: Int32 = 0
-    private var framebufferHeight: Int32 = 0
+    private var renderWidth: Int32 = 0
+    private var renderHeight: Int32 = 0
     private var fileLoaded = false
     private var seekIssued = false
 
@@ -225,26 +213,10 @@ final class MPlayPreviewReader {
         if let renderContextPointer {
             mpv_render_context_set_update_callback(renderContextPointer, nil, nil)
             self.renderContextPointer = nil
-            // GL 对象的删除需要上下文在当前线程（队列线程）置为 current。
-            if let glContext {
-                _ = EAGLContext.setCurrent(glContext)
-                if framebuffer != 0 {
-                    var value = framebuffer
-                    glDeleteFramebuffers(1, &value)
-                    framebuffer = 0
-                }
-                if renderbuffer != 0 {
-                    var value = renderbuffer
-                    glDeleteRenderbuffers(1, &value)
-                    renderbuffer = 0
-                }
-                _ = EAGLContext.setCurrent(nil)
-            }
             mpv_render_context_free(renderContextPointer)
         }
-        framebufferWidth = 0
-        framebufferHeight = 0
-        glContext = nil
+        renderWidth = 0
+        renderHeight = 0
         if let core {
             mpv_set_wakeup_callback(core, nil, nil)
             mpv_terminate_destroy(core)
@@ -292,9 +264,9 @@ final class MPlayPreviewReader {
     }
 
     /// FILE_LOADED 后：按显示尺寸（video-params/dw/dh，已含旋转与
-    /// 宽高比）算抓帧尺寸，建 render context 与离屏 FBO，并发一次
-    /// 精确 seek 到目标时刻（暂停态下 seek 后 core 会解出目标帧并
-    /// 触发 PLAYBACK_RESTART / render update）。
+    /// 宽高比）算抓帧尺寸，建 SW render context，并发一次精确 seek
+    /// 到目标时刻（暂停态下 seek 后 core 会解出目标帧并触发
+    /// PLAYBACK_RESTART / render update）。
     private func prepareRenderTarget() {
         guard let core, let pending else { return }
         let displayWidth = intProperty("video-params/dw") ?? intProperty("video-params/w") ?? 0
@@ -310,22 +282,11 @@ final class MPlayPreviewReader {
             height = max(1, Int((Double(height) * Double(pending.maxWidth) / Double(width)).rounded()))
             width = pending.maxWidth
         }
-        guard let context = EAGLContext(api: .openGLES3) else {
-            finishPending(.failure(.loadFailed("preview: GL context unavailable")))
-            teardownCore()
-            return
-        }
-        glContext = context
-        _ = EAGLContext.setCurrent(context)
-        let apiType = strdup(MPV_RENDER_API_TYPE_OPENGL)
+        let apiType = strdup(MPV_RENDER_API_TYPE_SW)
         defer { free(apiType) }
-        var initParams = mpv_opengl_init_params(get_proc_address: mplayPreviewGLGetProcAddress,
-                                                get_proc_address_ctx: nil)
         var params: [mpv_render_param] = [
             mpv_render_param(type: MPV_RENDER_PARAM_API_TYPE,
                              data: UnsafeMutableRawPointer(apiType)),
-            mpv_render_param(type: MPV_RENDER_PARAM_OPENGL_INIT_PARAMS,
-                             data: &initParams),
             mpv_render_param(type: MPV_RENDER_PARAM_INVALID, data: nil),
         ]
         var newContext: OpaquePointer?
@@ -338,16 +299,8 @@ final class MPlayPreviewReader {
         renderContextPointer = newContext
         mpv_render_context_set_update_callback(newContext, mplayPreviewRenderUpdateCallback,
                                                Unmanaged.passUnretained(self).toOpaque())
-        glGenRenderbuffers(1, &renderbuffer)
-        glBindRenderbuffer(GLenum(GL_RENDERBUFFER), renderbuffer)
-        glRenderbufferStorage(GLenum(GL_RENDERBUFFER), GLenum(GL_RGBA8),
-                              GLsizei(width), GLsizei(height))
-        glGenFramebuffers(1, &framebuffer)
-        glBindFramebuffer(GLenum(GL_FRAMEBUFFER), framebuffer)
-        glFramebufferRenderbuffer(GLenum(GL_FRAMEBUFFER), GLenum(GL_COLOR_ATTACHMENT0),
-                                  GLenum(GL_RENDERBUFFER), renderbuffer)
-        framebufferWidth = Int32(width)
-        framebufferHeight = Int32(height)
+        renderWidth = Int32(width)
+        renderHeight = Int32(height)
         if !seekIssued {
             seekIssued = true
             _ = command(core, ["seek", String(pending.targetSeconds), "absolute", "exact"])
@@ -355,50 +308,37 @@ final class MPlayPreviewReader {
         attemptCapture()
     }
 
-    /// 渲染当前帧到离屏 FBO 并读回。FILE_LOADED 直后帧可能还没解出，
-    /// render 返回后读到的可能是空帧——以 PLAYBACK_RESTART 与
-    /// render update 回调反复进入本方法，直到读回成功或超时收口；
-    /// 成功与否以 glCheckFramebufferStatus + 读回长度为准。
+    /// 用 SW 渲染把当前帧写进内存缓冲并读回。FILE_LOADED 直后帧可能
+    /// 还没解出——以 PLAYBACK_RESTART 与 render update 回调反复进入
+    /// 本方法，直到渲染成功或超时收口。SW 输出的行序自上而下，
+    /// 与 MPlayStill.rgba 的约定一致，无需翻行（方向正确性仍列入
+    /// 真机首验清单：SW 后端按 dst_params 渲染，含旋转的源以
+    /// video-params 的显示尺寸为目标，理论上已是正向画面）。
     private func attemptCapture() {
         guard let pending, fileLoaded,
-              let renderContextPointer, let glContext, framebuffer != 0 else { return }
-        _ = EAGLContext.setCurrent(glContext)
-        glBindFramebuffer(GLenum(GL_FRAMEBUFFER), framebuffer)
-        guard glCheckFramebufferStatus(GLenum(GL_FRAMEBUFFER)) == GLenum(GL_FRAMEBUFFER_COMPLETE) else { return }
-        var fbo = mpv_opengl_fbo(fbo: Int32(framebuffer), w: framebufferWidth,
-                                 h: framebufferHeight, internal_format: 0)
-        var flipY: Int32 = 1
-        var params: [mpv_render_param] = [
-            mpv_render_param(type: MPV_RENDER_PARAM_OPENGL_FBO, data: &fbo),
-            mpv_render_param(type: MPV_RENDER_PARAM_FLIP_Y, data: &flipY),
-            mpv_render_param(type: MPV_RENDER_PARAM_INVALID, data: nil),
-        ]
-        let rc = mpv_render_context_render(renderContextPointer, &params)
-        guard rc == 0 else { return }
-        glFinish()
-        let width = Int(framebufferWidth)
-        let height = Int(framebufferHeight)
+              let renderContextPointer, renderWidth > 0, renderHeight > 0 else { return }
+        let width = Int(renderWidth)
+        let height = Int(renderHeight)
         var pixels = [UInt8](repeating: 0, count: width * height * 4)
-        pixels.withUnsafeMutableBytes { buffer in
-            glReadPixels(0, 0, GLsizei(width), GLsizei(height),
-                         GLenum(GL_RGBA), GLenum(GL_UNSIGNED_BYTE), buffer.baseAddress)
+        var size: [Int32] = [renderWidth, renderHeight]
+        let format = strdup("rgba")
+        defer { free(format) }
+        // MPV_RENDER_PARAM_SW_STRIDE 的 C 侧类型是 size_t*
+        // （libmpv_sw.c 实测），故用 Int（arm64 上与 size_t 同宽）。
+        var stride = width * 4
+        let rc = pixels.withUnsafeMutableBytes { buffer -> Int32 in
+            var params: [mpv_render_param] = [
+                mpv_render_param(type: MPV_RENDER_PARAM_SW_SIZE, data: &size),
+                mpv_render_param(type: MPV_RENDER_PARAM_SW_FORMAT,
+                                 data: UnsafeMutableRawPointer(format)),
+                mpv_render_param(type: MPV_RENDER_PARAM_SW_STRIDE, data: &stride),
+                mpv_render_param(type: MPV_RENDER_PARAM_SW_POINTER, data: buffer.baseAddress),
+                mpv_render_param(type: MPV_RENDER_PARAM_INVALID, data: nil),
+            ]
+            return mpv_render_context_render(renderContextPointer, &params)
         }
-        // GL 读回是自下而上的行序；FLIP_Y=1 是按「可直接上屏」的
-        // 约定渲染的，读回后翻行得到自上而下的 RGBA（方向正确性
-        // 列入真机首验清单）。
-        var rgba = Data(count: width * height * 4)
-        let rowBytes = width * 4
-        rgba.withUnsafeMutableBytes { dst in
-            guard let base = dst.baseAddress else { return }
-            pixels.withUnsafeBytes { src in
-                guard let srcBase = src.baseAddress else { return }
-                for row in 0..<height {
-                    let srcRow = srcBase + (height - 1 - row) * rowBytes
-                    let dstRow = base + row * rowBytes
-                    memcpy(dstRow, srcRow, rowBytes)
-                }
-            }
-        }
+        guard rc == 0 else { return }
+        let rgba = Data(pixels)
         let time = doubleProperty("time-pos") ?? pending.targetSeconds
         let duration = doubleProperty("duration") ?? 0
         let rotation = intProperty("video-params/rotate")
