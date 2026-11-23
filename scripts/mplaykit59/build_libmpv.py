@@ -5,8 +5,9 @@ Builds a single static Libmpv.xcframework (device + simulator, arm64,
 iOS 17.0 minimum) from pinned upstream tarballs:
 
   FFmpeg / mpv / libplacebo / dav1d / libass / freetype / harfbuzz /
-  fribidi / xxHash  — versions and sha256 are pinned in COMPONENTS below
-  (coordinator-verified; do not bump without re-pinning the hashes).
+  fribidi / xxHash / uchardet / lcms2 — versions and sha256 are pinned
+  in COMPONENTS below (verified by actual download; do not bump without
+  re-pinning the hashes).
 
 Output:  <repo-root>/Vendor/Libmpv.xcframework
 Cache:   <repo-root>/.cache59/{downloads,src,build,cross,venv}
@@ -17,8 +18,44 @@ Usage:
   python3 scripts/mplaykit59/build_libmpv.py <repo-root> \
       [--platforms device,simulator] [--force]
 
-Platform notes (verified against mpv 0.42 meson.build, not guessed):
-  * mpv 0.42 hard-requires libplacebo >= 7.387.0.
+Version basis (IOS-FINDINGS §3/§5): the original iOS binary embeds
+`mpv v0.41.0` and its full meson configure string, so mpv is pinned to
+0.41.0 (an earlier revision of this pipeline pinned 0.42.0 from the
+Android profile, which carries no version string).  The original's
+meson parameters vs. ours, item by item:
+
+  original: -Dgl=disabled -Dlibmpv=true -Dcplayer=false -Dgpl=false
+            -Diconv=enabled -Dlcms2=enabled -Dlibavdevice=enabled
+            -Duchardet=enabled -Dzlib=enabled -Daudiounit=enabled
+            -Davfoundation=enabled -Dlua=disabled
+            -Dauto_features=disabled -Ddefault_library=static
+  ours:     lcms2=enabled and uchardet=enabled now match (both
+            components are built below); lua/audiounit/libmpv/static
+            already matched.  Deliberate divergences:
+            * GL stays ON (plain-gl=enabled): our MPlayVideoView renders
+              through the libmpv render API into a CAEAGLLayer, while
+              the original uses a private pixel-frame vo with
+              -Dgl=disabled.  Display-pipeline rework is a declared
+              deviation (Build59-MPlayKit.md), not done in this round.
+            * libavdevice/avfoundation stay off: no device/disc input
+              sources are needed (recorded in the Build doc).
+            * -Dauto_features stays unset; instead every unwanted
+              feature is disabled explicitly in build_mpv().
+
+Platform notes (verified against the mpv 0.41.0 / 0.42.0 sources by
+direct diff, not guessed):
+  * Option sets are identical between 0.41 and 0.42 except four options
+    added in 0.42 (amf, dvda, libcurl, subrandr); no option we pass was
+    removed, renamed, or changed type/default.  There is no plain
+    `videotoolbox`, `sdl2`, or `test` option in either version — the
+    real names are videotoolbox-gl / videotoolbox-pl, sdl2-{audio,
+    video,gamepad} (all default-disabled), and `tests`.
+  * mpv 0.41 requires libplacebo >= 6.338.2 (0.42 raised the floor to
+    >= 7.387.0).  The pinned libplacebo 7.387.0 satisfies both floors
+    (meson only sets a minimum), so it is kept unchanged.
+  * mpv finds uchardet and lcms2 via pkg-config dependencies
+    (`dependency('uchardet')`, `dependency('lcms2', version: '>= 2.6')`);
+    both are built into the per-platform prefix below.
   * -Dvulkan=disabled is legal for mpv: the vulkan option is
     get_option('vulkan').require(libplacebo-has-vulkan).  libplacebo is
     therefore built -Dvulkan=disabled -Dopengl=enabled (the OpenGL backend
@@ -49,10 +86,12 @@ COMPONENTS = [
     ("ffmpeg",    "8.0.1",
      "https://ffmpeg.org/releases/ffmpeg-8.0.1.tar.xz",
      "05ee0b03119b45c0bdb4df654b96802e909e0a752f72e4fe3794f487229e5a41"),
-    ("mpv",       "0.42.0",
-     "https://github.com/mpv-player/mpv/archive/refs/tags/v0.42.0.tar.gz",
-     "bcfebbfa2b65a6d88dc97ea18117831072373e38b5785a2afb874ed4df5070dd"),
-    ("libplacebo", "7.387.0",   # mpv 0.42 meson.build floor: >= 7.387.0
+    ("mpv",       "0.41.0",     # IOS-FINDINGS §5: original iOS binary is mpv v0.41.0
+     "https://github.com/mpv-player/mpv/archive/refs/tags/v0.41.0.tar.gz",
+     "ee21092a5ee427353392360929dc64645c54479aefdb5babc5cfbb5fad626209"),
+    ("libplacebo", "7.387.0",   # mpv 0.41 floor is >= 6.338.2; meson sets
+                                # only a minimum, so the 7.387.0 pin (the
+                                # old 0.42 floor) still satisfies it — kept.
      "https://code.videolan.org/videolan/libplacebo/-/archive/v7.387.0/libplacebo-v7.387.0.tar.gz",
      "3bf5d72786682c194387c33d563872f6bfe202a9816f9dde6535a31a9b2e0d74"),
     ("dav1d",     "1.5.1",
@@ -73,6 +112,13 @@ COMPONENTS = [
     ("xxhash",    "0.8.3",
      "https://github.com/Cyan4973/xxHash/archive/refs/tags/v0.8.3.tar.gz",
      "aae608dfe8213dfd05d909a57718ef82f30722c392344583d3f39050c7f29a80"),
+    ("uchardet",  "0.0.8",      # IOS-FINDINGS §3.1: original has -Duchardet=enabled
+     "https://www.freedesktop.org/software/uchardet/releases/uchardet-0.0.8.tar.xz",
+     "e97a60cfc00a1c147a674b097bb1422abd9fa78a2d9ce3f3fdcc2e78a34ac5f0"),
+    ("lcms2",     "2.16",       # IOS-FINDINGS §3.1: original has -Dlcms2=enabled;
+                                # mpv 0.41 requires lcms2 >= 2.6 via pkg-config
+     "https://github.com/mm2/Little-CMS/releases/download/lcms2.16/lcms2-2.16.tar.gz",
+     "d873d34ad8b9b4cea010631f1a6228d2087475e4dc5e763eb81acc23d9d45a51"),
 ]
 BY_NAME = {c[0]: c for c in COMPONENTS}
 MIN_IOS = "17.0"  # == IPHONEOS_DEPLOYMENT_TARGET in AVFan.xcodeproj
@@ -127,7 +173,7 @@ def skip_if_stamped(build_dir, stage):
 def bootstrap(cache):
     """venv with meson/ninja/jinja2 (libplacebo codegen needs jinja2 on
     PATH via the venv python); host must provide pkg-config, xcrun, cmake
-    (freetype is built with cmake)."""
+    (freetype and uchardet are built with cmake)."""
     for tool in ("pkg-config", "xcrun", "cmake"):
         assert shutil.which(tool), f"missing host tool: {tool}"
     venv = cache / "venv"
@@ -311,6 +357,45 @@ def build_freetype(src, build_dir, prefix, platform, env, with_harfbuzz, tag):
     run(["cmake", "--install", bdir], stage, env=env)
     stamp(build_dir, stage)
 
+def build_uchardet(src, build_dir, prefix, platform, env):
+    """uchardet via cmake (its only build system in 0.0.8).  Installs
+    libuchardet.a + uchardet.pc, which is how mpv's
+    dependency('uchardet') finds it.  Mirrors the freetype cmake
+    cross-compile setup; BUILD_SHARED_LIBS must be OFF or we get a
+    dylib instead of a static archive."""
+    stage = "uchardet"
+    if skip_if_stamped(build_dir, stage): return
+    sdk_name, stem = PLATFORMS[platform]
+    sdk = sdk_path(sdk_name)
+    bdir = build_dir / "uchardet"
+    if bdir.exists(): shutil.rmtree(bdir)
+    minflag = f"-m{stem}-version-min={MIN_IOS}"
+    args = ["cmake", "-S", src, "-B", bdir,
+            "-DCMAKE_SYSTEM_NAME=iOS",
+            f"-DCMAKE_OSX_SYSROOT={sdk}",
+            "-DCMAKE_OSX_ARCHITECTURES=arm64",
+            f"-DCMAKE_OSX_DEPLOYMENT_TARGET={MIN_IOS}",
+            "-DCMAKE_BUILD_TYPE=Release",
+            "-DBUILD_SHARED_LIBS=OFF",
+            f"-DCMAKE_INSTALL_PREFIX={prefix}",
+            f"-DCMAKE_C_FLAGS={minflag}",
+            f"-DCMAKE_CXX_FLAGS={minflag}"]
+    run(args, stage, env=pkg_env(prefix, env))
+    run(["cmake", "--build", bdir, "--parallel"], stage, env=env)
+    run(["cmake", "--install", bdir], stage, env=env)
+    stamp(build_dir, stage)
+
+def build_lcms2(src, build_dir, prefix, cross, penv):
+    """lcms2 via its own meson build (ships meson.build + pkg.generate,
+    so mpv's dependency('lcms2', version: '>= 2.6') resolves from the
+    prefix).  jpeg/tiff stay disabled: not present in the iOS prefix
+    and not needed for ICC colour management of video."""
+    stage = "lcms2"
+    if skip_if_stamped(build_dir, stage): return
+    meson_build(src, build_dir / "lcms2", prefix, cross, penv,
+                {"jpeg": "disabled", "tiff": "disabled"}, stage)
+    stamp(build_dir, stage)
+
 def build_platform(platform, srcs, cache, env, force):
     print(f"=== platform {platform} ===", flush=True)
     build_dir = cache / "build" / platform
@@ -358,6 +443,13 @@ def build_platform(platform, srcs, cache, env, force):
                      "tests": "disabled", "test": "disabled",
                      "profile": "disabled"}, "libass")
         stamp(build_dir, "libass")
+
+    # uchardet (subtitle charset detection) and lcms2 (ICC colour
+    # management): both enabled in the original's meson parameters
+    # (IOS-FINDINGS §3.1); mpv resolves them from this prefix via
+    # pkg-config, so they must land before the mpv stage.
+    build_uchardet(srcs["uchardet"], build_dir, prefix, platform, env)
+    build_lcms2(srcs["lcms2"], build_dir, prefix, cross, penv)
 
     # libplacebo: OpenGL backend only; vulkan off (no glslang/shaderc
     # needed), xxhash from the vendored build above.  jinja2 comes from
@@ -431,19 +523,27 @@ def build_mpv(src, build_dir, prefix, cross, penv):
     # audiounit on; everything platform-foreign or doc/test off.  vulkan
     # disabled is legitimate — see module docstring.  gl-cocoa/cocoa and
     # coreaudio are macOS-only and must not be probed on iOS.
+    # uchardet/lcms2 are enabled to match the original's meson parameters
+    # (IOS-FINDINGS §3.1); both are built into the prefix above.
+    # Option names verified against mpv 0.41.0 meson.options: there is no
+    # plain `videotoolbox` (the GL interop feature is videotoolbox-gl),
+    # no plain `sdl2` (split into sdl2-audio/video/gamepad, all already
+    # default-disabled), and no `test` (only the `tests` boolean).
     wanted = {
-        "libmpv": True, "plain-gl": "enabled", "videotoolbox": "enabled",
-        "audiounit": "enabled",
+        "libmpv": True, "plain-gl": "enabled", "videotoolbox-gl": "enabled",
+        "audiounit": "enabled", "uchardet": "enabled", "lcms2": "enabled",
         "vulkan": "disabled", "gl-cocoa": "disabled", "cocoa": "disabled",
-        "coreaudio": "disabled", "sdl2": "disabled",
+        "coreaudio": "disabled",
+        "sdl2-audio": "disabled", "sdl2-video": "disabled",
+        "sdl2-gamepad": "disabled",
         "lua": "disabled", "javascript": "disabled",
-        "libbluray": "disabled", "uchardet": "disabled",
+        "libbluray": "disabled",
         "rubberband": "disabled", "vapoursynth": "disabled",
         "libarchive": "disabled", "dvdnav": "disabled", "cdda": "disabled",
         "x11": "disabled", "wayland": "disabled", "drm": "disabled",
         "gbm": "disabled", "egl": "disabled",
         "manpage-build": "disabled", "html-build": "disabled",
-        "pdf-build": "disabled", "tests": False, "test": False,
+        "pdf-build": "disabled", "tests": False,
     }
     meson_build(src, build_dir / "mpv", prefix, cross, penv, wanted, stage)
     stamp(build_dir, stage)
@@ -453,7 +553,8 @@ EXPECTED_LIBS = ["libmpv.a", "libavformat.a", "libavcodec.a",
                  "libavutil.a", "libavfilter.a", "libswscale.a",
                  "libswresample.a", "libplacebo.a", "libass.a",
                  "libdav1d.a", "libfreetype.a", "libharfbuzz.a",
-                 "libfribidi.a", "libxxhash.a"]
+                 "libfribidi.a", "libxxhash.a", "libuchardet.a",
+                 "liblcms2.a"]
 MPV_HEADERS = ["client.h", "render.h", "render_gl.h", "stream_cb.h"]
 
 def assemble_framework(platform, cache, env):
@@ -515,7 +616,7 @@ def assemble_framework(platform, cache, env):
         '<key>CFBundleIdentifier</key><string>local.avfan.Libmpv</string>\n'
         '<key>CFBundleName</key><string>Libmpv</string>\n'
         '<key>CFBundlePackageType</key><string>FMWK</string>\n'
-        '<key>CFBundleShortVersionString</key><string>0.42.0</string>\n'
+        '<key>CFBundleShortVersionString</key><string>0.41.0</string>\n'
         '<key>CFBundleVersion</key><string>59</string>\n'
         f'<key>MinimumOSVersion</key><string>{MIN_IOS}</string>\n'
         '</dict></plist>\n')

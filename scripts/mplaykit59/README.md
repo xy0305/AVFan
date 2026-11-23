@@ -28,7 +28,7 @@ python3 scripts/mplaykit59/build_libmpv.py <repo-root> [--platforms device,simul
 
 ```
 bootstrap: venv(.cache59/venv) 装 meson/ninja/jinja2 + 检查 pkg-config/xcrun/cmake
-fetch:     9 个 tarball → .cache59/downloads（逐个 sha256 校验）→ 解压 .cache59/src/
+fetch:     11 个 tarball → .cache59/downloads（逐个 sha256 校验）→ 解压 .cache59/src/
            │
            ├─ 每平台（device / simulator）依次构建到 .cache59/build/<platform>/prefix：
            │    1. xxhash      单文件编译 libxxhash.a + 手写 libxxhash.pc
@@ -38,11 +38,13 @@ fetch:     9 个 tarball → .cache59/downloads（逐个 sha256 校验）→ 解
            │    5. freetype#2  cmake 重建（-DFT_WITH_HARFBUZZ=ON）
            │    6. fribidi     meson（关 docs/tests）
            │    7. libass      meson（fontconfig/libunibreak 关；darwin 走 CoreText）
-           │    8. libplacebo  meson（vulkan=disabled、opengl=enabled、xxhash=enabled；
+           │    8. uchardet   cmake（静态；装 uchardet.pc 供 mpv 探测）
+           │    9. lcms2      meson（jpeg/tiff 关；装 lcms2.pc 供 mpv 探测）
+           │   10. libplacebo  meson（vulkan=disabled、opengl=enabled、xxhash=enabled；
            │                        lcms/dovi 关；代码生成需 venv 的 jinja2）
-           │    9. FFmpeg      configure 交叉编译（见下）
-           │   10. mpv         meson cross（-Dlibmpv=true、plain-gl、audiounit；
-           │                        其余开关全部防御式传参，见下）
+           │   11. FFmpeg      configure 交叉编译（见下）
+           │   12. mpv         meson cross（-Dlibmpv=true、plain-gl、audiounit、
+           │                        uchardet/lcms2=enabled；其余开关全部防御式传参，见下）
            ├─ 合并：prefix/lib 下全部 .a 用 libtool -static 合成单个二进制，
            │        组装 Libmpv.framework（二进制 + Headers + module.modulemap + Info.plist）
            └─ xcodebuild -create-xcframework → Vendor/Libmpv.xcframework（先删后建）
@@ -51,10 +53,13 @@ fetch:     9 个 tarball → .cache59/downloads（逐个 sha256 校验）→ 解
 **防御式传参**：meson 的 `-D` 传了不存在的选项会直接 configure 失败。
 脚本的 `meson_args()` 先 grep 解压后源码的 `meson.options` /
 `meson_options.txt`，只传项目真实声明的选项。mpv 需要关的：
-lua、javascript、libbluray、uchardet、rubberband、vapoursynth、
+lua、javascript、libbluray、rubberband、vapoursynth、
 libarchive、dvdnav、cdda、x11、wayland、drm、gbm、egl、gl-cocoa、
-cocoa、coreaudio、sdl2、文档类（manpage/html/pdf）、tests；
-需要开的：libmpv、plain-gl、audiounit（auto 亦可）、videotoolbox。
+cocoa、coreaudio、sdl2-audio/video/gamepad、文档类（manpage/html/pdf）、tests；
+需要开的：libmpv、plain-gl、audiounit、videotoolbox-gl、uchardet、lcms2。
+（选项名已按 mpv 0.41.0 的 meson.options 实测核对：不存在裸
+`videotoolbox` / `sdl2` / `test` 选项，旧脚本里的这三个键一直被
+防御式传参静默跳过，本轮已改真名。）
 
 **cross file**：`cross/*.meson.txt` 是模板（meson cross file 不能执行
 命令），`__SDK_PATH__` / `__CLANG__` 等占位符由驱动脚本运行时按
@@ -70,7 +75,7 @@ cocoa、coreaudio、sdl2、文档类（manpage/html/pdf）、tests；
 | 组件 | 版本 | 出处 |
 |---|---|---|
 | FFmpeg | 8.0.1 | ffmpeg.org 官方 release tarball |
-| mpv | 0.42.0 | mpv-player/mpv GitHub tag 归档 |
+| mpv | 0.41.0 | mpv-player/mpv GitHub tag 归档 |
 | libplacebo | 7.387.0 | code.videolan.org 归档 |
 | dav1d | 1.5.1 | downloads.videolan.org |
 | libass | 0.17.4 | libass/libass GitHub release |
@@ -78,21 +83,32 @@ cocoa、coreaudio、sdl2、文档类（manpage/html/pdf）、tests；
 | harfbuzz | 15.2.0 | harfbuzz/harfbuzz GitHub release |
 | fribidi | 1.0.16 | fribidi/fribidi GitHub release |
 | xxHash | 0.8.3 | Cyan4973/xxHash GitHub tag 归档 |
+| uchardet | 0.0.8 | freedesktop.org 官方 release |
+| lcms2 | 2.16 | mm2/Little-CMS GitHub release |
 
-关键约束：**mpv 0.42 的 meson.build 硬性要求 libplacebo >= 7.387.0**，
-低了直接报错——这是 libplacebo 钉在 7.387.0 的原因，不是随手选的最新版。
-mpv 0.42 对 libavformat/libavcodec 的下限很低，FFmpeg 8.0.1
-（Lavf 62.12 / Lavc 62.28）满足。
+关键约束：**mpv 钉 0.41.0 的依据是 iOS 原版二进制内的 `mpv v0.41.0`
+版本串直证**（IOS-FINDINGS §5；旧钉 0.42.0 来自无版本串的安卓画像）。
+mpv 0.41.0 的 meson.build 对 libplacebo 的下限是 >= 6.338.2
+（0.42 才抬到 >= 7.387.0）；meson 只设下限，故 libplacebo 7.387.0
+保留不动、仍满足。mpv 0.41 与 0.42 的选项集经逐项 diff 仅差
+0.42 新增的 amf/dvda/libcurl/subrandr 四项，我们传的开关无一被
+改名/改型/改默认值。mpv 对 libavformat/libavcodec 的下限很低，
+FFmpeg 8.0.1（Lavf 62.12 / Lavc 62.28）满足。
 
 ## 与逆向画像的对应关系
 
 对照 `~/workspace/p115-player-re/RE-REPORT.md` 第三节（Android 版
-SenPlayer / mplaykit 内嵌 `libFFmpegKit.so` 的 FFmpeg 构建画像）：
+SenPlayer / mplaykit 内嵌 `libFFmpegKit.so` 的 FFmpeg 构建画像），
+并叠加 `~/workspace/p115-player-re/IOS-FINDINGS.md` §3/§5 的 iOS 版
+画像（主二进制内嵌 mpv 版本串与 meson 构建参数原文，符号级证据）：
 
 | 画像项（Android 实测） | 本管线（iOS） | 说明 |
 |---|---|---|
-| FFmpeg 8.0 系列（Lavf 62.12 / Lavc 62.28） | FFmpeg 8.0.1 | 同系列对齐 |
-| libmpv 与 FFmpeg 静态融合 | libmpv 0.42 + 全部依赖合并为单个静态 framework 二进制 | 同形态 |
+| FFmpeg 8.0 系列（Lavf 62.12 / Lavc 62.28） | FFmpeg 8.0.1 | 同系列对齐；iOS 二进制的 Lavf/Lavc 版本串与安卓逐字一致（IOS-FINDINGS §5） |
+| libmpv 与 FFmpeg 静态融合 | libmpv 0.41.0 + 全部依赖合并为单个静态 framework 二进制 | 版本依据 iOS 二进制 `mpv v0.41.0` 直证；同形态 |
+| iOS 原版 meson 参数：`-Duchardet=enabled -Dlcms2=enabled`（原文直证） | uchardet 0.0.8 + lcms2 2.16 补构建进 prefix，mpv 侧两开关打开 | 本轮对齐项（IOS-FINDINGS §3.1/§3.3） |
+| iOS 原版 meson 参数：`-Dgl=disabled`（原文直证） | **差异（已申报）**：plain-gl 保持打开 | 我们的显示层走 render API + CAEAGLLayer，需要 GL；原版是自研像素帧 vo。显示管线重构是下一版的事，见 Build59-MPlayKit.md 偏差 9 |
+| iOS 原版 meson 参数：`-Dlibavdevice=enabled -Davfoundation=enabled` | **差异（已申报）**：不开 | 无设备/光盘输入源需求，暂不补，记录在案（IOS-FINDINGS §3.3） |
 | dav1d（AV1 软解，强证据） | dav1d 1.5.1，`--enable-libdav1d` | 对齐 |
 | libass 全家：libass + FriBidi 1.0.16 + HarfBuzz + FreeType | libass 0.17.4 + fribidi 1.0.16 + harfbuzz 15.2.0 + freetype 2.13.3，`--enable-libass` | 对齐；FriBidi 版本与画像横幅 `FriBidi 1.0.16` 严格一致 |
 | fontconfig 未链接（仅回退日志） | libass `-Dfontconfig=disabled`，darwin 走 CoreText | 对齐 |
@@ -100,7 +116,7 @@ SenPlayer / mplaykit 内嵌 `libFFmpegKit.so` 的 FFmpeg 构建画像）：
 | 滤镜 tonemap / scale / subtitles / format / fps / aresample（强证据） | 不裁剪滤镜集（只 `--disable-devices`），以上滤镜都在 FFmpeg 默认集内 | 对齐 |
 | OpenSSL（TLS） | **差异**：`--enable-securetransport`，用 iOS 系统 SecureTransport | 平台等价替换：iOS 不带 OpenSSL 系统库，SecureTransport 是 FFmpeg 在 darwin 上的原生 TLS 实现 |
 | MediaCodec 硬解 | **差异**：`--enable-videotoolbox` + VideoToolbox hwaccel 全开（h264/hevc/mpeg2/mpeg4/vp9/prores），另开 audiotoolbox | 平台等价替换：iOS 的硬件解码面就是 VideoToolbox |
-| libplacebo 0 命中（Android 构建未见） | **差异**：libplacebo 7.387.0 必带 | iOS 侧必需：mpv 0.42 的 gpu-next 依赖 libplacebo 且有 >= 7.387.0 的硬下限；Android 画像无字符串只能说明其构建未暴露/未带，不能推 iOS 侧可省 |
+| libplacebo 0 命中（Android 构建未见） | **差异**：libplacebo 7.387.0 必带 | iOS 侧必需：mpv 的 gpu-next 依赖 libplacebo；iOS 原版二进制亦编入 libplacebo（IOS-FINDINGS §5）。版本下限 mpv 0.41 只要求 >= 6.338.2，7.387.0 是满足下限的保留钉版 |
 | 渲染经 EGL/ANativeWindow、音频经 AudioTrack | 渲染走 plain-gl（宿主经 libmpv render API 提供 GLES 上下文）、音频走 audiounit | 平台等价替换；`-Dvulkan=disabled` 合法（mpv 的 vulkan 选项是 require libplacebo-vulkan 的条件项），libplacebo 相应只开 OpenGL 后端，免去 glslang/shaderc |
 
 ## 首跑最可能失败的三个点（排查方向）
@@ -123,10 +139,12 @@ SenPlayer / mplaykit 内嵌 `libFFmpegKit.so` 的 FFmpeg 构建画像）：
 
 3. **mpv 的 meson configure 选项/依赖收敛**
    症状候选：防御式传参已挡掉“未知选项”类失败，剩下的是依赖类——
-   libplacebo 版本下限（钉死版本已满足，若报错说明 pkg-config 读到了
-   系统里另一份 libplacebo）、plain-gl 未置 `features['gl']`（多半是
-   libplacebo 的 opengl 没开成，连带 mpv 侧 GL 探测失败）、或
-   videotoolbox 选项名在 0.42 与脚本开关表不一致（grep 解压后
-   `meson.options` 里 `videotoolbox` / `audiounit` 的实际拼写）。
+   libplacebo 版本下限（0.41 要求 >= 6.338.2，钉死版本已满足，若报错
+   说明 pkg-config 读到了系统里另一份 libplacebo）、uchardet/lcms2
+   的 .pc 是否真落进本平台 prefix（新 stage，首跑重点看）、plain-gl
+   未置 `features['gl']`（多半是 libplacebo 的 opengl 没开成，连带
+   mpv 侧 GL 探测失败）、或 videotoolbox-gl / audiounit 的实际拼写
+   与开关表不一致（grep 解压后 `meson.options` 核对）。
    排查顺序：先看 mpv 阶段日志里 `(skip -D...: not an option ...)` 的
-   打印——被跳过的关键开关（plain-gl / libmpv / audiounit）就是线索。
+   打印——被跳过的关键开关（plain-gl / libmpv / audiounit /
+   uchardet / lcms2）就是线索。
