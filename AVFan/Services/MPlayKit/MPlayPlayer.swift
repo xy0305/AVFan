@@ -7,7 +7,18 @@
 //  n9 暂停 / n14 状态 / n15 进度 / n16 异步 seek / n19 销毁 / n30 共享渲染
 //  上下文）。原版内核本身就是 libmpv + FFmpeg 的融合构建（报告三），属性
 //  词汇与 mpv 同构，所以这里直接以 mpv client API 落地；C 函数签名与事件
-//  结构体一律以 mpv 0.42 的 client.h 为准。
+//  结构体以 mpv 0.41 的头文件为准（管线钉版 0.41.0，依据 IOS-FINDINGS §5
+//  的原版版本串直证）。0.41 ↔ 0.42 头文件已逐项 diff 核对（client.h /
+//  render.h / render_gl.h / stream_cb.h）：本层用到的全部 MPV_* 常量在
+//  两版均存在且取值一致——mpv_end_file_reason（EOF=0/STOP=2/QUIT=3/
+//  ERROR=4/REDIRECT=5，含此前靠与 ERROR 对称推得的 MPV_END_FILE_REASON_
+//  EOF）、事件 id（END_FILE=7/SEEK=20/PLAYBACK_RESTART=21）、
+//  MPV_FORMAT_* 与 MPV_RENDER_PARAM_*（0.42 只在 render.h 尾部追加
+//  D3D11 的 21/22 两项，Windows 专用，无重编号）；差异仅
+//  MPV_CLIENT_API_VERSION 2.5（0.41）↔ 2.6（0.42）与 0.42 的
+//  node 命令命名参数改用 "_name" 键——本层不发 node 形态命令
+//  （mpv_node 只用于解析 demuxer-cache-state 属性值），不受影响。
+//  结论：降钉 0.41.0 后本层无需改代码。
 //
 //  线程模型（对应原版「每实例一个单线程 ExecutorService」，报告二.2）：
 //  每实例一条串行队列，事件处理与可变状态只在该队列上读写；属性同步读取
@@ -102,8 +113,12 @@ final class MPlayPlayer {
         //   hwdec：原版 Android 注入 mediacodec；iOS 对应 videotoolbox。
         //   hwdec-software-fallback：原版注入 yes，此处一致。
         // 其余为 libmpv render API 的必要形态：vo=libmpv 才能用
-        // mpv_render_context 出画面；keep-open/cache/demuxer 上限是播放器
-        // 侧的常规取值。入参 options 覆盖默认值。
+        // mpv_render_context 出画面；keep-open 是播放器侧的常规取值；
+        // cache 上限（demuxer-max-bytes / -back-bytes）是**我方取值**：
+        // 原版 iOS 是 CachePolicy 分段缓存模型（capacity / prefetchBytes /
+        // segmentBytes / segments），具体数值在二进制里不可恢复
+        // （IOS-FINDINGS §3.2/§6），这两个数字不得当作原版参数引用。
+        // 入参 options 覆盖默认值。
         var merged: [String: String] = [
             "vo": "libmpv",
             "hwdec": "videotoolbox",
@@ -419,10 +434,12 @@ final class MPlayPlayer {
 
     // MARK: - 预加载 / 关闭
 
-    /// n4 等价：派生一个预加载实例。偏差（与原版不同）：原版从同一 native
-    /// 媒体上下文派生；libmpv 没有跨实例共享媒体上下文的 API，这里只能
-    /// 用相同 options 新建实例、共享同一 renderContext（GL 上下文），
-    /// 起到预热解码/渲染栈的作用，媒体状态不共享。
+    /// n4 等价：派生一个预加载实例。偏差（与原版不同）：原版 iOS 的预加载
+    /// 是完整 Player 实例 + promotePreloadedPlayback 接管制（含 PiP 控制
+    /// 器在实例间转移，IOS-FINDINGS §2.5）；libmpv 没有跨实例共享媒体
+    /// 上下文的 API，这里只能用相同 options 新建实例、共享同一
+    /// renderContext（GL 上下文），起到预热解码/渲染栈的作用，媒体状态
+    /// 不共享、更无接管语义。偏差表第 13 条。
     func makePreloadedPlayer() throws -> MPlayPlayer {
         try MPlayPlayer(options: mergedOptions, sharedContext: renderContext)
     }

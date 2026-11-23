@@ -7,7 +7,7 @@
 //  自己的 GL 上下文 + 离屏 FBO，seek 到目标时刻渲染一帧后
 //  glReadPixels 读回 RGBA。原版 Still 的字段（宽/高/时刻/时长/
 //  旋转/Dolby 档/是否封面图/RGBA/元数据）逐项保留；dolbyProfile 在
-//  mpv 属性面没有对应物，恒为 nil（偏差表第 10 条）。
+//  mpv 属性面没有对应物，恒为 nil（偏差表「未复刻的原版面」条）。
 //
 //  线程模型：全部状态只在自己的串行队列上变更；still/cancel/close
 //  从任意线程调用都只是投递到队列。completion 在队列上回调，UI 侧
