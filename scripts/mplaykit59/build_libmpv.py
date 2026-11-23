@@ -882,7 +882,12 @@ MPV_HEADERS = ["client.h", "render.h", "render_gl.h", "stream_cb.h",
                "frame_output.h"]
 
 def assemble_framework(platform, cache, env):
-    stage = f"framework-{platform}"
+    # Stage name carries a -v2 suffix: the workflow cache restores the
+    # previous run's .cache59 via restore-keys, stamps included, and the
+    # v1 framework stage had already succeeded (with the flat header
+    # layout) in CI round 7 — under the old name this step would be
+    # stamp-skipped and the fixed header layout would never take effect.
+    stage = f"framework-{platform}-v2"
     build_dir = cache / "build" / platform
     if skip_if_stamped(build_dir, stage):
         return build_dir / "Libmpv.framework"
