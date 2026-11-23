@@ -882,12 +882,14 @@ MPV_HEADERS = ["client.h", "render.h", "render_gl.h", "stream_cb.h",
                "frame_output.h"]
 
 def assemble_framework(platform, cache, env):
-    # Stage name carries a -v2 suffix: the workflow cache restores the
-    # previous run's .cache59 via restore-keys, stamps included, and the
-    # v1 framework stage had already succeeded (with the flat header
-    # layout) in CI round 7 — under the old name this step would be
-    # stamp-skipped and the fixed header layout would never take effect.
-    stage = f"framework-{platform}-v2"
+    # Stage name carries a version suffix: the workflow cache restores
+    # the previous run's .cache59 via restore-keys, stamps included, so
+    # any assembly-logic change must bump the suffix or the new code is
+    # stamp-skipped and never takes effect.  v1 = flat header layout
+    # (round 7), v2 = Headers/mpv/ layout but angled umbrella includes
+    # (round 8), v3 = quoted umbrella includes + frame_output.h taken
+    # from the patched source tree.
+    stage = f"framework-{platform}-v3"
     build_dir = cache / "build" / platform
     if skip_if_stamped(build_dir, stage):
         return build_dir / "Libmpv.framework"
@@ -910,21 +912,36 @@ def assemble_framework(platform, cache, env):
     run(["xcrun", "--sdk", sdk_name, "libtool", "-static", "-o",
          fw / "Libmpv", *libs], stage, env=env)
     # Headers: the full include/mpv set installed by mpv's meson install.
-    # Keep the upstream mpv/ directory level under Headers/: the umbrella
-    # header below references <mpv/client.h> etc., which only resolves if
-    # the headers live in Headers/mpv/ (CI round 7 died at the app build
-    # with "Libmpv.h:3:10: fatal error: 'mpv/client.h' file not found"
-    # when they were copied flat into Headers/).  mpv's own cross-
-    # includes are quoted same-dir includes ("client.h" in render.h /
-    # stream_cb.h), so they keep resolving with the whole set kept
-    # together in that subdirectory.
+    # Keep the upstream mpv/ directory level under Headers/, and have the
+    # umbrella header reference the set with quoted includes
+    # ("mpv/client.h"): in a framework module build the angled form
+    # <mpv/client.h> is a framework-style lookup that never descends
+    # into Headers/mpv/ (CI round 8: "'mpv/client.h' file not found with
+    # <angled> include; use \"quotes\" instead" — the file was already
+    # in place), while the quoted form resolves relative to the umbrella
+    # header's own directory.  Round 7's flat Headers/*.h layout failed
+    # both forms.  mpv's own cross-includes are quoted same-dir includes
+    # ("client.h" in render.h / stream_cb.h), so they keep resolving
+    # with the whole set kept together in that subdirectory.
     mpv_inc = prefix / "include" / "mpv"
     assert mpv_inc.is_dir(), f"{platform}: {mpv_inc} missing (mpv install?)"
     mpv_hdr_dir = fw / "Headers" / "mpv"
     mpv_hdr_dir.mkdir(parents=True)
     for h in mpv_inc.glob("*.h"):
         shutil.copy(h, mpv_hdr_dir / h.name)
-    inc_lines = [f"#include <mpv/{n}>" for n in MPV_HEADERS
+    # frame_output.h is added to the mpv tree by our patch, but mpv's
+    # meson install_headers list does not name it, so it never lands in
+    # the prefix; the Swift display pipeline binds its types/functions
+    # directly, so take it from the patched source tree.
+    if not (mpv_hdr_dir / "frame_output.h").exists():
+        mpv_ver = next(v for n, v, *_ in COMPONENTS if n == "mpv")
+        src_hdr = (cache / "src" / f"mpv-{mpv_ver}" / "include" / "mpv"
+                   / "frame_output.h")
+        assert src_hdr.is_file(), (
+            f"{platform}: frame_output.h neither installed nor "
+            f"present at {src_hdr}")
+        shutil.copy(src_hdr, mpv_hdr_dir / "frame_output.h")
+    inc_lines = [f'#include "mpv/{n}"' for n in MPV_HEADERS
                  if (mpv_hdr_dir / n).exists()]
     assert inc_lines, f"{platform}: no known mpv headers in {mpv_inc}"
     (fw / "Headers" / "Libmpv.h").write_text(
