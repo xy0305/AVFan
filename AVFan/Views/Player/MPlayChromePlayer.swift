@@ -57,6 +57,8 @@ struct MPlayChromePlayer: View {
     @State private var playbackActive = false
     @State private var isPlaying = false
     @State private var isBuffering = true
+    @State private var pipPossible = false
+    @State private var pipActive = false
     @State private var hasStarted = false
     @State private var showChrome = true
     @State private var hideTask: Task<Void, Never>?
@@ -522,6 +524,24 @@ struct MPlayChromePlayer: View {
                 }.buttonStyle(.plain)
                     .fixedSize().layoutPriority(2).zIndex(20)
                     .accessibilityLabel("在线字幕").accessibilityIdentifier("player.subtitle.settings")
+
+                // Stage B: PiP entry, restored at the top-bar position
+                // the KSPlayer-era player exposed PiP from. Shown only
+                // when the system reports PiP possible for the current
+                // display layer.
+                if pipPossible || pipActive {
+                    Button {
+                        engine.pictureInPictureController?.toggle()
+                    } label: {
+                        Image(systemName: pipActive ? "pip.exit" : "pip.enter")
+                            .font(.system(size: 20, weight: .regular))
+                            .foregroundStyle(.white).frame(width: 48, height: 48)
+                            .shadow(color: .black.opacity(0.35), radius: 1, y: 0.5)
+                            .contentShape(Rectangle())
+                    }.buttonStyle(.plain)
+                        .fixedSize().layoutPriority(2).zIndex(20)
+                        .accessibilityLabel("画中画").accessibilityIdentifier("player.pip.toggle")
+                }
                 Spacer(minLength: 8).frame(maxWidth: 16) // keep the three icons grouped at the right
 
                 Menu {
@@ -853,6 +873,9 @@ struct MPlayChromePlayer: View {
         isPlaying = engine.isPlaying
         isBuffering = engine.phase == .preparing || engine.phase == .buffering
         if engine.phase == .ready || engine.phase == .buffering { hasStarted = true }
+        let pip = engine.pictureInPictureController
+        pipPossible = pip?.isPossible ?? false
+        pipActive = pip?.isPictureInPictureActive ?? false
     }
 
     /// Build 280: 番号+来源 position first, then the legacy per-item PlaybackProgressStore (115 / 糖心).

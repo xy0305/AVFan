@@ -33,6 +33,12 @@ final class MPlayChromeCoordinator: ObservableObject {
     private(set) var loadGeneration = 0
     private(set) var currentURL: URL?
 
+    /// Stage B: the attached view's PiP controller, filled in by
+    /// AudioOwnedMPlayVideoView (weak — the view owns it).  Chrome's
+    /// PiP button goes through this slot, mirroring how the
+    /// KSPlayer-era chrome reached the layer's pipController.
+    weak var pictureInPictureController: MPlayPictureInPictureController?
+
     // Polled snapshot, refreshed by poll().
     private(set) var phase: Phase = .idle
     private(set) var isPlaying = false
@@ -109,7 +115,8 @@ final class MPlayChromeCoordinator: ObservableObject {
     }
 
     /// Terminal teardown: close the core and forget it. The video view must
-    /// detach BEFORE this is called (render context frees before core destroy).
+    /// detach BEFORE this is called (the frame sink unregisters before
+    /// the core is destroyed).
     func reset() {
         player?.close()
         player = nil

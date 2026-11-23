@@ -49,6 +49,9 @@ final class MPlayVideoView: UIView {
     let subtitleLayerController = MPlaySubtitleLayerController()
     private(set) var scheduler: MPlayFrameOutputScheduler!
 
+    /// Stage B: PiP controller bound to (player, view) on attach.
+    let pictureInPictureController = MPlayPictureInPictureController()
+
     private var sink: MPlayFrameSink?
     private weak var attachedPlayer: MPlayPlayer?
     private var lastSyncedRate: Double = -1
@@ -111,12 +114,18 @@ final class MPlayVideoView: UIView {
         player.setSubtitleRenderSize(
             width: Int(bounds.width), height: Int(bounds.height)
         )
+        pictureInPictureController.bind(player: player, videoView: self)
     }
 
     /// Unbind: unregister the sink FIRST (the vo must stop calling
     /// into this view), then flush pending frames.  The player core
     /// itself is closed by the owner after detach, as before.
+    /// PiP: the dismantle path defers detach() until PiP has stopped,
+    /// so an active PiP is never torn down from here in the normal
+    /// flow; if detach is called while PiP is active anyway (player
+    /// switch), unbind stops PiP first.
     func detach() {
+        pictureInPictureController.unbind()
         sink?.unregister()
         sink = nil
         scheduler.flush()

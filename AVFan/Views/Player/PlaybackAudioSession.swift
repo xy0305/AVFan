@@ -107,6 +107,7 @@ struct AudioOwnedMPlayVideoView: UIViewRepresentable {
         engine.open(url: url, headers: headers)
         context.coordinator.openedURL = url
         if let player = engine.player { view.attach(player: player) }
+        engine.pictureInPictureController = view.pictureInPictureController
         installStopCommand(context: context)
         return view
     }
@@ -129,18 +130,26 @@ struct AudioOwnedMPlayVideoView: UIViewRepresentable {
             engine.open(url: url, headers: headers)
             context.coordinator.openedURL = url
             if let player = engine.player { view.attach(player: player) }
+            engine.pictureInPictureController = view.pictureInPictureController
             installStopCommand(context: context)
         }
     }
     static func dismantleUIView(_ view: MPlayVideoView, coordinator: Coordinator) {
-        // Build 59 deviation: PiP is not implemented in this build, so
-        // there is no PiP wait here (the KSPlayer-era dismantle deferred
-        // teardown while PiP was active). The original's PiP route is
-        // known (pixel-frame pipeline + AVSampleBufferDisplayLayer,
-        // IOS-FINDINGS §1) and is next build's first item; teardown here
-        // stays immediate: stop callback, detach the render
-        // surface BEFORE closing the core, then release audio ownership.
+        // Stage B: PiP is implemented (pixel-frame pipeline +
+        // AVSampleBufferDisplayLayer, IOS-FINDINGS §1), so the
+        // KSPlayer-era rule is restored: retain the detached view
+        // until PiP actually ends, then tear down in order — stop
+        // callback, detach the frame surface BEFORE closing the
+        // core, release audio ownership. A mere background transition
+        // or temporary covering presentation does not dismantle this
+        // view, so this only runs on real removal.
         Task { @MainActor in
+            while view.pictureInPictureController.isPictureInPictureActive {
+                try? await Task.sleep(nanoseconds: 250_000_000)
+            }
+            if coordinator.engine.pictureInPictureController === view.pictureInPictureController {
+                coordinator.engine.pictureInPictureController = nil
+            }
             coordinator.onStop()
             view.detach()
             coordinator.engine.reset()
