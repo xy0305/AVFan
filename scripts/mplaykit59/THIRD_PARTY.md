@@ -42,3 +42,26 @@ Notes:
 - Because mpv is GPL, the combined `Libmpv.xcframework` is
   distributed under GPL terms, consistent with the app's existing
   KSPlayer core (`THIRD_PARTY/KSPlayer-GPL-3.0.txt` in this repo).
+
+## Spatial audio components (Build 59 full restoration, stage D)
+
+Fetched and built by `build_spatial.py` at the exact commits the
+original's `FFmpegKit.bundle/NOTICE.md` pins (IOS-FINDINGS §2.4/§4);
+provenance for the vendored headers is in
+`AVFan/Services/MPlayKit/Spatial/UPSTREAM.md`. These are NOT part
+of Libmpv.xcframework: LibTrueHD ships as `Vendor/TrueHD.xcframework`
+(static library, linked only), LibDTSX as `Vendor/DTSX.xcframework`
+(dynamic framework, linked and embedded — its upstream build
+deliberately ships dynamic-only for LGPL §6 replaceability).
+
+| Component | Pinned commit | Source | License |
+|---|---|---|---|
+| LibTrueHD | `3eab2e7c10ff1b3c2078afbab138471f2511859b` | https://github.com/superuser404notfound/LibTrueHD | wrapper MIT; upstream truehd decoder Apache-2.0 |
+| LibDTSX | `6f0b321e560ea6911db3d1c797ada1ac08293320` | https://github.com/superuser404notfound/LibDTSX | wrapper Apache-2.0; contains an FFmpeg-LGPL-2.1-or-later-derived dca decoder, so the built library distributes under LGPL-3.0-or-later |
+| AetherEngine | `fc6b412e7abdd19488fc439e225b83ab512b5d50` | https://github.com/superuser404notfound/AetherEngine | LGPL-3.0 + App Store exception. **Reference only**: AVFan does not link this package (its dependency graph — a prebuilt FFmpeg, an SMB client — is not taken on); its renderer/APAC/HLS/activator roles are implemented in our own Swift (`MPlaySpatialRender.swift`), and only its `Scripts/make-silent-atmos.swift` is executed by the CI stage to generate the silent Atmos sample |
+
+LGPL note (mirrors the original NOTICE's own warning): static
+distribution of LGPL components requires corresponding source and
+relink means; license texts alone do not satisfy it. This is a
+personal-sideload build; the pinned sources above are the
+corresponding source.

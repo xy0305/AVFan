@@ -61,6 +61,12 @@
 		AF11000000000000000000CA /* MPlayPostChain.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF11000000000000000000C9 /* MPlayPostChain.swift */; };
 		AF11000000000000000000CC /* MPlayPostChain.metal in Sources */ = {isa = PBXBuildFile; fileRef = AF11000000000000000000CB /* MPlayPostChain.metal */; };
 		AF11000000000000000000CE /* MPlayCachePolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF11000000000000000000CD /* MPlayCachePolicy.swift */; };
+		AF11000000000000000000D1 /* MPlaySpatial.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF11000000000000000000D0 /* MPlaySpatial.swift */; };
+		AF11000000000000000000D3 /* MPlaySpatialRender.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF11000000000000000000D2 /* MPlaySpatialRender.swift */; };
+		AF11000000000000000000D6 /* MPlaySpatialBridge.c in Sources */ = {isa = PBXBuildFile; fileRef = AF11000000000000000000D5 /* MPlaySpatialBridge.c */; };
+		AF11000000000000000000DC /* TrueHD.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = AF11000000000000000000DB /* TrueHD.xcframework */; };
+		AF11000000000000000000DE /* DTSX.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = AF11000000000000000000DD /* DTSX.xcframework */; };
+		AF11000000000000000000DF /* DTSX.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = AF11000000000000000000DD /* DTSX.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		AF11000000000000000000A8 /* MPlayEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF11000000000000000000A7 /* MPlayEngine.swift */; };
 		AF11000000000000000000AA /* Libmpv.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = AF11000000000000000000A9 /* Libmpv.xcframework */; };
 		AF11000000000000000000AB /* Libmpv.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = AF11000000000000000000A9 /* Libmpv.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
@@ -163,6 +169,16 @@
 		AF11000000000000000000CD /* MPlayCachePolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MPlayCachePolicy.swift; sourceTree = "<group>"; };
 		AF11000000000000000000A7 /* MPlayEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MPlayEngine.swift; sourceTree = "<group>"; };
 		AF11000000000000000000A9 /* Libmpv.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = Libmpv.xcframework; path = Vendor/Libmpv.xcframework; sourceTree = SOURCE_ROOT; };
+		AF11000000000000000000D0 /* MPlaySpatial.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MPlaySpatial.swift; sourceTree = "<group>"; };
+		AF11000000000000000000D2 /* MPlaySpatialRender.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MPlaySpatialRender.swift; sourceTree = "<group>"; };
+		AF11000000000000000000D4 /* MPlaySpatialBridge.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = MPlaySpatialBridge.h; sourceTree = "<group>"; };
+		AF11000000000000000000D5 /* MPlaySpatialBridge.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = MPlaySpatialBridge.c; sourceTree = "<group>"; };
+		AF11000000000000000000D7 /* truehd_atmos.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = truehd_atmos.h; sourceTree = "<group>"; };
+		AF11000000000000000000D8 /* dtsx.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = dtsx.h; sourceTree = "<group>"; };
+		AF11000000000000000000D9 /* UPSTREAM.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = UPSTREAM.md; sourceTree = "<group>"; };
+		AF11000000000000000000DA /* AVFan-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "AVFan-Bridging-Header.h"; sourceTree = "<group>"; };
+		AF11000000000000000000DB /* TrueHD.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = TrueHD.xcframework; path = Vendor/TrueHD.xcframework; sourceTree = SOURCE_ROOT; };
+		AF11000000000000000000DD /* DTSX.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = DTSX.xcframework; path = Vendor/DTSX.xcframework; sourceTree = SOURCE_ROOT; };
 		AF11000000000000000000AD /* AudioToolbox.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AudioToolbox.framework; path = System/Library/Frameworks/AudioToolbox.framework; sourceTree = SDKROOT; };
 		AF11000000000000000000AF /* CoreMedia.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreMedia.framework; path = System/Library/Frameworks/CoreMedia.framework; sourceTree = SDKROOT; };
 		AF11000000000000000000B1 /* CoreVideo.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreVideo.framework; path = System/Library/Frameworks/CoreVideo.framework; sourceTree = SDKROOT; };
@@ -214,6 +230,8 @@
 				72965330C15B4157804EF71C /* Security.framework in Frameworks */,
 				AF1100000000000000000024 /* MediaPlayer.framework in Frameworks */,
 				AF11000000000000000000AA /* Libmpv.xcframework in Frameworks */,
+				AF11000000000000000000DC /* TrueHD.xcframework in Frameworks */,
+				AF11000000000000000000DE /* DTSX.xcframework in Frameworks */,
 				AF11000000000000000000AE /* AudioToolbox.framework in Frameworks */,
 				AF11000000000000000000B0 /* CoreMedia.framework in Frameworks */,
 				AF11000000000000000000B2 /* CoreVideo.framework in Frameworks */,
@@ -238,6 +256,7 @@
 			dstSubfolderSpec = 10;
 			files = (
 				AF11000000000000000000AB /* Libmpv.xcframework in Embed Frameworks */,
+				AF11000000000000000000DF /* DTSX.xcframework in Embed Frameworks */,
 			);
 			name = "Embed Frameworks";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -259,6 +278,7 @@
 			isa = PBXGroup;
 			children = (
 				2A2373FD51A849AFB372FF43 /* AVFanApp.swift */,
+				AF11000000000000000000DA /* AVFan-Bridging-Header.h */,
 				AF110000000000000000001F /* Theme */,
 				6A4E2BF45AF043768E3B1E5E /* Models */,
 				59EDC5FD40B04ACCA8AAB863 /* Parsing */,
@@ -375,6 +395,8 @@
 				A1C94BD1F2F447B89003D2A2 /* Security.framework */,
 				AF1100000000000000000025 /* MediaPlayer.framework */,
 				AF11000000000000000000A9 /* Libmpv.xcframework */,
+				AF11000000000000000000DB /* TrueHD.xcframework */,
+				AF11000000000000000000DD /* DTSX.xcframework */,
 				AF11000000000000000000AD /* AudioToolbox.framework */,
 				AF11000000000000000000AF /* CoreMedia.framework */,
 				AF11000000000000000000B1 /* CoreVideo.framework */,
@@ -407,8 +429,23 @@
 				AF11000000000000000000C9 /* MPlayPostChain.swift */,
 				AF11000000000000000000CB /* MPlayPostChain.metal */,
 				AF11000000000000000000CD /* MPlayCachePolicy.swift */,
+				AF11000000000000000000D0 /* MPlaySpatial.swift */,
+				AF11000000000000000000D2 /* MPlaySpatialRender.swift */,
+				AF11000000000000000000CF /* Spatial */,
 			);
 			path = MPlayKit;
+			sourceTree = "<group>";
+		};
+		AF11000000000000000000CF /* Spatial */ = {
+			isa = PBXGroup;
+			children = (
+				AF11000000000000000000D4 /* MPlaySpatialBridge.h */,
+				AF11000000000000000000D5 /* MPlaySpatialBridge.c */,
+				AF11000000000000000000D7 /* truehd_atmos.h */,
+				AF11000000000000000000D8 /* dtsx.h */,
+				AF11000000000000000000D9 /* UPSTREAM.md */,
+			);
+			path = Spatial;
 			sourceTree = "<group>";
 		};
 		AF110000000000000000001F /* Theme */ = {
@@ -558,6 +595,9 @@
 				AF11000000000000000000CA /* MPlayPostChain.swift in Sources */,
 				AF11000000000000000000CC /* MPlayPostChain.metal in Sources */,
 				AF11000000000000000000CE /* MPlayCachePolicy.swift in Sources */,
+				AF11000000000000000000D1 /* MPlaySpatial.swift in Sources */,
+				AF11000000000000000000D3 /* MPlaySpatialRender.swift in Sources */,
+				AF11000000000000000000D6 /* MPlaySpatialBridge.c in Sources */,
 				AF11000000000000000000A8 /* MPlayEngine.swift in Sources */,
 				AF1100000000000000000040 /* JRHTML.swift in Sources */,
 				AF1100000000000000000042 /* OnlineFailure.swift in Sources */,
@@ -655,6 +695,7 @@
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "AVFan/AVFan-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -684,6 +725,7 @@
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "AVFan/AVFan-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};

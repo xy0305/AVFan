@@ -70,6 +70,26 @@ jobs:
       - name: Assert Libmpv.xcframework exists
         run: test -d Vendor/Libmpv.xcframework
 
+      - name: Cache spatial decoder xcframeworks
+        id: spatial-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            Vendor/TrueHD.xcframework
+            Vendor/DTSX.xcframework
+          key: spatial-59-v1-${{ runner.os }}-${{ hashFiles('scripts/mplaykit59/build_spatial.py') }}
+          restore-keys: |
+            spatial-59-v1-${{ runner.os }}-
+
+      - name: Build spatial decoder xcframeworks (pinned sources, stage D)
+        if: steps.spatial-cache.outputs.cache-hit != 'true'
+        run: python3 scripts/mplaykit59/build_spatial.py "$GITHUB_WORKSPACE"
+
+      - name: Assert spatial xcframeworks exist
+        run: |
+          test -d Vendor/TrueHD.xcframework
+          test -d Vendor/DTSX.xcframework
+
       - name: Resolve Swift packages
         run: |
           xcodebuild -project AVFan.xcodeproj -scheme AVFan -resolvePackageDependencies
