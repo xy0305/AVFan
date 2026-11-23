@@ -380,6 +380,76 @@ final class MPlayPlayer {
         }
     }
 
+    // MARK: - 属性访问面（原版 intProperty / doubleProperty / stringProperty）
+
+    /// 原版 Player.intProperty 的等价物（IOS-FINDINGS §2.3：安卓
+    /// n8 的正式对应 API）。读不到返回 nil。
+    func intProperty(_ name: String) -> Int64? {
+        onPlayerQueue { getInt64(name) }
+    }
+
+    func doubleProperty(_ name: String) -> Double? {
+        onPlayerQueue { getDouble(name) }
+    }
+
+    func stringProperty(_ name: String) -> String? {
+        onPlayerQueue { getString(name) }
+    }
+
+    /// 原版 Player.cacheRanges() 的等价物。
+    func cacheRanges() -> [MPlayCacheRange] {
+        progress().cacheRanges
+    }
+
+    // MARK: - Dolby Vision（全量还原：DV 并入阶段 C）
+
+    /// 当前选中视频轨的 DV profile / level：读 mpv 0.41 的
+    /// track-list/N/dolby-vision-profile 与 -level（player/command.c
+    /// 直证存在；非 DV 轨该子属性 unavailable、读不到）。非 DV 或
+    /// 未加载时返回 nil。
+    func dolbyVisionProfile() -> (profile: Int, level: Int)? {
+        onPlayerQueue { () -> (profile: Int, level: Int)? in
+            let count = Int(getInt64("track-list/count") ?? 0)
+            for index in 0..<count {
+                let prefix = "track-list/\(index)/"
+                guard getString(prefix + "type") == "video",
+                      getFlag(prefix + "selected") == true,
+                      let profile = getInt64(prefix + "dolby-vision-profile")
+                else { continue }
+                return (Int(profile), Int(getInt64(prefix + "dolby-vision-level") ?? 0))
+            }
+            return nil
+        }
+    }
+
+    private let felLock = NSLock()
+    private var felHWDecRequested = false
+
+    /// CoreCustom `dovi-fel-hwdec` 标记位的等价物：请求 FEL 走硬解
+    /// 路径。落地形态是播放器级标记 + 把 hwdec 钉在 videotoolbox
+    /// （FEL 码流若掉到软解，双层合成在原版亦不可行）；双层合成本
+    /// 身依赖原版 fork 的 demux/dovi_split，stock mpv 无此能力，
+    /// 见 MPlayDolbyVision.swift 头部与 Build59 文档。
+    func setDolbyVisionFELHardwareDecode(_ enabled: Bool) {
+        felLock.lock()
+        felHWDecRequested = enabled
+        felLock.unlock()
+        if enabled {
+            setProp("hwdec", "videotoolbox")
+        }
+        MPlayDiagnostics.log("dovi-fel-hwdec \(enabled ? "requested" : "cleared")")
+    }
+
+    /// 当前流的 DV 状态快照（profile/level/FEL 推断/标记位）。
+    var dolbyVisionState: MPlayDolbyVisionState {
+        let dv = dolbyVisionProfile()
+        felLock.lock()
+        let fel = felHWDecRequested
+        felLock.unlock()
+        return MPlayDolbyVisionState(profile: dv?.profile, level: dv?.level,
+                                     felHardwareDecodeRequested: fel)
+    }
+
     /// phase 是 iOS 侧推导规则（原版 phase 的确切值域未被 RE 定名）：
     /// closed → 已关闭；有失败记录且文件还没加载出来 → failed；
     /// 未 FILE_LOADED → preparing；eof-reached → ended；

@@ -246,3 +246,96 @@ kernel void pkInterpKernel0(
     float y = mix(plain, warped, mv.b);
     destY.write(float4(y, 0.0, 0.0, 1.0), gid);
 }
+
+// MARK: - Dolby Vision Profile 5 correction (frame-after, planar YUV domain)
+//
+// Profile 5 frames are encoded in IPT (ICtCp-family) colour with a
+// PQ transfer, in a YUV-looking biplanar container.  Played back
+// as plain YUV they show the characteristic wrong colours; the
+// correction (the original's DolbyP5ColorCorrection, IOS-FINDINGS
+// §3.2) decodes IPT -> BT.2020 RGB in the PQ domain with a fixed
+// matrix, runs the PQ EOTF, and the result is a normal HDR signal.
+// This kernel performs that correction and re-encodes as BT.2020
+// YUV PQ in the same buffer format, so downstream (the display
+// layer, the HDR path) sees a standard HDR10-family signal.  The
+// matrix comes from DolbyP5ColorCorrection.Map.profile5 (public
+// BT.2124 constants, combined on the CPU side) — the original's
+// baked constants were not extracted, so numeric identity with
+// the original is not claimed (see MPlayDolbyVision.swift).
+
+struct DoviP5Params {
+    float4x4 iptToRGB;   // combined IPT -> BT.2020 RGB (PQ domain)
+    uint isP010;
+    uint isFullRange;
+    uint width;
+    uint height;
+};
+
+static float pqEOTFMetal(float n) {
+    float m1 = 0.1593017578125;
+    float m2 = 78.84375;
+    float c1 = 0.8359375;
+    float c2 = 18.8515625;
+    float c3 = 18.6875;
+    float np = pow(clamp(n, 0.0, 1.0), 1.0 / m2);
+    return pow(max(np - c1, 0.0) / (c2 - c3 * np), 1.0 / m1);
+}
+
+static float pqOETFMetal(float l) {
+    float m1 = 0.1593017578125;
+    float m2 = 78.84375;
+    float c1 = 0.8359375;
+    float c2 = 18.8515625;
+    float c3 = 18.6875;
+    float ym1 = pow(clamp(l, 0.0, 1.0), m1);
+    return pow((c1 + c2 * ym1) / (1.0 + c3 * ym1), m2);
+}
+
+kernel void pkDoviP5Kernel0(
+    texture2d<float, access::read>  sourceY  [[texture(0)]],
+    texture2d<float, access::read>  sourceUV [[texture(1)]],
+    texture2d<float, access::write> destY    [[texture(2)]],
+    texture2d<float, access::write> destUV   [[texture(3)]],
+    constant DoviP5Params &params            [[buffer(0)]],
+    uint2 gid [[thread_position_in_grid]])
+{
+    if (gid.x >= params.width || gid.y >= params.height) { return; }
+    float y = sourceY.read(gid).r;
+    float2 uv = sourceUV.read(uint2(gid.x / 2, gid.y / 2)).rg;
+
+    // Expand to the signal domain (same 255-normalised convention
+    // as pkSDRToHDRKernel0; P010 textures read normalised, so the
+    // constants are an approximation at 10-bit, as there).
+    float iSig, pSig, tSig;
+    if (params.isFullRange != 0) {
+        iSig = y;
+        pSig = uv.x - 0.5;
+        tSig = uv.y - 0.5;
+    } else {
+        iSig = (y - 16.0 / 255.0) * (255.0 / 219.0);
+        pSig = (uv.x - 0.5) * (255.0 / 224.0);
+        tSig = (uv.y - 0.5) * (255.0 / 224.0);
+    }
+
+    // IPT -> BT.2020 RGB in the PQ domain, then PQ EOTF to linear.
+    float3 rgbPQ = (params.iptToRGB * float4(iSig, pSig, tSig, 1.0)).rgb;
+    float3 linear = float3(pqEOTFMetal(rgbPQ.r), pqEOTFMetal(rgbPQ.g), pqEOTFMetal(rgbPQ.b));
+
+    // Re-encode as BT.2020 YUV with PQ OETF.
+    float3 pq = float3(pqOETFMetal(linear.r), pqOETFMetal(linear.g), pqOETFMetal(linear.b));
+    float outY = dot(pq, float3(0.2627, 0.6780, 0.0593));
+    float outU = (pq.b - outY) / 1.8814;
+    float outV = (pq.r - outY) / 1.4746;
+    if (params.isFullRange == 0) {
+        outY = outY * (219.0 / 255.0) + (16.0 / 255.0);
+        outU = outU * (224.0 / 255.0) + 0.5;
+        outV = outV * (224.0 / 255.0) + 0.5;
+    } else {
+        outU += 0.5;
+        outV += 0.5;
+    }
+    destY.write(float4(outY, 0.0, 0.0, 1.0), gid);
+    if ((gid.x % 2) == 0 && (gid.y % 2) == 0) {
+        destUV.write(float4(outU, outV, 0.0, 1.0), uint2(gid.x / 2, gid.y / 2));
+    }
+}

@@ -188,6 +188,9 @@ final class MPlayVideoView: UIView {
             scheduler.syncPlaybackTime(position: frame.ptsSeconds, rate: rate)
             lastSyncedRate = rate
             lastSyncHostTime = now
+            // Keep the post chain's DV profile current (drives the
+            // Profile 5 correction pass; changes only per file).
+            MPlayPostChain.shared.dolbyProfile = player.dolbyVisionProfile()?.profile ?? 0
         }
     }
 

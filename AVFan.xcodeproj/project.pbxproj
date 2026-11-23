@@ -61,6 +61,7 @@
 		AF11000000000000000000CA /* MPlayPostChain.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF11000000000000000000C9 /* MPlayPostChain.swift */; };
 		AF11000000000000000000CC /* MPlayPostChain.metal in Sources */ = {isa = PBXBuildFile; fileRef = AF11000000000000000000CB /* MPlayPostChain.metal */; };
 		AF11000000000000000000CE /* MPlayCachePolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF11000000000000000000CD /* MPlayCachePolicy.swift */; };
+		AF11000000000000000000E1 /* MPlayDolbyVision.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF11000000000000000000E0 /* MPlayDolbyVision.swift */; };
 		AF11000000000000000000D1 /* MPlaySpatial.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF11000000000000000000D0 /* MPlaySpatial.swift */; };
 		AF11000000000000000000D3 /* MPlaySpatialRender.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF11000000000000000000D2 /* MPlaySpatialRender.swift */; };
 		AF11000000000000000000D6 /* MPlaySpatialBridge.c in Sources */ = {isa = PBXBuildFile; fileRef = AF11000000000000000000D5 /* MPlaySpatialBridge.c */; };
@@ -179,6 +180,7 @@
 		AF11000000000000000000DA /* AVFan-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "AVFan-Bridging-Header.h"; sourceTree = "<group>"; };
 		AF11000000000000000000DB /* TrueHD.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = TrueHD.xcframework; path = Vendor/TrueHD.xcframework; sourceTree = SOURCE_ROOT; };
 		AF11000000000000000000DD /* DTSX.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = DTSX.xcframework; path = Vendor/DTSX.xcframework; sourceTree = SOURCE_ROOT; };
+		AF11000000000000000000E0 /* MPlayDolbyVision.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MPlayDolbyVision.swift; sourceTree = "<group>"; };
 		AF11000000000000000000AD /* AudioToolbox.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AudioToolbox.framework; path = System/Library/Frameworks/AudioToolbox.framework; sourceTree = SDKROOT; };
 		AF11000000000000000000AF /* CoreMedia.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreMedia.framework; path = System/Library/Frameworks/CoreMedia.framework; sourceTree = SDKROOT; };
 		AF11000000000000000000B1 /* CoreVideo.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreVideo.framework; path = System/Library/Frameworks/CoreVideo.framework; sourceTree = SDKROOT; };
@@ -431,6 +433,7 @@
 				AF11000000000000000000CD /* MPlayCachePolicy.swift */,
 				AF11000000000000000000D0 /* MPlaySpatial.swift */,
 				AF11000000000000000000D2 /* MPlaySpatialRender.swift */,
+				AF11000000000000000000E0 /* MPlayDolbyVision.swift */,
 				AF11000000000000000000CF /* Spatial */,
 			);
 			path = MPlayKit;
@@ -598,6 +601,7 @@
 				AF11000000000000000000D1 /* MPlaySpatial.swift in Sources */,
 				AF11000000000000000000D3 /* MPlaySpatialRender.swift in Sources */,
 				AF11000000000000000000D6 /* MPlaySpatialBridge.c in Sources */,
+				AF11000000000000000000E1 /* MPlayDolbyVision.swift in Sources */,
 				AF11000000000000000000A8 /* MPlayEngine.swift in Sources */,
 				AF1100000000000000000040 /* JRHTML.swift in Sources */,
 				AF1100000000000000000042 /* OnlineFailure.swift in Sources */,

@@ -70,6 +70,7 @@ final class MPlayPostChain {
         static let hdrVivid = "avfan.mplaykit.post.hdrVivid"
         static let upscaling = "avfan.mplaykit.post.upscaling"
         static let interpolation = "avfan.mplaykit.post.interpolation"
+        static let doviP5 = "avfan.mplaykit.post.doviP5"
     }
 
     private(set) var sdrToHDRLevel: MPlaySDRToHDRLevel
@@ -77,8 +78,19 @@ final class MPlayPostChain {
     private(set) var upscalingLevel: MPlayUpscalingLevel
     private(set) var frameInterpolationEnabled: Bool
 
+    /// Dolby Vision profile of the stream currently feeding the
+    /// chain (0 = not DV).  Set by the display view from the
+    /// player's track properties; drives the P5 correction pass.
+    var dolbyProfile: Int = 0
+    /// Profile 5 correction toggle (default on).  When the stream
+    /// is DV profile 5, the P5 pass runs INSTEAD of SDR->HDR: P5
+    /// content is already HDR, it needs its IPT colour decoded,
+    /// not an SDR expansion.
+    private(set) var doviP5CorrectionEnabled: Bool
+
     var isEnabled: Bool {
         sdrToHDRLevel != .off || upscalingLevel != .off || frameInterpolationEnabled
+            || (dolbyProfile == 5 && doviP5CorrectionEnabled)
     }
 
     // MARK: Metal state
@@ -88,6 +100,7 @@ final class MPlayPostChain {
     private let commandQueue: MTLCommandQueue?
     private var textureCache: CVMetalTextureCache?
     private var sdrPipeline: MTLComputePipelineState?
+    private var doviPipeline: MTLComputePipelineState?
     private var upscalePipeline: MTLComputePipelineState?
     private var motionPipeline: MTLComputePipelineState?
     private var interpPipeline: MTLComputePipelineState?
@@ -110,6 +123,8 @@ final class MPlayPostChain {
         hdrVividEnabled = defaults.bool(forKey: Key.hdrVivid)
         upscalingLevel = MPlayUpscalingLevel(rawValue: defaults.integer(forKey: Key.upscaling)) ?? .off
         frameInterpolationEnabled = defaults.bool(forKey: Key.interpolation)
+        doviP5CorrectionEnabled = defaults.object(forKey: Key.doviP5) == nil
+            ? true : defaults.bool(forKey: Key.doviP5)
 
         device = MTLCreateSystemDefaultDevice()
         commandQueue = device?.makeCommandQueue()
@@ -151,6 +166,14 @@ final class MPlayPostChain {
         if !enabled {
             queue.async { [weak self] in self?.previousInput = nil }
         }
+    }
+
+    /// Dolby Vision Profile 5 correction (stage C addition): the
+    /// frame-after counterpart of the original's
+    /// DolbyP5ColorCorrection; see MPlayDolbyVision.swift.
+    func setDolbyVisionP5CorrectionEnabled(_ enabled: Bool) {
+        doviP5CorrectionEnabled = enabled
+        UserDefaults.standard.set(enabled, forKey: Key.doviP5)
     }
 
     // MARK: - Frame processing
@@ -202,8 +225,15 @@ final class MPlayPostChain {
             current = scaled
         }
 
-        // Pass 2: SDR -> HDR tone transform (same geometry/format).
-        if sdrToHDRLevel != .off,
+        // Pass 2: tone path — mutually exclusive.  DV profile 5
+        // takes the P5 correction (IPT decode + PQ), everything
+        // else takes SDR -> HDR when enabled.
+        if dolbyProfile == 5 && doviP5CorrectionEnabled,
+           let mapped = runDoviP5(frame: current, device: device,
+                                  commandQueue: commandQueue,
+                                  textureCache: textureCache) {
+            current = mapped
+        } else if sdrToHDRLevel != .off,
            let mapped = runSDRToHDR(frame: current, device: device,
                                     commandQueue: commandQueue,
                                     textureCache: textureCache) {
@@ -240,6 +270,7 @@ final class MPlayPostChain {
             return try? device.makeComputePipelineState(function: function)
         }
         sdrPipeline = pipeline("pkSDRToHDRKernel0")
+        doviPipeline = pipeline("pkDoviP5Kernel0")
         upscalePipeline = pipeline("pkUpscaleKernel0")
         motionPipeline = pipeline("pkMotionKernel0")
         interpPipeline = pipeline("pkInterpKernel0")
@@ -418,6 +449,69 @@ final class MPlayPostChain {
         encoder.setTexture(dstY, index: 3)
         encoder.setTexture(dstUV, index: 4)
         encoder.setBytes(&params, length: MemoryLayout<SDRToHDRParams>.stride, index: 0)
+        dispatch(encoder, pipeline: pipeline, width: frame.width, height: frame.height)
+        encoder.endEncoding()
+        commandBuffer.commit()
+        commandBuffer.waitUntilCompleted()
+        guard commandBuffer.status == .completed else { return nil }
+        return MPlayFrame(kind: .video, pixelBuffer: out,
+                          realtimePTS: frame.realtimePTS,
+                          ptsSeconds: frame.ptsSeconds,
+                          durationSeconds: frame.durationSeconds,
+                          width: frame.width, height: frame.height,
+                          isRepeat: frame.isRepeat, frameID: frame.frameID)
+    }
+
+    private struct DoviP5Params {
+        var iptToRGB: simd_float4x4
+        var isP010: UInt32
+        var isFullRange: UInt32
+        var width: UInt32
+        var height: UInt32
+    }
+
+    /// Dolby Vision Profile 5 correction pass: same slot and
+    /// plumbing as runSDRToHDR, but the matrix is
+    /// DolbyP5ColorCorrection.Map.profile5's combined IPT->RGB
+    /// (public BT.2124 constants — see MPlayDolbyVision.swift for
+    /// the provenance and the honesty note), and the kernel
+    /// re-encodes BT.2020 PQ so the output is a standard HDR
+    /// signal in the input's buffer format.
+    private func runDoviP5(frame: MPlayFrame, device: MTLDevice,
+                           commandQueue: MTLCommandQueue,
+                           textureCache: CVMetalTextureCache) -> MPlayFrame? {
+        guard let pipeline = doviPipeline else { return nil }
+        let src = frame.pixelBuffer
+        let format = CVPixelBufferGetPixelFormatType(src)
+        guard let planes = planeFormats(for: format),
+              let out = outputBuffer(format: format, width: frame.width, height: frame.height),
+              let srcY = texture(from: src, plane: 0, format: planes.luma, cache: textureCache),
+              let srcUV = texture(from: src, plane: 1, format: planes.chroma, cache: textureCache),
+              let dstY = texture(from: out, plane: 0, format: planes.luma, cache: textureCache),
+              let dstUV = texture(from: out, plane: 1, format: planes.chroma, cache: textureCache),
+              let commandBuffer = commandQueue.makeCommandBuffer(),
+              let encoder = commandBuffer.makeComputeCommandEncoder()
+        else { return nil }
+        let map = DolbyP5ColorCorrection.Map.profile5.yccToRGB
+        // simd columns are the input basis: result = c0*I + c1*P + c2*T.
+        let matrix = simd_float4x4(columns: (
+            simd_float4(Float(map.m00), Float(map.m10), Float(map.m20), 0),
+            simd_float4(Float(map.m01), Float(map.m11), Float(map.m21), 0),
+            simd_float4(Float(map.m02), Float(map.m12), Float(map.m22), 0),
+            simd_float4(0, 0, 0, 1)
+        ))
+        var params = DoviP5Params(
+            iptToRGB: matrix,
+            isP010: format == kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange ? 1 : 0,
+            isFullRange: format == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange ? 1 : 0,
+            width: UInt32(frame.width),
+            height: UInt32(frame.height)
+        )
+        encoder.setTexture(srcY, index: 0)
+        encoder.setTexture(srcUV, index: 1)
+        encoder.setTexture(dstY, index: 2)
+        encoder.setTexture(dstUV, index: 3)
+        encoder.setBytes(&params, length: MemoryLayout<DoviP5Params>.stride, index: 0)
         dispatch(encoder, pipeline: pipeline, width: frame.width, height: frame.height)
         encoder.endEncoding()
         commandBuffer.commit()
