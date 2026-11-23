@@ -62,6 +62,13 @@ final class MPlayChromeCoordinator: ObservableObject {
     private var fileLoaded = false
     private var createFailed = false
 
+    // Stage D preload takeover state: a promoted preloaded instance
+    // waiting for its URL to be opened, and a retired instance whose
+    // core closes on the next poll (after the view has re-attached
+    // to the promoted instance).
+    private var preloaded: (player: MPlayPlayer, url: URL)?
+    private var pendingRetire: MPlayPlayer?
+
     // MARK: - Lifecycle
 
     private func ensurePlayer() -> MPlayPlayer? {
@@ -98,6 +105,28 @@ final class MPlayChromeCoordinator: ObservableObject {
         duration = 0
         cacheSpeed = 0
         videoSize = nil
+        // Stage D takeover: a promoted preload for this URL becomes
+        // the core instead of a cold open on the current instance.
+        if let preloaded, preloaded.url == url {
+            let promoted = preloaded.player
+            self.preloaded = nil
+            let outgoing = player
+            player = promoted
+            promoted.onPlaybackEvent = { [weak self] event in
+                Task { @MainActor [weak self] in
+                    self?.handle(event)
+                }
+            }
+            fileLoaded = promoted.isFileLoaded
+            if let outgoing, outgoing !== promoted {
+                pendingRetire?.close()
+                pendingRetire = outgoing
+            }
+            // The preload was promoted paused; open() semantics are
+            // autoplay.
+            promoted.setPaused(false)
+            return
+        }
         guard let player = ensurePlayer() else {
             phase = .failed
             fireFailure(generation)
@@ -114,10 +143,47 @@ final class MPlayChromeCoordinator: ObservableObject {
         }
     }
 
+    /// Stage D: promote a full preloaded instance for a future open
+    /// (the original's preload + promotePreloadedPlayback pair).
+    /// The instance opens the media paused at the start position;
+    /// when open() is later called with the same URL, it takes over
+    /// (see the takeover branch in open).  A failed promotion
+    /// discards the preload silently — the later open() just takes
+    /// the cold path.
+    func preload(url: URL, headers: [String: String], startSeconds: Double = 0) {
+        discardPreload()
+        guard let current = ensurePlayer() else { return }
+        do {
+            let candidate = try current.makePreloadedPlayer()
+            candidate.promotePreloadedPlayback(
+                url: url.absoluteString, headers: headers,
+                startSeconds: startSeconds, paused: true
+            ) { [weak self] result in
+                if case .failure = result {
+                    Task { @MainActor [weak self] in
+                        guard let self, self.preloaded?.player === candidate else { return }
+                        self.discardPreload()
+                    }
+                }
+            }
+            preloaded = (candidate, url)
+        } catch {
+            MPlayDiagnostics.log("preload: makePreloadedPlayer failed: \(error)")
+        }
+    }
+
+    private func discardPreload() {
+        preloaded?.player.close()
+        preloaded = nil
+    }
+
     /// Terminal teardown: close the core and forget it. The video view must
     /// detach BEFORE this is called (the frame sink unregisters before
     /// the core is destroyed).
     func reset() {
+        discardPreload()
+        pendingRetire?.close()
+        pendingRetire = nil
         player?.close()
         player = nil
         currentURL = nil
@@ -251,6 +317,13 @@ final class MPlayChromeCoordinator: ObservableObject {
     /// Called from the chrome ticker (~500 ms). Refreshes the snapshot and
     /// fires the ready edge exactly once per load.
     func poll() {
+        // Stage D: a retired instance closes here, one tick after a
+        // takeover — by then the view has re-attached to the
+        // promoted instance and unregistered the retired sink.
+        if let pendingRetire {
+            pendingRetire.close()
+            self.pendingRetire = nil
+        }
         guard let player, currentURL != nil else { return }
         let state = player.state()
         let progress = player.progress()

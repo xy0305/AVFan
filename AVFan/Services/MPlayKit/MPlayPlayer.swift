@@ -107,7 +107,8 @@ final class MPlayPlayer {
         return sourceCounter
     }
 
-    init(options: [String: String] = [:]) throws {
+    init(options: [String: String] = [:],
+         cachePolicy: MPlayCachePolicy = .standard) throws {
         let assignedSource = Self.nextSource()
         source = assignedSource
         frameSinkName = "avfan-\(assignedSource)"
@@ -120,10 +121,9 @@ final class MPlayPlayer {
         // vo=frame_output 是阶段 A 像素帧管线（与原版 iOS 同构：
         // frame_output vo → CVPixelBuffer → AVSampleBufferDisplayLayer，
         // IOS-FINDINGS §1/§3）；keep-open 是播放器侧的常规取值；
-        // cache 上限（demuxer-max-bytes / -back-bytes）是**我方取值**：
-        // 原版 iOS 是 CachePolicy 分段缓存模型（capacity / prefetchBytes /
-        // segmentBytes / segments），具体数值在二进制里不可恢复
-        // （IOS-FINDINGS §3.2/§6），这两个数字不得当作原版参数引用。
+        // cache 自阶段 D 起走 MPlayCachePolicy 分段模型（结构与字段名
+        // 对齐原版 CachePolicy，具体数值是我方取值、不可恢复，见
+        // MPlayCachePolicy.swift 的映射说明）。
         // 入参 options 覆盖默认值，但 vo-frame-output-sink 在合并后
         // 强制写回本实例的 sink 名（见 frameSinkName 的注释）。
         var merged: [String: String] = [
@@ -131,10 +131,8 @@ final class MPlayPlayer {
             "hwdec": "videotoolbox",
             "hwdec-software-fallback": "yes",
             "keep-open": "yes",
-            "cache": "yes",
-            "demuxer-max-bytes": "256MiB",
-            "demuxer-max-back-bytes": "128MiB",
         ]
+        for (key, value) in cachePolicy.mpvOptions { merged[key] = value }
         for (key, value) in options { merged[key] = value }
         merged["vo-frame-output-sink"] = frameSinkName
         mergedOptions = merged
@@ -441,14 +439,34 @@ final class MPlayPlayer {
 
     // MARK: - 预加载 / 关闭
 
-    /// n4 等价：派生一个预加载实例。偏差（与原版不同）：原版 iOS 的预加载
-    /// 是完整 Player 实例 + promotePreloadedPlayback 接管制（含 PiP 控制
-    /// 器在实例间转移，IOS-FINDINGS §2.5）；这里先用相同 options 新建
-    /// 实例预热解码栈，媒体状态不共享。阶段 A 已去掉原先的 GL 上下文
-    /// 共享（像素帧管线下不存在共享渲染上下文）；接管制在阶段 D 落地，
-    /// 偏差表第 13 条在阶段 D 后改写。
+    /// n4 等价：派生一个预加载实例（与本实例相同 options 的完整新实例）。
+    /// 阶段 D 起是接管制：预加载实例经 promotePreloadedPlayback 打开
+    /// 目标媒体并停在接管点，协调者接管时把视图与 PiP 控制器转绑到
+    /// 它、退役旧实例（见 MPlayChromeCoordinator.preload / open 的
+    /// 接管分支与 MPlayPictureInPictureController 的 transfer /
+    /// rebindPlayer）。这与原版 iOS 的完整实例 + promote 接管制同构
+    /// （IOS-FINDINGS §2.5）；阶段 A 已去掉原先的 GL 上下文共享
+    /// （像素帧管线下不存在共享渲染上下文）。
     func makePreloadedPlayer() throws -> MPlayPlayer {
         try MPlayPlayer(options: mergedOptions)
+    }
+
+    /// 原版 promotePreloadedPlayback 的等价物：在（预加载）实例上打开
+    /// 目标媒体并停在接管点——起始位置 + 暂停态，等待协调者接管。
+    /// 原版签名中的 aid/sid/volume/useHardwareDecode 在我方分别由
+    /// selectTrack、音量属性与实例 options 承担，不重复进本签名；
+    /// takeRenderViewOwnership 对应视图 attach 的接管路径
+    /// （MPlayVideoView.attach 在 PiP 活跃时走 rebind 而非重建）。
+    func promotePreloadedPlayback(url: String, headers: [String: String] = [:],
+                                  startSeconds: Double = 0, paused: Bool = true,
+                                  completion: ((Result<Void, MPlayError>) -> Void)? = nil) {
+        open(url: url, startSeconds: startSeconds, headers: headers,
+             autoplay: !paused, completion: completion)
+    }
+
+    /// 本实例是否已完成文件加载（接管时协调者据此点亮 ready 边）。
+    var isFileLoaded: Bool {
+        onPlayerQueue { fileLoaded }
     }
 
     /// n19 等价，幂等。先清 wakeup 回调再销毁 core，保证 passUnretained

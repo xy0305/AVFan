@@ -60,6 +60,7 @@
 		AF11000000000000000000C8 /* MPlayPictureInPicture.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF11000000000000000000C7 /* MPlayPictureInPicture.swift */; };
 		AF11000000000000000000CA /* MPlayPostChain.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF11000000000000000000C9 /* MPlayPostChain.swift */; };
 		AF11000000000000000000CC /* MPlayPostChain.metal in Sources */ = {isa = PBXBuildFile; fileRef = AF11000000000000000000CB /* MPlayPostChain.metal */; };
+		AF11000000000000000000CE /* MPlayCachePolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF11000000000000000000CD /* MPlayCachePolicy.swift */; };
 		AF11000000000000000000A8 /* MPlayEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF11000000000000000000A7 /* MPlayEngine.swift */; };
 		AF11000000000000000000AA /* Libmpv.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = AF11000000000000000000A9 /* Libmpv.xcframework */; };
 		AF11000000000000000000AB /* Libmpv.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = AF11000000000000000000A9 /* Libmpv.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
@@ -159,6 +160,7 @@
 		AF11000000000000000000C7 /* MPlayPictureInPicture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MPlayPictureInPicture.swift; sourceTree = "<group>"; };
 		AF11000000000000000000C9 /* MPlayPostChain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MPlayPostChain.swift; sourceTree = "<group>"; };
 		AF11000000000000000000CB /* MPlayPostChain.metal */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.metal; path = MPlayPostChain.metal; sourceTree = "<group>"; };
+		AF11000000000000000000CD /* MPlayCachePolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MPlayCachePolicy.swift; sourceTree = "<group>"; };
 		AF11000000000000000000A7 /* MPlayEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MPlayEngine.swift; sourceTree = "<group>"; };
 		AF11000000000000000000A9 /* Libmpv.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = Libmpv.xcframework; path = Vendor/Libmpv.xcframework; sourceTree = SOURCE_ROOT; };
 		AF11000000000000000000AD /* AudioToolbox.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AudioToolbox.framework; path = System/Library/Frameworks/AudioToolbox.framework; sourceTree = SDKROOT; };
@@ -404,6 +406,7 @@
 				AF11000000000000000000C7 /* MPlayPictureInPicture.swift */,
 				AF11000000000000000000C9 /* MPlayPostChain.swift */,
 				AF11000000000000000000CB /* MPlayPostChain.metal */,
+				AF11000000000000000000CD /* MPlayCachePolicy.swift */,
 			);
 			path = MPlayKit;
 			sourceTree = "<group>";
@@ -554,6 +557,7 @@
 				AF11000000000000000000C8 /* MPlayPictureInPicture.swift in Sources */,
 				AF11000000000000000000CA /* MPlayPostChain.swift in Sources */,
 				AF11000000000000000000CC /* MPlayPostChain.metal in Sources */,
+				AF11000000000000000000CE /* MPlayCachePolicy.swift in Sources */,
 				AF11000000000000000000A8 /* MPlayEngine.swift in Sources */,
 				AF1100000000000000000040 /* JRHTML.swift in Sources */,
 				AF1100000000000000000042 /* OnlineFailure.swift in Sources */,

@@ -184,6 +184,16 @@ final class MPlayPictureInPictureController: NSObject {
         unbind()
     }
 
+    /// Same-view player swap (stage D takeover on one view): the
+    /// display layer — and therefore the PiP content source — does
+    /// not change when the view re-attaches to a promoted preloaded
+    /// player, so only the playback-delegate's player reference
+    /// moves.  An active PiP session survives the swap untouched;
+    /// this is the same-view fast path of transfer(to:).
+    func rebindPlayer(_ newPlayer: MPlayPlayer) {
+        player = newPlayer
+    }
+
     // MARK: - Audio interruption (original: audioSessionInterrupted:)
 
     private func installInterruptionObserver() {

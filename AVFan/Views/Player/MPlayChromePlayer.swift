@@ -29,6 +29,13 @@ struct MPlayChromePlayer: View {
     var managesOrientation: Bool = true
     var onSelectSource: (() -> Void)? = nil
     var onSelectEpisode: (() -> Void)? = nil
+    /// Stage D preload takeover: the next item to promote in the
+    /// background (full-instance preload; when the player later
+    /// opens this URL, the promoted instance takes over instead of
+    /// a cold open).  Nil = no preload.  Hosts that resolve streams
+    /// lazily per selection (Pan115PlayerView's VM) pass nothing
+    /// until they can name the next URL.
+    var preloadTarget: (url: URL, headers: [String: String])? = nil
     @State private var failureReported = false
     @State private var playbackDiagnostic: PlaybackDiagnostic?
 
@@ -194,6 +201,9 @@ struct MPlayChromePlayer: View {
             playbackActive = true
             // Audio ownership starts in AudioOwnedMPlayVideoView.makeUIView, before MPlayPlayer creation.
             wireEngine()
+            if let preloadTarget {
+                engine.preload(url: preloadTarget.url, headers: preloadTarget.headers)
+            }
             startTicker()
             scheduleHide()
         }

@@ -113,25 +113,40 @@ final class MPlayVideoView: UIView {
     /// Bind to a player: register the frame sink under the player's
     /// sink name so its frame_output vo starts delivering here.
     /// Idempotent for the same player; switching players detaches
-    /// the old binding first.
+    /// the old binding first — except during an active PiP session,
+    /// where the stage D takeover path applies: the PiP session and
+    /// the queued frames survive, only the sink registration and the
+    /// PiP controller's player reference move to the promoted
+    /// preloaded player (the display layer never changes hands).
     func attach(player: MPlayPlayer) {
         if attachedPlayer === player, sink != nil {
             return
         }
+        if attachedPlayer != nil, pictureInPictureController.isPictureInPictureActive {
+            sink?.unregister()
+            attachedPlayer = player
+            installSink(for: player)
+            pictureInPictureController.rebindPlayer(player)
+            return
+        }
         detach()
         attachedPlayer = player
-        let newSink = MPlayFrameSink(name: player.frameSinkName)
-        newSink.onFrame = { [weak self] frame in
-            self?.frameStore.update(frame)
-        }
-        newSink.register()
-        sink = newSink
+        installSink(for: player)
         // Initial subtitle render size follows the current bounds.
         subtitleLayerController.setRenderSize(bounds.size)
         player.setSubtitleRenderSize(
             width: Int(bounds.width), height: Int(bounds.height)
         )
         pictureInPictureController.bind(player: player, videoView: self)
+    }
+
+    private func installSink(for player: MPlayPlayer) {
+        let newSink = MPlayFrameSink(name: player.frameSinkName)
+        newSink.onFrame = { [weak self] frame in
+            self?.frameStore.update(frame)
+        }
+        newSink.register()
+        sink = newSink
     }
 
     /// Unbind: unregister the sink FIRST (the vo must stop calling
