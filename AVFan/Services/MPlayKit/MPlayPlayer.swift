@@ -176,11 +176,7 @@ final class MPlayPlayer {
     /// close().  For extension files that must not touch the private
     /// queue directly (stream registration, decoder switching).
     func withCore<T>(_ work: (OpaquePointer) -> T) -> T? {
-        let body = { self.core.map(work) }
-        if DispatchQueue.getSpecific(key: specificKey) != nil {
-            return body()
-        }
-        return queue.sync(execute: body)
+        onPlayerQueue { core.map(work) }
     }
 
     private static let sourceLock = NSLock()
