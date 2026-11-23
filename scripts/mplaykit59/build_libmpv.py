@@ -273,8 +273,9 @@ def download_with_retries(urls, dst, attempts=4):
 
 
 # libplacebo's release tarball omits its git submodules: the extracted
-# tree contains empty 3rdparty/ directories.  Of those, fast_float is
-# the one this pipeline can actually need — src/convert.cc prefers
+# tree contains empty 3rdparty/ directories.  Two of those are needed
+# even in this pipeline's configuration: fast_float (below) and
+# Vulkan-Headers (further below).  fast_float: src/convert.cc prefers
 # <fast_float/fast_float.h> and only falls back to std::from_chars
 # where the toolchain provides the floating-point overloads, so relying
 # on the fallback makes the build toolchain-dependent.  The v7.387.0
@@ -314,6 +315,55 @@ def vendor_libplacebo_fast_float(cache, libplacebo_src):
     print("vendored fast_float 8.2.2 into libplacebo 3rdparty", flush=True)
 
 
+# Vulkan-Headers is needed even with -Dvulkan=disabled: the disabled
+# branch of src/vulkan/meson.build still compiles src/vulkan/stubs.c,
+# which includes the public <libplacebo/vulkan.h>, and that header
+# includes <vulkan/vulkan.h> unconditionally (CI round 5 died there:
+# 'vulkan/vulkan.h' file not found while compiling vulkan_stubs.c.o).
+# meson adds the headers dependency to build_deps unconditionally and
+# prefers 3rdparty/Vulkan-Headers whenever its include/ exists
+# (src/vulkan/meson.build:8-14), so vendoring the headers is the
+# upstream-intended supply route; the vulkan feature itself stays
+# disabled — only the headers are provided.  The v7.387.0 gitlink for
+# 3rdparty/Vulkan-Headers is commit
+# 74d8a6cb930c68ef617b202c3ff3c59d919e086b; vendor that commit's
+# include/ + registry/ trees (sha256 pinned, verified locally on
+# 2026-11-23) into the extracted libplacebo tree.
+VULKAN_HEADERS_COMMIT = "74d8a6cb930c68ef617b202c3ff3c59d919e086b"
+VULKAN_HEADERS_URL = ("https://github.com/KhronosGroup/Vulkan-Headers/"
+                      f"archive/{VULKAN_HEADERS_COMMIT}.tar.gz")
+VULKAN_HEADERS_SHA256 = ("75967a8288ff16044a86d1af462b96d2e75c435937efb75f2"
+                         "bb4102ab0382f29")
+
+
+def vendor_libplacebo_vulkan_headers(cache, libplacebo_src):
+    header = (libplacebo_src / "3rdparty" / "Vulkan-Headers" / "include"
+              / "vulkan" / "vulkan.h")
+    if header.exists():
+        return
+    (cache / "downloads").mkdir(parents=True, exist_ok=True)
+    (cache / "src").mkdir(parents=True, exist_ok=True)
+    dl = cache / "downloads" / f"Vulkan-Headers-{VULKAN_HEADERS_COMMIT}.tar.gz"
+    if not dl.exists() or sha256_of(dl) != VULKAN_HEADERS_SHA256:
+        download_with_retries([VULKAN_HEADERS_URL], dl)
+    got = sha256_of(dl)
+    assert got == VULKAN_HEADERS_SHA256, ("Vulkan-Headers", got)
+    dest = cache / "src" / f"Vulkan-Headers-{VULKAN_HEADERS_COMMIT}"
+    if not dest.exists():
+        print("extract", dl.name, "->", dest, flush=True)
+        with tarfile.open(dl) as t:
+            t.extractall(cache / "src")
+        assert dest.is_dir(), dest
+    target = libplacebo_src / "3rdparty" / "Vulkan-Headers"
+    target.mkdir(parents=True, exist_ok=True)
+    for sub in ("include", "registry"):
+        shutil.copytree(dest / sub, target / sub, dirs_exist_ok=True)
+    assert header.exists(), header
+    assert (target / "registry" / "vk.xml").exists()
+    print("vendored Vulkan-Headers", VULKAN_HEADERS_COMMIT,
+          "into libplacebo 3rdparty", flush=True)
+
+
 def fetch_all(cache):
     import urllib.request
     dl, src_root = cache / "downloads", cache / "src"
@@ -340,6 +390,7 @@ def fetch_all(cache):
         assert dest.is_dir(), dest
         srcs[name] = dest
     vendor_libplacebo_fast_float(cache, srcs["libplacebo"])
+    vendor_libplacebo_vulkan_headers(cache, srcs["libplacebo"])
     apply_patches(srcs["mpv"])
     return srcs
 
@@ -558,7 +609,16 @@ def build_uchardet(src, build_dir, prefix, platform, env):
     0.0.8 declares cmake_minimum_required(VERSION 3.1) and modern
     CMake has removed compatibility with < 3.5 (CI error at
     CMakeLists.txt:2, whose own text suggests this flag).  Freetype's
-    cmake call is deliberately left untouched."""
+    cmake call is deliberately left untouched.
+
+    BUILD_BINARY=OFF is also passed ONLY here: the CLI tool target is
+    a MACOSX_BUNDLE executable under CMAKE_SYSTEM_NAME=iOS, and its
+    install() rule in src/tools/CMakeLists.txt:35 has no BUNDLE
+    DESTINATION, which modern CMake rejects at configure time
+    (CI round 5).  Upstream gates the whole tools subdirectory on
+    BUILD_BINARY (src/CMakeLists.txt:177-179) and only the library
+    (libuchardet.a + uchardet.pc) is needed, so the tool is skipped
+    via the official option rather than patched."""
     stage = "uchardet"
     if skip_if_stamped(build_dir, stage): return
     sdk_name, stem = PLATFORMS[platform]
@@ -574,6 +634,7 @@ def build_uchardet(src, build_dir, prefix, platform, env):
             "-DCMAKE_BUILD_TYPE=Release",
             "-DCMAKE_POLICY_VERSION_MINIMUM=3.5",
             "-DBUILD_SHARED_LIBS=OFF",
+            "-DBUILD_BINARY=OFF",
             f"-DCMAKE_INSTALL_PREFIX={prefix}",
             f"-DCMAKE_C_FLAGS={minflag}",
             f"-DCMAKE_CXX_FLAGS={minflag}"]
