@@ -133,9 +133,12 @@ struct AudioOwnedMPlayVideoView: UIViewRepresentable {
         }
     }
     static func dismantleUIView(_ view: MPlayVideoView, coordinator: Coordinator) {
-        // Build 59 deviation: libmpv has no iOS PiP, so there is no PiP wait
-        // here (the KSPlayer-era dismantle deferred teardown while PiP was
-        // active). Teardown is immediate: stop callback, detach the render
+        // Build 59 deviation: PiP is not implemented in this build, so
+        // there is no PiP wait here (the KSPlayer-era dismantle deferred
+        // teardown while PiP was active). The original's PiP route is
+        // known (pixel-frame pipeline + AVSampleBufferDisplayLayer,
+        // IOS-FINDINGS §1) and is next build's first item; teardown here
+        // stays immediate: stop callback, detach the render
         // surface BEFORE closing the core, then release audio ownership.
         Task { @MainActor in
             coordinator.onStop()
