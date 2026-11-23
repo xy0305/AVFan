@@ -261,7 +261,7 @@ import SwiftUI
 import UIKit
 // Independent presentation preferences: clearing a media request never clears style.
 // Reference: KSPlayer SubtitleModel.Size/textColor; no upstream code copied.
-private enum SubtitleStyleDefaults {
+enum SubtitleStyleDefaults {
     static let size = 18.0
     static let x = 0.5
     static let y = 1.0

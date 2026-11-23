@@ -629,8 +629,13 @@ final class MPlayPreviewReader {
     // MARK: - 属性读取小助手（只在 queue 上；读不到一律 nil）
 
     private func command(_ handle: OpaquePointer, _ args: [String]) -> Int32 {
-        var cArgs: [UnsafeMutablePointer<CChar>?] = args.map { strdup($0) }
-        defer { for pointer in cArgs { free(pointer) } }
+        let allocated: [UnsafeMutablePointer<CChar>?] = args.map { strdup($0) }
+        defer { for pointer in allocated { free(pointer) } }
+        // mpv_command 的导入签名：元素为不可变 C 字符串指针、数组
+        // 本身可变 (UnsafeMutablePointer<UnsafePointer<CChar>?>?)。
+        var cArgs: [UnsafePointer<CChar>?] = allocated.map { pointer in
+            pointer.map { UnsafePointer<CChar>($0) }
+        }
         cArgs.append(nil)
         return cArgs.withUnsafeMutableBufferPointer { buffer in
             mpv_command(handle, buffer.baseAddress)

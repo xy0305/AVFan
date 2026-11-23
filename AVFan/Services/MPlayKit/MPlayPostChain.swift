@@ -36,6 +36,7 @@ import CoreMedia
 import CoreVideo
 import Foundation
 import Metal
+import simd
 
 enum MPlaySDRToHDRLevel: Int {
     case off = 0

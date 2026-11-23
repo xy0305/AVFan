@@ -890,7 +890,7 @@ final class MPlayPlayer {
 
     /// mpv_command / mpv_command_async 需要 NULL 结尾的 C 字符串数组：
     /// 每条用 strdup 分配（不能用 withCString 的临时指针逃逸），调用完 free。
-    private func withCArgs<T>(_ args: [String], _ body: (UnsafePointer<UnsafePointer<CChar>?>?) -> T) -> T {
+    private func withCArgs<T>(_ args: [String], _ body: (UnsafeMutablePointer<UnsafePointer<CChar>?>?) -> T) -> T {
         let allocated: [UnsafeMutablePointer<CChar>?] = args.map { strdup($0) }
         defer {
             for pointer in allocated {
@@ -901,7 +901,10 @@ final class MPlayPlayer {
             pointer.map { UnsafePointer<CChar>($0) }
         }
         pointers.append(nil)
-        return pointers.withUnsafeBufferPointer { buffer in
+        // mpv_command 的导入签名要的是可变外层指针
+        // (UnsafeMutablePointer<UnsafePointer<CChar>?>?)：元素是不可变
+        // C 字符串指针、数组本身可变，正是 withUnsafeMutableBufferPointer。
+        return pointers.withUnsafeMutableBufferPointer { buffer in
             body(buffer.baseAddress)
         }
     }

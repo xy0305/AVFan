@@ -235,7 +235,7 @@ final class ObjectAudioRenderer {
 
     private func distribute(_ input: UnsafeMutablePointer<Float>, frames: Int,
                             from position: SIMD3<Float>,
-                            into outputs: UnsafeMutablePointer<UnsafeMutablePointer<Float>>,
+                            into outputs: UnsafePointer<UnsafeMutablePointer<Float>>,
                             positions: [SIMD3<Float>], gain: Float) {
         // Three nearest layout speakers, inverse-distance weights
         // normalised to unit power (approximation of the original's
@@ -253,7 +253,7 @@ final class ObjectAudioRenderer {
         }
     }
 
-    private func softLimit(_ channels: UnsafeMutablePointer<UnsafeMutablePointer<Float>>,
+    private func softLimit(_ channels: UnsafePointer<UnsafeMutablePointer<Float>>,
                            channels count: Int, frames: Int) {
         // Simple soft-knee peak limiter (not the original's
         // PeakLimiter): per-sample tanh soft clip above 0.9.
@@ -299,10 +299,11 @@ final class MPlayAPACEncoder {
     /// Encode one PCM buffer to APAC packet bytes (an .m4a-ish
     /// segment payload for the in-memory HLS stream).
     func encode(_ buffer: AVAudioPCMBuffer) -> Data? {
-        guard let out = AVAudioCompressedBuffer(format: outputFormat,
-                                                packetCapacity: 256,
-                                                maximumPacketSize: converter.maximumOutputPacketSize)
-        else { return nil }
+        // 本 SDK 里 AVAudioCompressedBuffer 的 init 不是 failable 的，
+        // 直接构造（不存在需要 guard 的失败路径）。
+        let out = AVAudioCompressedBuffer(format: outputFormat,
+                                          packetCapacity: 256,
+                                          maximumPacketSize: converter.maximumOutputPacketSize)
         var supplied = false
         var error: NSError?
         converter.convert(to: out, error: &error) { _, outStatus in

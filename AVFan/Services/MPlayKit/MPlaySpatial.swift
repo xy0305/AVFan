@@ -73,7 +73,10 @@ private func copySpeakers(_ speakers: UnsafePointer<UInt8>?, count: Int) -> [UIn
 // MARK: - TrueHD
 
 final class TrueHDObjectAudioDecoder {
-    private var handle: UnsafeMutablePointer<TrueHDAtmosDecoder>?
+    // 解码器结构体在上游头里只有前向声明、从不定义，Swift 导入器
+    // 不为它生成具名类型（函数签名里的该指针会被替换成
+    // OpaquePointer）；句柄按本仓 mpv 句柄的同一模式存 OpaquePointer。
+    private var handle: OpaquePointer?
     private let queue = DispatchQueue(label: "avfan.mplaykit.spatial.truehd")
 
     /// presentation: TRUEHD_ATMOS_PRESENTATION_HIGHEST (-1) decodes
@@ -184,7 +187,8 @@ final class TrueHDObjectAudioDecoder {
 // MARK: - DTS:X
 
 final class DTSXObjectAudioDecoder {
-    private var handle: UnsafeMutablePointer<DTSXDecoder>?
+    // 同 TrueHD：前向声明的解码器结构体不生成 Swift 具名类型。
+    private var handle: OpaquePointer?
     private let queue = DispatchQueue(label: "avfan.mplaykit.spatial.dtsx")
 
     init?() {

@@ -344,7 +344,7 @@ extension MPlayPlayer {
         guard count > 0 else { return [] }
         return (0..<count).map { index in
             MPlayChapter(
-                index: index,
+                index: Int(index),
                 title: stringProperty("chapter-list/\(index)/title") ?? "",
                 time: doubleProperty("chapter-list/\(index)/time") ?? 0
             )
@@ -380,9 +380,9 @@ extension MPlayPlayer {
         }
         // Per-track DV profile rides the track-list properties, not
         // mediaJSON; stamp the selected video track's value.
-        if let dv = dolbyVisionState, let index = tracks.firstIndex(
+        if let profile = dolbyVisionState.profile, let index = tracks.firstIndex(
             where: { $0.kind == "video" && $0.selected }) {
-            tracks[index].dolbyProfile = dv.profile
+            tracks[index].dolbyProfile = profile
         }
         let path = stringProperty("path") ?? ""
         let discKind = path.hasPrefix("bd://") ? "bluray"
