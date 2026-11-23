@@ -193,17 +193,27 @@ def skip_if_stamped(build_dir, stage):
 
 # ------------------------------------------------------------- bootstrap ----
 def bootstrap(cache):
-    """venv with meson/ninja/jinja2 (libplacebo codegen needs jinja2 on
-    PATH via the venv python); host must provide pkg-config, xcrun, cmake
-    (freetype and uchardet are built with cmake)."""
+    """venv with meson/ninja/jinja2/glad2 (libplacebo codegen needs
+    jinja2 on PATH via the venv python, and its OpenGL backend probes
+    for a Python module named `glad` >= 2.0); host must provide
+    pkg-config, xcrun, cmake (freetype and uchardet are built with
+    cmake)."""
     for tool in ("pkg-config", "xcrun", "cmake"):
         assert shutil.which(tool), f"missing host tool: {tool}"
     venv = cache / "venv"
     py = venv / "bin" / "python3"
     if not py.exists():
         run([sys.executable, "-m", "venv", venv], "bootstrap-venv")
+    # glad2 is the PyPI distribution of upstream Dav1dde/glad 2.x: it
+    # installs the importable module `glad` (__version__ 2.0.8, verified
+    # locally) that libplacebo's src/opengl/include/glad/meson.build
+    # probes via `import glad; print(glad.__version__)` and later runs
+    # as `python -m glad`.  The PyPI package literally named `glad` is
+    # only the old 0.1.x line and must NOT be used here.  (This AVFan
+    # profile builds libplacebo with OpenGL disabled, but the bootstrap
+    # is kept parallel with AVDB's where the probe is live.)
     run([py, "-m", "pip", "install", "--upgrade",
-         "meson", "ninja", "jinja2"], "bootstrap-pip")
+         "meson", "ninja", "jinja2", "glad2==2.0.8"], "bootstrap-pip")
     env = dict(os.environ)
     env["PATH"] = f"{venv / 'bin'}:{env.get('PATH', '')}"
     # meson/ninja resolve to the venv copies; python3 too (jinja2 import).
@@ -262,6 +272,48 @@ def download_with_retries(urls, dst, attempts=4):
     raise last_err
 
 
+# libplacebo's release tarball omits its git submodules: the extracted
+# tree contains empty 3rdparty/ directories.  Of those, fast_float is
+# the one this pipeline can actually need — src/convert.cc prefers
+# <fast_float/fast_float.h> and only falls back to std::from_chars
+# where the toolchain provides the floating-point overloads, so relying
+# on the fallback makes the build toolchain-dependent.  The v7.387.0
+# gitlink for 3rdparty/fast_float is commit
+# 97b54ca9e75f5303507699d27c6b4f4efe4641a1, which is exactly the
+# v8.2.2 tag; vendor that tag's include/ tree (sha256 pinned, verified
+# locally on 2026-11-23) into the extracted libplacebo tree.
+FAST_FLOAT_URL = ("https://github.com/fastfloat/fast_float/archive/"
+                  "refs/tags/v8.2.2.tar.gz")
+FAST_FLOAT_SHA256 = ("e64b5fff88e04959154adbd5fb83331d91f2e04ac0645467"
+                     "1cdfcbdff172b158")
+
+
+def vendor_libplacebo_fast_float(cache, libplacebo_src):
+    header = (libplacebo_src / "3rdparty" / "fast_float" / "include"
+              / "fast_float" / "fast_float.h")
+    if header.exists():
+        return
+    (cache / "downloads").mkdir(parents=True, exist_ok=True)
+    (cache / "src").mkdir(parents=True, exist_ok=True)
+    dl = cache / "downloads" / "fast_float-v8.2.2.tar.gz"
+    if not dl.exists() or sha256_of(dl) != FAST_FLOAT_SHA256:
+        download_with_retries([FAST_FLOAT_URL], dl)
+    got = sha256_of(dl)
+    assert got == FAST_FLOAT_SHA256, ("fast_float", got)
+    dest = cache / "src" / "fast_float-8.2.2"
+    if not dest.exists():
+        print("extract", dl.name, "->", dest, flush=True)
+        with tarfile.open(dl) as t:
+            t.extractall(cache / "src")
+        assert dest.is_dir(), dest
+    target = libplacebo_src / "3rdparty" / "fast_float"
+    target.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(dest / "include", target / "include",
+                    dirs_exist_ok=True)
+    assert header.exists(), header
+    print("vendored fast_float 8.2.2 into libplacebo 3rdparty", flush=True)
+
+
 def fetch_all(cache):
     import urllib.request
     dl, src_root = cache / "downloads", cache / "src"
@@ -287,6 +339,7 @@ def fetch_all(cache):
                 cands[0].rename(dest)
         assert dest.is_dir(), dest
         srcs[name] = dest
+    vendor_libplacebo_fast_float(cache, srcs["libplacebo"])
     apply_patches(srcs["mpv"])
     return srcs
 
@@ -499,7 +552,13 @@ def build_uchardet(src, build_dir, prefix, platform, env):
     libuchardet.a + uchardet.pc, which is how mpv's
     dependency('uchardet') finds it.  Mirrors the freetype cmake
     cross-compile setup; BUILD_SHARED_LIBS must be OFF or we get a
-    dylib instead of a static archive."""
+    dylib instead of a static archive.
+
+    CMAKE_POLICY_VERSION_MINIMUM=3.5 is passed ONLY here: uchardet
+    0.0.8 declares cmake_minimum_required(VERSION 3.1) and modern
+    CMake has removed compatibility with < 3.5 (CI error at
+    CMakeLists.txt:2, whose own text suggests this flag).  Freetype's
+    cmake call is deliberately left untouched."""
     stage = "uchardet"
     if skip_if_stamped(build_dir, stage): return
     sdk_name, stem = PLATFORMS[platform]
@@ -513,6 +572,7 @@ def build_uchardet(src, build_dir, prefix, platform, env):
             "-DCMAKE_OSX_ARCHITECTURES=arm64",
             f"-DCMAKE_OSX_DEPLOYMENT_TARGET={MIN_IOS}",
             "-DCMAKE_BUILD_TYPE=Release",
+            "-DCMAKE_POLICY_VERSION_MINIMUM=3.5",
             "-DBUILD_SHARED_LIBS=OFF",
             f"-DCMAKE_INSTALL_PREFIX={prefix}",
             f"-DCMAKE_C_FLAGS={minflag}",
