@@ -905,12 +905,22 @@ def assemble_framework(platform, cache, env):
     run(["xcrun", "--sdk", sdk_name, "libtool", "-static", "-o",
          fw / "Libmpv", *libs], stage, env=env)
     # Headers: the full include/mpv set installed by mpv's meson install.
+    # Keep the upstream mpv/ directory level under Headers/: the umbrella
+    # header below references <mpv/client.h> etc., which only resolves if
+    # the headers live in Headers/mpv/ (CI round 7 died at the app build
+    # with "Libmpv.h:3:10: fatal error: 'mpv/client.h' file not found"
+    # when they were copied flat into Headers/).  mpv's own cross-
+    # includes are quoted same-dir includes ("client.h" in render.h /
+    # stream_cb.h), so they keep resolving with the whole set kept
+    # together in that subdirectory.
     mpv_inc = prefix / "include" / "mpv"
     assert mpv_inc.is_dir(), f"{platform}: {mpv_inc} missing (mpv install?)"
+    mpv_hdr_dir = fw / "Headers" / "mpv"
+    mpv_hdr_dir.mkdir(parents=True)
     for h in mpv_inc.glob("*.h"):
-        shutil.copy(h, fw / "Headers" / h.name)
+        shutil.copy(h, mpv_hdr_dir / h.name)
     inc_lines = [f"#include <mpv/{n}>" for n in MPV_HEADERS
-                 if (fw / "Headers" / n).exists()]
+                 if (mpv_hdr_dir / n).exists()]
     assert inc_lines, f"{platform}: no known mpv headers in {mpv_inc}"
     (fw / "Headers" / "Libmpv.h").write_text(
         "// Libmpv umbrella header (59 vendored build).\n"
