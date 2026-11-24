@@ -1,0 +1,33 @@
+diff --git a/video/out/vo_frame_output.c b/video/out/vo_frame_output.c
+index 57a06c5..58d6125 100644
+--- a/video/out/vo_frame_output.c
++++ b/video/out/vo_frame_output.c
+@@ -175,9 +175,9 @@ static bool fo_lookup(const char *sink, struct fo_consumer *out)
+ // ------------------------------------------------------------------- priv
+ 
+ struct priv {
+-    char *sink;             // --vo-frame-output-sink (NULL = "default")
+-    int subtitle_width;     // --vo-frame-output-subtitle-width (0 = video)
+-    int subtitle_height;    // --vo-frame-output-subtitle-height
++    char *sink;             // --vo-frame_outputvo-sink (NULL = "default")
++    int subtitle_width;     // --vo-frame_outputvo-subtitle-width (0 = video)
++    int subtitle_height;    // --vo-frame_outputvo-subtitle-height
+ 
+     struct mp_image_params params;
+     bool have_params;
+@@ -578,7 +578,7 @@ static void uninit(struct vo *vo)
+ #define OPT_BASE_STRUCT struct priv
+ const struct vo_driver video_out_frame_output = {
+     .description = "Pixel-frame output to host application",
+-    .name = "frame_output",
++    .name = "frame_outputvo",
+     .preinit = preinit,
+     .query_format = query_format,
+     .reconfig = reconfig,
+@@ -593,5 +593,5 @@ const struct vo_driver video_out_frame_output = {
+         {"subtitle-height", OPT_INT(subtitle_height), M_RANGE(0, 16384)},
+         {0},
+     },
+-    .options_prefix = "vo-frame-output",
++    .options_prefix = "vo-frame_outputvo",
+ };

@@ -203,8 +203,9 @@ final class MPlayPlayer {
         //   vo：值 `frame_outputvo` 是 14 字符、二进制内真实字节
         //   （小字符串逐字节解码），按字节原样使用、不「纠正」为
         //   frame_output；我方 fork 的 vo 登记名与 options_prefix
-        //   已同步改为 frame_outputvo / vo-frame_outputvo
-        //   （patches/0001），与原版 fork 的选项命名空间一致
+        //   已由追加补丁 0006 同步改为 frame_outputvo /
+        //   vo-frame_outputvo（补丁系列 append-only，0001 原样
+        //   不动），与原版 fork 的选项命名空间一致
         //   （vo-frame_outputvo-display-fps 等常量实测同源）。
         //   autosync=120：推断级——原版构造时把立即数 0x78 经
         //   整数→字符串转换桩生成该值（备忘 §一注 2），非字面量
