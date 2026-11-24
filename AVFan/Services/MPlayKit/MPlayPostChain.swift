@@ -355,8 +355,9 @@ final class MPlayPostChain {
     /// the SDR->HDR pass changes the signal's transfer/primaries
     /// semantics, so source tags must not be copied there.
     private func propagateAttachments(from source: CVPixelBuffer, to destination: CVPixelBuffer) {
-        CVBufferPropagateAttachments(source, destination,
-                                     CVAttachmentMode.shouldPropagate)
+        // CVBufferPropagateAttachments takes no mode argument: it
+        // copies exactly the attachments marked ShouldPropagate.
+        CVBufferPropagateAttachments(source as CVBuffer, destination as CVBuffer)
     }
 
     private func planeFormats(for format: OSType)
