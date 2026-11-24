@@ -356,7 +356,7 @@ final class MPlayPostChain {
     /// semantics, so source tags must not be copied there.
     private func propagateAttachments(from source: CVPixelBuffer, to destination: CVPixelBuffer) {
         CVBufferPropagateAttachments(source as CVBuffer, destination as CVBuffer,
-                                     kCVAttachmentMode_ShouldPropagate)
+                                     .shouldPropagate)
     }
 
     private func planeFormats(for format: OSType)
