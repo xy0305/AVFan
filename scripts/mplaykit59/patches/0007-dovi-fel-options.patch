@@ -1,0 +1,69 @@
+R-05 FEL options: register the fork's dovi-fel / dovi-fel-hwdec /
+vo-frame_outputvo-dovi-p7-to-p81 in stock mpv 0.41.0 (patch 0007,
+append-only series; verified to apply cleanly on a pristine tree
+after 0001-0006).
+
+Spec: ~/workspace/p115-player-re/full-restoration/R-05-fel.md S1/S2.
+Stock mpv has none of these options, so every player-side set was
+silently dropped (mpv_set_option_string failure, log-only).  This
+patch only registers the options and stores their values; the
+demux/decode/pairing machinery that consumes them in the fork is
+the remaining R-05 work and is NOT claimed here.
+
+Self-determined (NOT original values, memo S6.2): the fork's option
+types/defaults were not extracted.  dovi-fel is bool default no;
+dovi-fel-hwdec is a choice defaulting to auto (matching the
+original's defaultOptions value per R-08); the vo sub-option is
+bool default no.
+
+--- a/options/options.c
++++ b/options/options.c
+@@ -808,6 +808,19 @@
+         {"vo", 1},
+         {"decoder", 2},
+         {"decoder+vo", 3})},
++    // R-05 FEL options (patch 0007, append-only series).  The fork
++    // registers dovi-fel / dovi-fel-hwdec (R-05 memo S2); stock mpv
++    // has neither, so the player's sets were silently dropped before
++    // this patch.  Types/defaults are OUR choice, labelled as such:
++    // the fork's option types and defaults were not extracted from
++    // the binary (memo S6.2).  dovi-fel defaults to no (the player
++    // writes it explicitly on every open); dovi-fel-hwdec defaults
++    // to auto to match the original's defaultOptions value (R-08).
++    {"dovi-fel", OPT_BOOL(dovi_fel)},
++    {"dovi-fel-hwdec", OPT_CHOICE(dovi_fel_hwdec,
++        {"auto", 0},
++        {"yes", 1},
++        {"no", 2})},
+     {"video-latency-hacks", OPT_BOOL(video_latency_hacks)},
+ 
+     {"untimed", OPT_BOOL(untimed)},
+--- a/options/options.h
++++ b/options/options.h
+@@ -264,6 +264,8 @@
+     float default_max_pts_correction;
+     int autosync;
+     int frame_dropping;
++    bool dovi_fel;          // R-05 (0007): fork option dovi-fel
++    int dovi_fel_hwdec;     // R-05 (0007): 0=auto, 1=yes, 2=no
+     bool video_latency_hacks;
+     int term_osd;
+     bool term_osd_bar;
+--- a/video/out/vo_frame_output.c
++++ b/video/out/vo_frame_output.c
+@@ -178,6 +178,7 @@
+     char *sink;             // --vo-frame_outputvo-sink (NULL = "default")
+     int subtitle_width;     // --vo-frame_outputvo-subtitle-width (0 = video)
+     int subtitle_height;    // --vo-frame_outputvo-subtitle-height
++    bool dovi_p7_to_p81;    // --vo-frame_outputvo-dovi-p7-to-p81 (R-05, patch 0007)
+ 
+     struct mp_image_params params;
+     bool have_params;
+@@ -591,6 +592,7 @@
+         {"sink", OPT_STRING(sink)},
+         {"subtitle-width", OPT_INT(subtitle_width), M_RANGE(0, 16384)},
+         {"subtitle-height", OPT_INT(subtitle_height), M_RANGE(0, 16384)},
++        {"dovi-p7-to-p81", OPT_BOOL(dovi_p7_to_p81)},
+         {0},
+     },
+     .options_prefix = "vo-frame_outputvo",

@@ -516,8 +516,17 @@ final class MPlayPlayer {
             _ = mpv_set_property_string(core, "hwdec-software-fallback", "3")
             self.felLock.lock()
             let felRequested = self.felHWDecRequested
+            let p7ToP81 = self.p7ToP81Requested
             self.felLock.unlock()
+            // R-05 wave 1: dovi-fel / dovi-fel-hwdec are real core
+            // options since patch 0007 (previously unregistered in
+            // stock mpv, so these sets silently failed).  The core
+            // now stores them; the demux/decode/pairing machinery
+            // that consumes them in the fork is still pending
+            // (R-05 components 4/5), so this remains wiring, not a
+            // claim that FEL composition is active in-core.
             _ = mpv_set_property_string(core, "dovi-fel", felRequested ? "yes" : "no")
+            _ = mpv_set_property_string(core, "vo-frame_outputvo-dovi-p7-to-p81", p7ToP81 ? "yes" : "no")
             let tag = self.nextReplyTag
             self.nextReplyTag += 1
             if let completion {
@@ -747,6 +756,24 @@ final class MPlayPlayer {
 
     private let felLock = NSLock()
     private var felHWDecRequested = false
+    private var p7ToP81Requested = false
+
+    /// The fork's vo sub-option `vo-frame_outputvo-dovi-p7-to-p81`
+    /// (R-05 memo §1.5/§2): the single-layer fallback that presents
+    /// P7 as P8.1 (EL excluded at stream level, RPU carried on the
+    /// BL).  Registered in the vo by patch 0007; written on every
+    /// open() from this runtime flag, mirroring how dovi-fel is
+    /// driven.  The stream-level EL exclusion itself is part of
+    /// the pending native R-05 components 4/5.
+    func setDolbyVisionP7ToP81(_ enabled: Bool) {
+        felLock.lock()
+        p7ToP81Requested = enabled
+        felLock.unlock()
+        if let core, !closed {
+            _ = mpv_set_property_string(core, "vo-frame_outputvo-dovi-p7-to-p81", enabled ? "yes" : "no")
+        }
+        MPlayDiagnostics.log("dovi-p7-to-p81 \(enabled ? "requested" : "cleared")")
+    }
 
     /// CoreCustom `dovi-fel-hwdec` 标记位的等价物：请求 FEL 走硬解
     /// 路径。落地形态是播放器级标记 + 把 hwdec 钉在 videotoolbox

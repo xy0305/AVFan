@@ -39,6 +39,15 @@
 //    decoder to the VideoToolbox path.  Dual-layer composition
 //    itself is documented as not reproducible on stock mpv in
 //    Build59-MPlayKit.md.
+//  - R-05 wave 1 (2026-11-24): the extracted compose_fel shader
+//    now lives verbatim in MPlayPostChain.metal with a matching
+//    pass in MPlayPostChain (runFELCompose), FELParams packing +
+//    the dovi_split classification contract live in MPlayFEL.swift,
+//    and patch 0007 registers dovi-fel / dovi-fel-hwdec /
+//    vo-frame_outputvo-dovi-p7-to-p81 as real core options.  The
+//    native demux/dual-decode/pairing components (R-05 memo §5
+//    items 4/5) are still pending, so no EL frame reaches the pass
+//    yet — composition is landed, not active.
 //
 
 import Foundation

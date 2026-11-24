@@ -258,4 +258,34 @@ kernel void pkInterpKernel0(
 // extracted from the original — DOLBY-EXTRACTION.md).  An earlier
 // build routed playback P5 frames through a GPU correction pass
 // here (pkDoviP5Kernel0); that pass had no counterpart in the
-// original's playback path and was removed.
+// original's playback path and was removed.  (R-05 update: the
+// compose_fel kernel appended below IS an original playback-path
+// kernel — the fork's FEL dual-layer composition in its vo —
+// extracted verbatim; it is not a P5 correction pass and only
+// runs when an EL frame is actually supplied, see
+// MPlayPostChain.runFELCompose.)
+
+// MARK: - FEL composition (R-05, extracted verbatim)
+//
+// The compose_fel shader below is the original's own Metal source,
+// extracted verbatim from the SenPlayer binary (file offset
+// 0x4555c48, 4,952 bytes; archived at
+// ~/workspace/p115-player-re/full-restoration/R-05-compose_fel.metal).
+// Its hard-coded hpe matrix matches matrix A of
+// DOLBY-EXTRACTION.md value for value.  The values must NOT be
+// edited.  Only the extraction's first two lines (#include
+// <metal_stdlib> / using namespace metal) are omitted here because
+// this library file already carries them at its head; everything
+// from `struct FELParams` onward is byte-identical to the
+// extraction.  Driven by MPlayPostChain.runFELCompose with
+// parameters packed by MPlayFELParams (MPlayFEL.swift).
+
+struct FELParams { uint width; uint height; uint num_pivots[3]; float pivots[3][9]; uint method[3][8]; uint poly_order[3][8]; float poly_coef[3][8][3]; uint mmr_order[3][8]; float mmr_constant[3][8]; float mmr_coef[3][8][3][7]; float nlq_offset[3]; float nlq_slope[3]; float nlq_threshold[3]; float nonlinear_offset[3]; float nonlinear[9]; float linear[9]; };
+float3 mul3(const device float *m, float3 v) { return float3(m[0]*v.x+m[1]*v.y+m[2]*v.z, m[3]*v.x+m[4]*v.y+m[5]*v.z, m[6]*v.x+m[7]*v.y+m[8]*v.z); }
+float pq_eotf(float x) { constexpr float m1=0.1593017578125, m2=78.84375, c1=0.8359375, c2=18.8515625, c3=18.6875; x=pow(max(x,0.0f),1.0f/m2); return pow(max(x-c1,0.0f)/(c2-c3*x),1.0f/m1); }
+float pq_oetf(float x) { constexpr float m1=0.1593017578125, m2=78.84375, c1=0.8359375, c2=18.8515625, c3=18.6875; x=pow(max(x,0.0f),m1); return pow((c1+c2*x)/(1.0f+c3*x),m2); }
+float reshape(uint c, float3 sig, const device FELParams &p) { float s=sig[c]; uint piece=0; for (uint i=1; i+1<p.num_pivots[c]; i++) piece += s>=p.pivots[c][i]; if (p.method[c][piece]==0) { return clamp((p.poly_coef[c][piece][2]*s+p.poly_coef[c][piece][1])*s+p.poly_coef[c][piece][0],p.pivots[c][0],p.pivots[c][p.num_pivots[c]-1]); } float3 sig2=sig*sig; float4 cross=float4(sig.x*sig.y,sig.x*sig.z,sig.y*sig.z,sig.x*sig.y*sig.z); float4 cross2=cross*cross; float value=p.mmr_constant[c][piece]; for (uint order=0; order<p.mmr_order[c][piece]; order++) { float3 power=order==0?sig:(order==1?sig2:sig2*sig); float4 crossPower=order==0?cross:(order==1?cross2:cross2*cross); const device float *k=p.mmr_coef[c][piece][order]; value += dot(float3(k[0],k[1],k[2]),power)+dot(float4(k[3],k[4],k[5],k[6]),crossPower); } return clamp(value,p.pivots[c][0],p.pivots[c][p.num_pivots[c]-1]); }
+float2 shifted(texture2d<float,access::sample> tex, float2 pos, float2 pixels) { return pos+pixels/float2(tex.get_width(),tex.get_height()); } float3 sample_bl(texture2d<float,access::sample> y, texture2d<float,access::sample> uv, sampler s, float2 pos) { constexpr float p010_to_code=65535.0f/65472.0f; return float3(y.sample(s,pos).r,uv.sample(s,shifted(uv,pos,float2(0.25f))).rg)*p010_to_code; } float3 sample_el(texture2d<float,access::sample> y, texture2d<float,access::sample> uv, sampler s, float2 pos) { constexpr float p010_to_code=65535.0f/65472.0f; return float3(y.sample(s,shifted(y,pos,float2(0.25f,0.0f))).r,uv.sample(s,shifted(uv,pos,float2(0.375f,0.25f))).rg)*p010_to_code; }
+float3 compose(texture2d<float,access::sample> bly, texture2d<float,access::sample> bluv, texture2d<float,access::sample> ely, texture2d<float,access::sample> eluv, sampler s, float2 pos, const device FELParams &p) { float3 raw=sample_bl(bly,bluv,s,pos); float3 shaped=float3(reshape(0,raw,p),reshape(1,raw,p),reshape(2,raw,p)); float3 el=sample_el(ely,eluv,s,pos); float3 centered=el-float3(p.nlq_offset[0],p.nlq_offset[1],p.nlq_offset[2]); shaped += sign(centered)*(abs(centered)*float3(p.nlq_slope[0],p.nlq_slope[1],p.nlq_slope[2])+float3(p.nlq_threshold[0],p.nlq_threshold[1],p.nlq_threshold[2])); constexpr float offset_scale=1024.0f/1023.0f; float3 d=shaped-float3(p.nonlinear_offset[0],p.nonlinear_offset[1],p.nonlinear_offset[2])*offset_scale; float3 nonlinear=mul3(p.nonlinear,d); float3 linear=float3(pq_eotf(nonlinear.x),pq_eotf(nonlinear.y),pq_eotf(nonlinear.z)); linear=mul3(p.linear,linear); constexpr float hpe[9]={3.06441879,-2.16597676,0.10155818,-0.65612108,1.78554118,-0.12943749,0.01736321,-0.04725154,1.03004253}; linear=float3(hpe[0]*linear.x+hpe[1]*linear.y+hpe[2]*linear.z,hpe[3]*linear.x+hpe[4]*linear.y+hpe[5]*linear.z,hpe[6]*linear.x+hpe[7]*linear.y+hpe[8]*linear.z); return clamp(float3(pq_oetf(linear.x),pq_oetf(linear.y),pq_oetf(linear.z)),0.0f,1.0f); }
+kernel void compose_fel(texture2d<float,access::sample> bly [[texture(0)]], texture2d<float,access::sample> bluv [[texture(1)]], texture2d<float,access::sample> ely [[texture(2)]], texture2d<float,access::sample> eluv [[texture(3)]], texture2d<float,access::write> outy [[texture(4)]], texture2d<float,access::write> outuv [[texture(5)]], const device FELParams &p [[buffer(0)]], uint2 block [[thread_position_in_grid]]) { uint2 base=block*2; if (base.x>=p.width||base.y>=p.height) return; constexpr sampler s(coord::normalized,address::clamp_to_edge,filter::linear); constexpr float p010_max=1023.984375f; float2 size=float2(p.width,p.height); float3 rgb[4]; float yv[4]; for(uint i=0;i<4;i++){ uint2 q=base+uint2(i&1,i>>1); q=min(q,uint2(p.width-1,p.height-1)); rgb[i]=compose(bly,bluv,ely,eluv,s,(float2(q)+0.5f)/size,p); yv[i]=dot(rgb[i],float3(0.2627f,0.6780f,0.0593f)); outy.write(float4((64.0f+876.0f*yv[i])/p010_max),q); } float3 avg=(rgb[0]+rgb[1]+rgb[2]+rgb[3])*0.25f; float ya=(yv[0]+yv[1]+yv[2]+yv[3])*0.25f; float cb=(avg.b-ya)/1.8814f; float cr=(avg.r-ya)/1.4746f; outuv.write(float4((512.0f+896.0f*cb)/p010_max,(512.0f+896.0f*cr)/p010_max,0,1),block); }
+

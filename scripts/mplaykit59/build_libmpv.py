@@ -38,12 +38,14 @@ meson parameters vs. ours, item by item:
             frame_output vo (patches/0001-vo-frame-output.patch,
             applied to the extracted mpv tree by fetch_all()).
             The patch series is append-only and accounted by prefix
-            digest in apply_patches(); its current head,
-            patches/0005-ao-audiounit-fork.patch, ports the original
-            fork's ao_audiounit rework (R-32: independent reset,
-            set_pause, per-step session error logging, stereo
-            fallback on layout failure, input-scope layout check,
-            int64-nanosecond latency in priv).
+            digest in apply_patches(); patches/0005 ports the
+            original fork's ao_audiounit rework (R-32), 0006 renames
+            the vo to frame_outputvo, and the current head,
+            patches/0007-dovi-fel-options.patch, registers the
+            fork's dovi-fel / dovi-fel-hwdec options and the vo's
+            dovi-p7-to-p81 sub-option (R-05 wave 1; registration
+            only — the FEL demux/decode/pairing machinery is not
+            in the series yet).
             Remaining deliberate divergences:
             * libavdevice (FFmpeg device input) stays off: no
               device/disc input sources are needed (recorded in the

@@ -94,7 +94,35 @@ final class MPlayPostChain {
     var dolbyProfile: Int = 0
 
     var isEnabled: Bool {
-        sdrToHDRLevel != .off || upscalingLevel != .off || frameInterpolationEnabled
+        sdrToHDRLevel != .off || upscalingLevel != .off || frameInterpolationEnabled || felInput != nil
+    }
+
+    // MARK: FEL composition input (R-05)
+
+    /// The enhancement-layer frame + RPU parameters for the next
+    /// composition, supplied by whoever decoded the EL (the native
+    /// EL path is R-05 components 4/5, still pending; until then
+    /// nothing in the app supplies this, so the pass stays inert —
+    /// it is never fed fabricated input).  Guarded by felLock
+    /// because the supplier and the chain queue differ.
+    private let felLock = NSLock()
+    private var felInputStorage: (buffer: CVPixelBuffer, params: MPlayFELParams)?
+    var felInput: (buffer: CVPixelBuffer, params: MPlayFELParams)? {
+        felLock.lock()
+        defer { felLock.unlock() }
+        return felInputStorage
+    }
+
+    func setFELInput(buffer: CVPixelBuffer, params: MPlayFELParams) {
+        felLock.lock()
+        felInputStorage = (buffer, params)
+        felLock.unlock()
+    }
+
+    func clearFELInput() {
+        felLock.lock()
+        felInputStorage = nil
+        felLock.unlock()
     }
 
     // MARK: Metal state
@@ -107,6 +135,7 @@ final class MPlayPostChain {
     private var upscalePipeline: MTLComputePipelineState?
     private var motionPipeline: MTLComputePipelineState?
     private var interpPipeline: MTLComputePipelineState?
+    private var felPipeline: MTLComputePipelineState?
     private var toneLUT: MTLTexture?
     private var outputPool: CVPixelBufferPool?
     private var outputPoolFormat: OSType = 0
@@ -218,6 +247,22 @@ final class MPlayPostChain {
             current = scaled
         }
 
+        // Pass 1.5: FEL composition (R-05).  Runs only when an EL
+        // frame + FELParams were actually supplied (see felInput);
+        // the composed output is a colour-tagged P010 frame like
+        // the BL input, so attachments propagate.  On any failure
+        // the BL frame continues untouched — the original's own
+        // fallback ("rendering base layer only").
+        if let fel = felInput,
+           fel.params.width == UInt32(current.width),
+           fel.params.height == UInt32(current.height),
+           let composed = runFELCompose(frame: current, elBuffer: fel.buffer,
+                                        params: fel.params,
+                                        device: device, commandQueue: commandQueue,
+                                        textureCache: textureCache) {
+            current = composed
+        }
+
         // Pass 2: tone path.  Dolby Vision streams skip it
         // entirely: the original applies no per-frame Dolby pixel
         // transform in playback (DOLBY-PLAYBACK.md) — DV frames
@@ -264,6 +309,7 @@ final class MPlayPostChain {
         upscalePipeline = pipeline("pkUpscaleKernel0")
         motionPipeline = pipeline("pkMotionKernel0")
         interpPipeline = pipeline("pkInterpKernel0")
+        felPipeline = pipeline("compose_fel")
     }
 
     /// Our own SDR->HDR curve as a 1D LUT: a soft-knee expansion
@@ -600,6 +646,63 @@ final class MPlayPostChain {
                           durationSeconds: current.durationSeconds / 2,
                           width: current.width, height: current.height,
                           isRepeat: false, frameID: current.frameID)
+    }
+
+    /// FEL dual-layer composition with the original's extracted
+    /// `compose_fel` kernel (verbatim in MPlayPostChain.metal).
+    /// P010 only: the shader samples packed P010 planes and writes
+    /// P010 Y/UV, one thread per 2x2 block.  Returns nil on any
+    /// mismatch so the caller falls back to the base layer.
+    private func runFELCompose(frame: MPlayFrame, elBuffer: CVPixelBuffer,
+                               params: MPlayFELParams,
+                               device: MTLDevice, commandQueue: MTLCommandQueue,
+                               textureCache: CVMetalTextureCache) -> MPlayFrame? {
+        guard let pipeline = felPipeline else { return nil }
+        let src = frame.pixelBuffer
+        let format = CVPixelBufferGetPixelFormatType(src)
+        guard format == kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange,
+              CVPixelBufferGetPixelFormatType(elBuffer) == format,
+              CVPixelBufferGetWidth(elBuffer) == frame.width,
+              CVPixelBufferGetHeight(elBuffer) == frame.height,
+              let planes = planeFormats(for: format),
+              let out = outputBuffer(format: format, width: frame.width, height: frame.height),
+              let blY = texture(from: src, plane: 0, format: planes.luma, cache: textureCache),
+              let blUV = texture(from: src, plane: 1, format: planes.chroma, cache: textureCache),
+              let elY = texture(from: elBuffer, plane: 0, format: planes.luma, cache: textureCache),
+              let elUV = texture(from: elBuffer, plane: 1, format: planes.chroma, cache: textureCache),
+              let dstY = texture(from: out, plane: 0, format: planes.luma, cache: textureCache),
+              let dstUV = texture(from: out, plane: 1, format: planes.chroma, cache: textureCache),
+              let commandBuffer = commandQueue.makeCommandBuffer(),
+              let encoder = commandBuffer.makeComputeCommandEncoder()
+        else { return nil }
+        encoder.setTexture(blY, index: 0)
+        encoder.setTexture(blUV, index: 1)
+        encoder.setTexture(elY, index: 2)
+        encoder.setTexture(elUV, index: 3)
+        encoder.setTexture(dstY, index: 4)
+        encoder.setTexture(dstUV, index: 5)
+        let bytes = params.metalBytes()
+        bytes.withUnsafeBytes { raw in
+            encoder.setBytes(raw.baseAddress!, length: raw.count, index: 0)
+        }
+        // The kernel's grid is in 2x2 blocks (thread_position_in_grid
+        // is the block coordinate), so dispatch one thread per block.
+        encoder.setComputePipelineState(pipeline)
+        encoder.dispatchThreadgroups(
+            MTLSize(width: (frame.width + 1) / 2, height: (frame.height + 1) / 2, depth: 1),
+            threadsPerThreadgroup: MTLSize(width: 1, height: 1, depth: 1)
+        )
+        encoder.endEncoding()
+        commandBuffer.commit()
+        commandBuffer.waitUntilCompleted()
+        guard commandBuffer.status == .completed else { return nil }
+        propagateAttachments(from: src, to: out)
+        return MPlayFrame(kind: .video, pixelBuffer: out,
+                          realtimePTS: frame.realtimePTS,
+                          ptsSeconds: frame.ptsSeconds,
+                          durationSeconds: frame.durationSeconds,
+                          width: frame.width, height: frame.height,
+                          isRepeat: frame.isRepeat, frameID: frame.frameID)
     }
 
     private func copyPlane(from source: CVPixelBuffer, to destination: CVPixelBuffer, plane: Int) {
