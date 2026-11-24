@@ -226,25 +226,54 @@ struct MovieDetailView: View {
     /// up and down mid-scroll. Only a real resize (rotation,
     /// split view) may re-measure.
     @State private var pageSize: CGSize?
+    /// Top safe-area inset, frozen alongside pageSize (build 59
+    /// jitter fix). Build 40 froze the SIZE the hero geometry is
+    /// computed from, but the ScrollView still extended into the
+    /// top safe area via the LIVE inset
+    /// (.ignoresSafeArea(.container, edges: .top)): on iOS 27
+    /// that inset re-measures (59 <-> ~24 pt) once after the
+    /// push transition and again during drags that start on the
+    /// cover, so the whole page snapped ~35 pt up/down while
+    /// the chrome overlay (anchored to the reader) stayed put —
+    /// the detail-page jitter that came back in build 59's
+    /// device tests. The scroll view's top extension is now a
+    /// frozen constant: an explicit frame + offset computed
+    /// from this value, and the automatic top content margin
+    /// is pinned to zero, so neither the frame channel nor the
+    /// content channel can follow a live re-measurement.
+    @State private var frozenTopInset: CGFloat?
 
     var body: some View {
         GeometryReader { proxy in
+            let layoutSize = pageSize ?? proxy.size
+            let topInset = frozenTopInset ?? proxy.safeAreaInsets.top
             ScrollView {
-                detailContent(display, width: (pageSize ?? proxy.size).width, height: (pageSize ?? proxy.size).height)
+                detailContent(display, width: layoutSize.width, height: layoutSize.height)
             }
             .scrollIndicators(.hidden)
-            .ignoresSafeArea(.container, edges: .top)
+            // Frozen top extension (see frozenTopInset): the
+            // frame spans the reader's full height plus the
+            // frozen inset, shifted up by the same amount, so
+            // the hero reaches the screen's top edge exactly as
+            // .ignoresSafeArea(.container, edges: .top) placed
+            // it — but as a pure function of frozen numbers.
+            .frame(width: layoutSize.width, height: layoutSize.height + topInset)
+            .offset(y: -topInset)
+            .contentMargins(.top, 0, for: .scrollContent)
             .background(AVFanTheme.pageBackground)
             .onAppear {
                 if pageSize == nil { pageSize = proxy.size }
+                if frozenTopInset == nil { frozenTopInset = proxy.safeAreaInsets.top }
             }
             .onChange(of: proxy.size) { _, newSize in
                 guard let current = pageSize else {
                     pageSize = newSize
+                    frozenTopInset = proxy.safeAreaInsets.top
                     return
                 }
                 if abs(newSize.width - current.width) > 120 || abs(newSize.height - current.height) > 120 {
                     pageSize = newSize
+                    frozenTopInset = proxy.safeAreaInsets.top
                 }
             }
         }
