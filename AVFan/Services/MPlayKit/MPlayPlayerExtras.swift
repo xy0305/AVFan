@@ -130,7 +130,6 @@ enum MPlayTrackChoice {
 // File-scope bookkeeping for the extension surface (extensions
 // cannot hold stored properties).
 private let extrasLock = NSLock()
-private var decoderSwitchTargets: [UInt64: Bool] = [:]
 private var activePreviewReaders: [ObjectIdentifier: MPlayPreviewReader] = [:]
 
 extension MPlayPlayer {
@@ -290,39 +289,32 @@ extension MPlayPlayer {
 
     /// beginDecoderSwitch(hardware:timeoutMS:) — switches the hwdec
     /// property (mpv applies it to the running decoder) and returns
-    /// a token for decoderSwitchResult.  The original performs the
-    /// switch inside its fork and reports completion itself; ours
-    /// observes hwdec-current, which is the strongest signal stock
-    /// mpv exposes (documented approximation).
+    /// a token for decoderSwitchResult.  R-07 stock-side
+    /// strengthening: the set is issued asynchronously
+    /// (mpv_set_property_async) and timeoutMS is honoured as the
+    /// wait bound (non-positive falls back to the original app
+    /// layer's 10000 ms default); the full state machine lives in
+    /// MPlayPlayer's decoder-switch section.  The original performs
+    /// the switch inside its fork and reports a kernel status code
+    /// itself — that mechanism is X-07, closed as not restorable;
+    /// what is implemented here is the strongest stock equivalent,
+    /// and the fork's failure-reason dimension is not approximated.
     func beginDecoderSwitch(hardware: Bool, timeoutMS: Double) -> UInt64 {
-        let token = beginDecoderSwitchRecord(hardware: hardware)
-        extrasLock.lock()
-        decoderSwitchTargets[token] = hardware
-        extrasLock.unlock()
-        setProp("hwdec", hardware ? "videotoolbox" : "no")
-        _ = timeoutMS // the result poll below caps its own wait
-        return token
+        beginDecoderSwitchRecord(hardware: hardware, timeoutMS: timeoutMS)
     }
 
+    /// decoderSwitchResult(source:) — event-driven result, no
+    /// polling: the wait ends when the async set's reply, the
+    /// observed hwdec-current change and a PLAYBACK_RESTART have
+    /// combined into a terminal state (see MPlayPlayer).  Four
+    /// tiers: 0 = target reached and confirmed; the mpv error code
+    /// itself when the async set is rejected; -16
+    /// (MPV_ERROR_NOTHING_TO_PLAY) when there is no loaded file or
+    /// no selected video track; -19 on timeout after the begin
+    /// call's timeoutMS.  Unknown or superseded tokens return -2,
+    /// and a finished switch keeps returning its terminal code.
     func decoderSwitchResult(source token: UInt64) async -> Int32 {
-        extrasLock.lock()
-        let hardware = decoderSwitchTargets[token]
-        extrasLock.unlock()
-        guard let hardware else { return -2 }
-        if decoderSwitchCompleted(token: token) { return 0 }
-        let deadline = Date().addingTimeInterval(5)
-        while Date() < deadline {
-            let current = progress().hwdecCurrent
-            let reached = hardware
-                ? current.contains("videotoolbox")
-                : (current == "no" || current.isEmpty)
-            if reached {
-                markDecoderSwitchCompleted(token: token)
-                return 0
-            }
-            try? await Task.sleep(nanoseconds: 100_000_000)
-        }
-        return -19
+        await awaitDecoderSwitchResult(token: token)
     }
 
     /// recoverVideoToolbox(to:) — the equivalent of the original's

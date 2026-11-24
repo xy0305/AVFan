@@ -138,26 +138,211 @@ final class MPlayPlayer {
         queue.async { [weak self] in self?.displayCriteriaGen &+= 1 }
     }
 
+    // MARK: Decoder switch (R-07 stock-side strengthening)
+    //
+    // The original's explicit result comes from its fork kernel
+    // bridge (`decoderSwitch`, X-07 — closed as not restorable).
+    // This is the strongest equivalent stock mpv 0.41 supports,
+    // per full-restoration/R-07-vt-switch.md Q5: the hwdec change
+    // is issued with mpv_set_property_async and judged by events,
+    // never by polling hwdec-current —
+    //   * MPV_EVENT_SET_PROPERTY_REPLY for the async set
+    //     (accepted vs rejected, with the mpv error code);
+    //   * MPV_EVENT_PROPERTY_CHANGE for hwdec-current, observed
+    //     via mpv_observe_property (the property is in stock
+    //     mpv's property-change notification table);
+    //   * MPV_EVENT_PLAYBACK_RESTART after both of the above as
+    //     confirmation the new decoder is acting on the stream.
+    // Terminal codes (four tiers, plus the token convention):
+    //   0    target reached and confirmed;
+    //   <0   the mpv error from the async set when it is rejected
+    //        (immediate send failure or SET_PROPERTY_REPLY error);
+    //   -16  MPV_ERROR_NOTHING_TO_PLAY: no file loaded or no
+    //        selected video track, so no decoder exists to switch;
+    //   -19  timeout after the begin call's timeoutMS (the code
+    //        this surface has always used for its timeout tier);
+    //   -2   unknown or superseded token (existing convention).
+    // What stock cannot give back is the fork's failure-reason
+    // dimension (which VideoToolbox failure point fired); that
+    // stays declared under X-07, not approximated here.
+
+    /// reply_userdata namespaces for the decoder-switch async
+    /// traffic.  pendingOpens uses small sequential tags and seeks
+    /// use 0, so these live at the top of the UInt64 range.
+    private static let decoderSwitchObserveTag: UInt64 = 0xFFFF_FFFF_FFFF_0001
+    private static let decoderSwitchSetTagBase: UInt64 = 0xFFFF_FFFF_0000_0000
+    private static func decoderSwitchSetTag(token: UInt64) -> UInt64 {
+        decoderSwitchSetTagBase &+ token
+    }
+
+    private enum DecoderSwitchSetState {
+        case pending
+        case accepted
+        case rejected(Int32)
+    }
+
+    private struct DecoderSwitchRecord {
+        var token: UInt64
+        var hardware: Bool
+        /// Effective wait bound in seconds (see begin).
+        var timeoutSeconds: Double
+        var setState: DecoderSwitchSetState = .pending
+        var targetObserved = false
+        var restartSeen = false
+        var noVideo = false
+        var terminal: Int32? = nil
+    }
+
     private var decoderSwitchCounter: UInt64 = 0
-    private var decoderSwitchState: (token: UInt64, hardware: Bool, completed: Bool) =
-        (token: 0, hardware: true, completed: true)
-    func beginDecoderSwitchRecord(hardware: Bool) -> UInt64 {
+    private var decoderSwitchRecord: DecoderSwitchRecord? = nil
+    private var decoderSwitchWaiters: [UInt64: [CheckedContinuation<Int32, Never>]] = [:]
+    /// Latest hwdec-current value delivered by the property
+    /// observer (queue only); "" until the first change event.
+    private var observedHWDecCurrent = ""
+
+    private static func hwdecMatches(_ value: String, hardware: Bool) -> Bool {
+        hardware ? value.contains("videotoolbox")
+                 : (value == "no" || value.isEmpty)
+    }
+
+    /// Queue only: is there a loaded file with a selected video
+    /// track — i.e. a decoder that a switch could act on?
+    private func hasSwitchableVideoLocked() -> Bool {
+        guard fileLoaded else { return false }
+        let count = Int(getInt64("track-list/count") ?? 0)
+        guard count > 0 else { return false }
+        for index in 0..<count {
+            let prefix = "track-list/\(index)/"
+            if getString(prefix + "type") == "video",
+               getFlag(prefix + "selected") == true {
+                return true
+            }
+        }
+        return false
+    }
+
+    /// Queue only: stamp the record's terminal code and resume
+    /// every waiter registered for its token.
+    private func finalizeDecoderSwitch(_ record: inout DecoderSwitchRecord,
+                                       code: Int32) {
+        record.terminal = code
+        let waiters = decoderSwitchWaiters.removeValue(forKey: record.token) ?? []
+        for waiter in waiters {
+            waiter.resume(returning: code)
+        }
+    }
+
+    /// Queue only: re-evaluate the pending switch against the
+    /// signals received so far.  Rejection outranks the no-video
+    /// tier; success needs all three signals (set accepted,
+    /// target observed, playback restart).
+    private func evaluateDecoderSwitchLocked() {
+        guard var record = decoderSwitchRecord, record.terminal == nil
+        else { return }
+        switch record.setState {
+        case .rejected(let rc):
+            finalizeDecoderSwitch(&record, code: rc)
+        case .accepted where record.noVideo:
+            finalizeDecoderSwitch(&record, code: -16)
+        case .accepted where record.targetObserved && record.restartSeen:
+            finalizeDecoderSwitch(&record, code: 0)
+        default:
+            break
+        }
+        decoderSwitchRecord = record
+    }
+
+    /// beginDecoderSwitch's core-side half (Extras): registers the
+    /// switch, issues the async hwdec set, and arms the timeout.
+    /// timeoutMS is honoured as the wait bound; a non-positive
+    /// value falls back to the original app layer's default
+    /// decoderSwitchTimeoutMs of 10000 ms (R-07 memo Q2).
+    func beginDecoderSwitchRecord(hardware: Bool, timeoutMS: Double) -> UInt64 {
         onPlayerQueue {
+            // A new begin supersedes a still-pending switch: its
+            // waiters get the unknown/superseded code instead of
+            // hanging until their own deadline.
+            if var old = decoderSwitchRecord, old.terminal == nil {
+                finalizeDecoderSwitch(&old, code: -2)
+                decoderSwitchRecord = old
+            }
             decoderSwitchCounter &+= 1
-            decoderSwitchState = (token: decoderSwitchCounter,
-                                  hardware: hardware, completed: false)
-            return decoderSwitchCounter
+            let token = decoderSwitchCounter
+            let timeoutSeconds = timeoutMS > 0 ? timeoutMS / 1000.0 : 10.0
+            var record = DecoderSwitchRecord(token: token,
+                                             hardware: hardware,
+                                             timeoutSeconds: timeoutSeconds)
+            record.noVideo = !hasSwitchableVideoLocked()
+            // Baseline: if hwdec-current already reads as the
+            // target, that alone must not complete the switch
+            // (the memo's false-completion window) — success still
+            // requires this begin's async set to be accepted and a
+            // PLAYBACK_RESTART that follows it.
+            if let current = getString("hwdec-current"),
+               Self.hwdecMatches(current, hardware: hardware) {
+                record.targetObserved = true
+            }
+            decoderSwitchRecord = record
+            if let core, !closed {
+                let value = hardware ? "videotoolbox" : "no"
+                let rc: Int32 = "hwdec".withCString { cName in
+                    value.withCString { cValue in
+                        var pointer: UnsafePointer<CChar>? = cValue
+                        return withUnsafeMutablePointer(to: &pointer) { mutable in
+                            mpv_set_property_async(
+                                core, Self.decoderSwitchSetTag(token: token),
+                                cName, MPV_FORMAT_STRING,
+                                UnsafeMutableRawPointer(mutable))
+                        }
+                    }
+                }
+                if rc < 0, var pending = decoderSwitchRecord,
+                   pending.token == token {
+                    pending.setState = .rejected(rc)
+                    decoderSwitchRecord = pending
+                }
+            } else if var pending = decoderSwitchRecord, pending.token == token {
+                pending.setState = .rejected(-3)
+                decoderSwitchRecord = pending
+            }
+            evaluateDecoderSwitchLocked()
+            queue.asyncAfter(deadline: .now() + timeoutSeconds) { [weak self] in
+                guard let self, var record = self.decoderSwitchRecord,
+                      record.token == token, record.terminal == nil
+                else { return }
+                // At the deadline the no-video tier still outranks
+                // a plain timeout: there was never a decoder whose
+                // switch could have timed out.
+                self.finalizeDecoderSwitch(&record,
+                                           code: record.noVideo ? -16 : -19)
+                self.decoderSwitchRecord = record
+            }
+            return token
         }
     }
-    func markDecoderSwitchCompleted(token: UInt64) {
-        queue.async { [weak self] in
-            guard let self, self.decoderSwitchState.token == token else { return }
-            self.decoderSwitchState.completed = true
-        }
-    }
-    func decoderSwitchCompleted(token: UInt64) -> Bool {
-        onPlayerQueue {
-            decoderSwitchState.token == token && decoderSwitchState.completed
+
+    /// decoderSwitchResult's core-side half (Extras): event-driven
+    /// wait — registers a continuation resumed by the event
+    /// handlers / the deadline, with no property polling.  A token
+    /// that is not the current switch returns -2 immediately; a
+    /// finished switch keeps returning its terminal code (the
+    /// original's result is likewise a repeatable query).
+    func awaitDecoderSwitchResult(token: UInt64) async -> Int32 {
+        await withCheckedContinuation { continuation in
+            queue.async { [weak self] in
+                guard let self,
+                      let record = self.decoderSwitchRecord,
+                      record.token == token
+                else {
+                    continuation.resume(returning: -2)
+                    return
+                }
+                if let terminal = record.terminal {
+                    continuation.resume(returning: terminal)
+                    return
+                }
+                self.decoderSwitchWaiters[token, default: []].append(continuation)
+            }
         }
     }
 
@@ -266,6 +451,17 @@ final class MPlayPlayer {
         _ = mpv_request_log_messages(handle, "info")
         mpv_set_wakeup_callback(handle, mplayWakeupCallback,
                                 Unmanaged.passUnretained(self).toOpaque())
+        // R-07: event-driven hwdec-current for the decoder-switch
+        // result (see the decoder-switch section above).  The
+        // observer's initial change event also seeds
+        // observedHWDecCurrent before any switch begins.
+        let observeRC = mpv_observe_property(
+            handle, Self.decoderSwitchObserveTag,
+            "hwdec-current", MPV_FORMAT_STRING)
+        if observeRC < 0 {
+            MPlayDiagnostics.log(level: 3, tag: "MPlayPlayer",
+                                 "event=observe_hwdec_current_failed code=\(observeRC)")
+        }
     }
 
     deinit {
@@ -704,6 +900,20 @@ final class MPlayPlayer {
         for entry in seeks {
             entry.completion()
         }
+        // R-07: a pending decoder switch ends with the handle
+        // convention code -3; later result queries keep returning
+        // it via the stamped terminal.
+        if var record = decoderSwitchRecord, record.terminal == nil {
+            finalizeDecoderSwitch(&record, code: -3)
+            decoderSwitchRecord = record
+        }
+        let strayWaiters = decoderSwitchWaiters
+        decoderSwitchWaiters.removeAll()
+        for (_, waiters) in strayWaiters {
+            for waiter in waiters {
+                waiter.resume(returning: -3)
+            }
+        }
     }
 
     /// 渲染面出错时由 MPlayVideoView 写入（对应 State.surfaceError）。
@@ -767,9 +977,60 @@ final class MPlayPlayer {
                 for entry in seeks {
                     entry.completion()
                 }
+                // R-07: a restart after the switch's async set is
+                // the confirmation signal that the new decoder is
+                // acting on the stream.
+                if var record = decoderSwitchRecord, record.terminal == nil {
+                    record.restartSeen = true
+                    decoderSwitchRecord = record
+                    evaluateDecoderSwitchLocked()
+                }
                 onPlaybackEvent?(.playbackRestart)
+            } else if event.event_id == MPV_EVENT_SET_PROPERTY_REPLY {
+                // R-07: the decoder switch's async hwdec set reply.
+                let tag = event.reply_userdata
+                if tag >= Self.decoderSwitchSetTagBase,
+                   var record = decoderSwitchRecord,
+                   record.token == tag &- Self.decoderSwitchSetTagBase,
+                   record.terminal == nil {
+                    record.setState = event.error == 0
+                        ? .accepted : .rejected(event.error)
+                    decoderSwitchRecord = record
+                    evaluateDecoderSwitchLocked()
+                }
+            } else if event.event_id == MPV_EVENT_PROPERTY_CHANGE {
+                // R-07: hwdec-current change from the observer
+                // registered in init (initial event included).
+                if event.reply_userdata == Self.decoderSwitchObserveTag {
+                    handleHWDecCurrentChange(event.data)
+                }
             }
             // 其余事件忽略。
+        }
+    }
+
+    /// MPV_EVENT_PROPERTY_CHANGE for hwdec-current: data 按
+    /// client.h 的 mpv_event_property 读；MPV_FORMAT_STRING 时
+    /// data 指向 char* 本身（*(char**)data），属性不可用时 format
+    /// 为 MPV_FORMAT_NONE、值按空串计。只在 queue 上运行。
+    private func handleHWDecCurrentChange(_ data: UnsafeMutableRawPointer?) {
+        guard let data else { return }
+        let property = data.assumingMemoryBound(to: mpv_event_property.self).pointee
+        guard let name = property.name, String(cString: name) == "hwdec-current"
+        else { return }
+        var value = ""
+        if property.format == MPV_FORMAT_STRING, let storage = property.data {
+            let pointer = storage.assumingMemoryBound(to: UnsafePointer<CChar>?.self).pointee
+            if let pointer {
+                value = String(cString: pointer)
+            }
+        }
+        observedHWDecCurrent = value
+        if var record = decoderSwitchRecord, record.terminal == nil,
+           Self.hwdecMatches(value, hardware: record.hardware) {
+            record.targetObserved = true
+            decoderSwitchRecord = record
+            evaluateDecoderSwitchLocked()
         }
     }
 
