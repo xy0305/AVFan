@@ -16,9 +16,11 @@ dovi-fel-hwdec is a choice defaulting to auto (matching the
 original's defaultOptions value per R-08); the vo sub-option is
 bool default no.
 
+diff --git a/options/options.c b/options/options.c
+index 716c3e6..d85d6c6 100644
 --- a/options/options.c
 +++ b/options/options.c
-@@ -808,6 +808,19 @@
+@@ -808,6 +808,19 @@ static const m_option_t mp_opts[] = {
          {"vo", 1},
          {"decoder", 2},
          {"decoder+vo", 3})},
@@ -38,9 +40,11 @@ bool default no.
      {"video-latency-hacks", OPT_BOOL(video_latency_hacks)},
  
      {"untimed", OPT_BOOL(untimed)},
+diff --git a/options/options.h b/options/options.h
+index 12dafea..0fea048 100644
 --- a/options/options.h
 +++ b/options/options.h
-@@ -264,6 +264,8 @@
+@@ -264,6 +264,8 @@ typedef struct MPOpts {
      float default_max_pts_correction;
      int autosync;
      int frame_dropping;
@@ -49,9 +53,11 @@ bool default no.
      bool video_latency_hacks;
      int term_osd;
      bool term_osd_bar;
+diff --git a/video/out/vo_frame_output.c b/video/out/vo_frame_output.c
+index 58d6125..72c3da4 100644
 --- a/video/out/vo_frame_output.c
 +++ b/video/out/vo_frame_output.c
-@@ -178,6 +178,7 @@
+@@ -178,6 +178,7 @@ struct priv {
      char *sink;             // --vo-frame_outputvo-sink (NULL = "default")
      int subtitle_width;     // --vo-frame_outputvo-subtitle-width (0 = video)
      int subtitle_height;    // --vo-frame_outputvo-subtitle-height
@@ -59,7 +65,7 @@ bool default no.
  
      struct mp_image_params params;
      bool have_params;
-@@ -591,6 +592,7 @@
+@@ -591,6 +592,7 @@ const struct vo_driver video_out_frame_output = {
          {"sink", OPT_STRING(sink)},
          {"subtitle-width", OPT_INT(subtitle_width), M_RANGE(0, 16384)},
          {"subtitle-height", OPT_INT(subtitle_height), M_RANGE(0, 16384)},
