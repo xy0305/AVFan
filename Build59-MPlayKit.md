@@ -331,3 +331,48 @@ rpuData + 解析后 ColorMap + 软解平面 payloads；播放路径未发现
 - 缓冲附件与格式描述都对、后链「启用=否」却仍压黑 → 问题在系统呈现/时间基节奏，转查 status 与 timebase；
 - 后链「启用=是」且 SDR→HDR 级别非 0 → 先关设置页「画质增强」复测，即可判后链输出未打标是否元凶；
 - status=failed 或 error 有值 → 显示层拒帧，按 domain/code 查。
+
+## 压黑定位审计（123→128，2026-11-24 总盘）
+
+用户确认：装上 128（head `67da537`）后画面色彩直接恢复正常，未动设置页「画质增强」开关。总盘对 123（head `1606260`）→128 的全部 5 个提交逐个做了 diff 审计（帧附件 / 格式描述 / vo / FrameStore / 后链全域，含色彩相关标识符全量 grep），结论与预期相反，如实记录：
+
+**该区间没有任何一个提交改动默认播放路径上的色彩呈现逻辑**，逐个核对：
+
+- `9c5183a`（R-07）：只有解码切换结果语义（MPlayPlayer/MPlayPlayerExtras），不碰帧与色彩；
+- `bee9601`（R-05 波 1）：FEL 合成 pass 以 `felInput` 门控接入——无供应者、永不触发；`isEnabled` 新增的 `|| felInput != nil` 恒假；补丁 0007 只注册三个杜比选项（默认 no/auto/no，仅 P7 流相关）；p7-to-p81 接线默认 false、仅打开时写 vo 子选项。对 SDR 内容零影响；
+- `1fb6333`：补丁 0007 的文件格式修正，无代码语义；
+- `252e072`（显示侧审计 + 探针）：MPlayFrameOutput/MPlayVideoView 的新增全部是**只读探针**（计数、最近帧记录、缓冲附件与格式描述扩展的采集与日志）与接线；两处小修（layer 失败上报重布防、stats() 改队列内读）与色彩无关；
+- `67da537`：删探针里一个不存在的枚举 case，纯编译修正。
+
+**因此：「压黑修复」无法归因到该区间任何单个提交——123 与 128 的色彩呈现代码等价。** 用户在 128 上恢复正常，差异只能来自两次装机会话之间的状态/条件差异（代码之外）；探针数据未回传，凭现有证据无法追溯定案是哪一项。不许把任何一个上述提交标成「压黑修复点」——那是假归因，后续波次会守错地方。
+
+**真正的色彩呈现防回归区（禁止回归，后续波次动相邻代码必须保住并复核）**：
+
+1. 补丁 0004（`51186ba`）：vo 注册 VideoToolbox 解码设备（硬解帧自带色彩附件）+ 打包路径 `fo_attach_color()` 按 mp_image_params 写色彩附件——默认路径帧打标的源头；
+2. `07c7069` + `50ebb73`（杜比播放对齐）：保色 pass（超分/插帧）输出经 CVBufferPropagateAttachments 传播附件、杜比流整体跳过 tone pass——打标在后链不丢失的保证；
+3. 探针（`252e072`）：若压黑再现，先开「播放探针」截下 buffer[ ] 与 format[ ] 两段打标与后链实时状态再动手——这正是它装上的目的，不许再靠猜。
+
+## 装机四报：拖动 seek 后无限加载（2026-11-24）
+
+症状（用户录屏实证）：128 播 PPPE-449 色彩/字幕/网速均正常；拖动进度条（约 00:09 → 04:59，前向跳）后出现加载转圈，随后时间显示跳回 00:00、左下角播放键位置一直转圈、画面冻结在 seek 前最后一帧，再也不恢复。
+
+### 审计定案（逐环代码证据）
+
+- **seek 命令本身无误**：`MPlayPlayer.seek` 发 `seek <秒> absolute`（异步），完成回调挂 MPV_EVENT_PLAYBACK_RESTART；对照 mpv 0.41.0 源码（playloop.c `handle_playback_restart`），restart 在音视频双链 STATUS_READY 后必发，不是「事件永远不来」的设计缺陷。chrome 的 generation 守卫只作用于 open 回调，不碰 seek。
+- **UI 的 00:00 读数是真的**：位置标签 = `currentTime`，仅由 `syncTime()` 写 `engine.position`（= time-pos），且被 `seekPending` 门控；显示稳定停在 00:00 说明 seekPending 已清（restart 已到）而核心 time-pos 读数为 0/不可用、paused-for-cache 持续为真——核心在 seek 落地后仍处于缓冲态、迟迟不产帧。
+- **断点在我方 seek 呈现路径（与原版对照坐实）**：原版 FrameOutputView 的方法面有 `flush()`/`flushLocal()` 与 `syncPlaybackTime(_:rate:)`，seek 与冲队列、重锚时间基成对出现（IOS-FINDINGS §28）。我方 chrome seek 路径**两者都不做**（全仓 grep：syncPlaybackTime 的调用点只有 PiP 与 nudge，flush 只有 detach/displayLinkTick 的失败恢复）：
+  1. 显示层队列里 seek 前的样本（PTS≈旧位置）不冲掉，seek 后帧（PTS≈目标）排在其后构成非单调 PTS 序列，显示层不保证呈现；前向跳时新样本相对仍锚在旧位置的时间基落在数分钟后的未来，画面冻结在旧帧、就绪门控让调度器持续丢帧；
+  2. 唯一重锚机制是 1 秒节拍的 nudge，且其主队列 hop 携带在 VO 线程捕获的 PTS——seek 前捕获的 hop 可在 seek 后落地，把时间基重锚回旧位置（竞态，无任何失效机制）；
+  3. chrome 的 `seekPending` 无超时：restart 若迟迟不来，滑杆被 `.disabled(seekPending)` 永久禁用、手势层被 blocked、syncTime 永久冻结，UI 层无任何自恢复路径。
+
+### 修复（本轮）
+
+- `MPlayVideoView.noteSeekIssued(to:)`：协调器每次 seek 下发前调用——冲显示层队列、时间基以速率 0 停锚在目标、重置 nudge 节拍（seek 后第一帧立即重锚）、bump seek epoch；
+- nudge hop 携带捕获时的 epoch，epoch 已变（期间发生过 seek）则丢弃该次锚定，杜绝旧 PTS 跨 seek 落地；
+- 协调器在 PLAYBACK_RESTART 时按核心实际落点（time-pos）与实时速率重锚时间基，取代停锚；
+- chrome `seekPending` 加 12 秒看门狗（仅 UI 安全网：防 restart 缺席时界面永久砖化，不冒充播放修复）；
+- `MPlayPlayer` 记 seek 台账（最近目标 / restart 计数 / 待完成数），探针页新增「Seek」区：最近 seek 目标、seek 后收帧数（帧仓库计数差）、待完成 seek、restart 次数、core time-pos、paused-for-cache、demuxer-cache-duration；锚点值沿用「显示层」区的 timebase 时间/速率。
+
+### 装机复验
+
+装新包播任意长片：正常播 → 拖到中段（前向大跳）→ 应数秒内恢复播放（画面动、时间从目标附近走、转圈消失）；再后拖一次同样应恢复。若仍卡：开「播放探针」截图——判读：seek 后收帧持续 0 且 paused-for-cache=是、cache-duration=0 → 核心侧解复用在目标处不产帧（转查网络/范围请求）；收帧增长但 enqueue 不涨 → 显示层就绪门控；enqueue 涨而画面不动 → 看 timebase 时间是否推进。

@@ -232,6 +232,12 @@ final class MPlayChromeCoordinator: ObservableObject {
     /// KSPlayer's seek(time:autoPlay:).
     func seek(to seconds: Double, autoPlay: Bool, completion: (() -> Void)? = nil) {
         guard let player else { completion?(); return }
+        // The view flushes the display layer's stale queue and
+        // parks its timebase at the target (the original's
+        // FrameOutputView seek pairing); without this, post-seek
+        // frames enqueue behind pre-seek samples against a stale
+        // anchor and the picture never comes back after a jump.
+        frameProbeView?.noteSeekIssued(to: seconds)
         player.seek(to: seconds) { [weak self] in
             Task { @MainActor [weak self] in
                 if autoPlay { self?.player?.setPaused(false) }
@@ -325,7 +331,18 @@ final class MPlayChromeCoordinator: ObservableObject {
                 onEnded?(loadGeneration)
             }
         case .playbackRestart:
-            break
+            // The seek (or initial load) landed: re-anchor the
+            // display layer's timebase to the position the core
+            // actually landed on (keyframe-accurate, not the
+            // requested target) at the live rate, replacing the
+            // rate-0 park from noteSeekIssued.
+            if let player {
+                let state = player.state()
+                frameProbeView?.syncPlaybackTime(
+                    position: state.position,
+                    rate: state.paused ? 0 : 1
+                )
+            }
         }
     }
 

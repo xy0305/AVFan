@@ -237,6 +237,13 @@ struct MPlayPlaybackProbe {
     var formatPrimaries = "—"
     var formatTransfer = "—"
     var formatMatrix = "—"
+    // Seek state (view-owned: the target the chrome last sent to
+    // the view, and how many video frames the store has received
+    // since that moment — the pair discriminates "core stopped
+    // delivering after the seek" from "frames flow but the layer
+    // does not present them").
+    var seekTarget: Double?
+    var framesSinceSeek = 0
     // Post chain live state.
     var chainEnabled = false
     var chainSDRToHDR = 0

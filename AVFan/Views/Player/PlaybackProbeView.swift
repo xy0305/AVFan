@@ -14,6 +14,7 @@ struct PlaybackProbeView: View {
     @ObservedObject var engine: MPlayChromeCoordinator
     @State private var probe: MPlayPlaybackProbe?
     @State private var mpvRows: [(String, String)] = []
+    @State private var seekRows: [(String, String)] = []
 
     private let timer = Timer.publish(every: 0.5, on: .main, in: .common).autoconnect()
 
@@ -46,6 +47,13 @@ struct PlaybackProbeView: View {
                     probeRow("primaries", probe?.formatPrimaries ?? "—")
                     probeRow("transfer", probe?.formatTransfer ?? "—")
                     probeRow("matrix", probe?.formatMatrix ?? "—")
+                }
+                Section("Seek") {
+                    probeRow("最近 seek 目标", probe?.seekTarget.map(Self.seconds) ?? "—")
+                    probeRow("seek 后收帧", probe.map { "\($0.framesSinceSeek)" } ?? "—")
+                    ForEach(seekRows, id: \.0) { row in
+                        probeRow(row.0, row.1)
+                    }
                 }
                 Section("显示层") {
                     probeRow("status", probe?.layerStatus ?? "—")
@@ -89,8 +97,17 @@ struct PlaybackProbeView: View {
         probe = engine.frameProbeView?.probeSnapshot()
         guard let player = engine.player else {
             mpvRows = [("hwdec-current", "无播放器")]
+            seekRows = []
             return
         }
+        let seek = player.seekProbe()
+        seekRows = [
+            ("待完成 seek", "\(seek.pending)"),
+            ("restart 次数", "\(seek.restarts)"),
+            ("core time-pos", seek.timePos.map(Self.seconds) ?? "—"),
+            ("paused-for-cache", seek.pausedForCache ? "是" : "否"),
+            ("demuxer-cache-duration", Self.seconds(seek.cacheDuration)),
+        ]
         func prop(_ name: String) -> String {
             player.stringProperty(name) ?? "—"
         }

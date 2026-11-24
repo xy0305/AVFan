@@ -61,6 +61,20 @@ final class MPlayVideoView: UIView {
     /// thread itself).
     private var syncCheckInFlight = false
 
+    /// Seek epoch: bumped by noteSeekIssued on every seek.  A nudge
+    /// captures the epoch alongside the frame PTS it carries; if the
+    /// epoch moved before the main-queue hop runs, the captured PTS
+    /// belongs to the pre-seek stream and the hop must not anchor
+    /// the timebase to it (a stale anchor landing after a seek was
+    /// one of the post-seek stall defects: the layer's timebase
+    /// ended up a whole seek-jump away from every incoming frame).
+    private var seekEpoch: UInt64 = 0
+    /// Last seek target reported by the chrome, and the frame
+    /// store's video count at that moment (probe: frames since
+    /// seek = current count - this count).
+    private var lastSeekTarget: Double?
+    private var storeCountAtSeek = 0
+
     /// Mirrored output (the original's setMirroredRenderView): a
     /// second view fed the same post-chain frames this view enqueues.
     /// Weak — the host owns the mirror.
@@ -200,6 +214,8 @@ final class MPlayVideoView: UIView {
         displayCriteriaAppliedGeneration = .max
         lastSyncedRate = -1
         syncCheckInFlight = false
+        lastSeekTarget = nil
+        storeCountAtSeek = 0
     }
 
     // MARK: - Time sync
@@ -209,6 +225,41 @@ final class MPlayVideoView: UIView {
         scheduler.syncPlaybackTime(position: position, rate: rate)
         lastSyncedRate = rate
         lastSyncHostTime = CACurrentMediaTime()
+    }
+
+    /// Seek-issue handling, called by the chrome coordinator for
+    /// every seek it sends to the player (the original's
+    /// FrameOutputView pairs its seeks with flush() +
+    /// syncPlaybackTime; this path previously did neither, which
+    /// left two post-seek presentation defects):
+    ///  1. The display layer's queue still held pre-seek samples.
+    ///     Sample buffers must be presented in PTS order; after a
+    ///     jump, post-seek frames (PTS = target) were enqueued
+    ///     behind pre-seek frames (PTS = old position), a
+    ///     non-monotonic sequence the layer is not required to
+    ///     present — and on a forward jump every new sample sat
+    ///     minutes in the future of a timebase still anchored at
+    ///     the old position, so the picture froze on the last
+    ///     pre-seek frame while the layer's readiness gate made
+    ///     the scheduler drop everything that arrived.
+    ///  2. The only re-anchor was the 1-second-cadence nudge,
+    ///     whose main-queue hop could carry a pre-seek PTS across
+    ///     the seek and re-anchor to the stale position.
+    /// The flush drops the stale queue; the anchor is parked at
+    /// the target with rate 0 until the seek lands, when the
+    /// PLAYBACK_RESTART re-anchor (coordinator) and the next nudge
+    /// set the true position and rate.  The nudge cadence is reset
+    /// so the first post-seek frame re-anchors immediately, and
+    /// the epoch bump invalidates any nudge hop already in flight
+    /// with a pre-seek PTS.
+    func noteSeekIssued(to target: Double) {
+        seekEpoch += 1
+        lastSeekTarget = target
+        storeCountAtSeek = frameStore.counts().video
+        lastSyncHostTime = 0
+        lastSyncedRate = -1
+        scheduler.flush()
+        scheduler.syncPlaybackTime(position: target, rate: 0)
     }
 
     /// Per-frame drift control: re-align the timebase when the
@@ -233,9 +284,16 @@ final class MPlayVideoView: UIView {
               !syncCheckInFlight else { return }
         syncCheckInFlight = true
         let pts = frame.ptsSeconds
+        let epoch = seekEpoch
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             self.syncCheckInFlight = false
+            // A seek was issued after this nudge captured its PTS:
+            // the PTS belongs to the pre-seek stream.  Anchoring to
+            // it would move the timebase back to the old position;
+            // the first post-seek frame's own nudge (the cadence
+            // was reset by noteSeekIssued) performs the anchor.
+            guard self.seekEpoch == epoch else { return }
             guard let player = self.attachedPlayer else { return }
             let rate = player.state().paused ? 0 : 1.0
             self.scheduler.syncPlaybackTime(position: pts, rate: rate)
@@ -259,6 +317,8 @@ final class MPlayVideoView: UIView {
         let counts = frameStore.counts()
         probe.storeVideoFrames = counts.video
         probe.storeSubtitleFrames = counts.subtitles
+        probe.seekTarget = lastSeekTarget
+        probe.framesSinceSeek = counts.video - storeCountAtSeek
         let chain = MPlayPostChain.shared
         probe.chainEnabled = chain.isEnabled
         probe.chainSDRToHDR = chain.sdrToHDRLevel.rawValue

@@ -97,6 +97,12 @@ final class MPlayPlayer {
     private var pendingOpens: [UInt64: (Result<Void, MPlayError>) -> Void] = [:]
     private var pendingSeeks: [(id: UInt64, completion: () -> Void)] = []
     private var nextSeekID: UInt64 = 1
+    // Seek bookkeeping for the playback probe (read via seekProbe()):
+    // the most recent seek target issued, how many PLAYBACK_RESTART
+    // events the core has emitted since, and when the last one came.
+    private var lastSeekTarget: Double?
+    private var playbackRestartCount = 0
+    private var lastRestartAt: Date?
     /// Custom stream protocol factory contexts (MPlayStreamProtocol):
     /// retained at registration, released in closeOnQueue().
     private var streamContexts: [UnsafeMutableRawPointer] = []
@@ -555,6 +561,7 @@ final class MPlayPlayer {
                 completion?()
                 return
             }
+            self.lastSeekTarget = seconds
             var seekID: UInt64 = 0
             if let completion {
                 seekID = self.nextSeekID
@@ -700,6 +707,23 @@ final class MPlayPlayer {
 
     func progress() -> MPlayProgress {
         onPlayerQueue { readProgress() }
+    }
+
+    /// Seek bookkeeping + the core readings that discriminate a
+    /// stuck seek (playback probe): the last target issued, whether
+    /// its completion is still pending (PLAYBACK_RESTART not yet
+    /// seen), how many restarts the core has emitted, and the
+    /// core's own cache state.  Every value is read on the player
+    /// queue from the state that owns it.
+    func seekProbe() -> (target: Double?, pending: Int, restarts: Int,
+                         lastRestartAt: Date?, timePos: Double?,
+                         pausedForCache: Bool, cacheDuration: Double) {
+        onPlayerQueue {
+            (lastSeekTarget, pendingSeeks.count, playbackRestartCount,
+             lastRestartAt, getDouble("time-pos"),
+             getFlag("paused-for-cache") ?? false,
+             getDouble("demuxer-cache-duration") ?? 0)
+        }
     }
 
     /// 当前视频尺寸（Build 59 扩展）：读 mpv 的 width / height 属性；
@@ -999,6 +1023,8 @@ final class MPlayPlayer {
             } else if event.event_id == MPV_EVENT_SEEK {
                 // seek 已被 core 接受，完成回调等 PLAYBACK_RESTART。
             } else if event.event_id == MPV_EVENT_PLAYBACK_RESTART {
+                playbackRestartCount += 1
+                lastRestartAt = Date()
                 let seeks = pendingSeeks
                 pendingSeeks.removeAll()
                 for entry in seeks {

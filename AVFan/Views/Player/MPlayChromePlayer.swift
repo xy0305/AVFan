@@ -910,6 +910,7 @@ struct MPlayChromePlayer: View {
         seekGeneration += 1
         let token = seekGeneration
         seekPending = true
+        armSeekPendingWatchdog(token: token)
         engine.seek(to: start, autoPlay: true) {
             Task { @MainActor in
                 guard seekGeneration == token else { return }
@@ -1043,10 +1044,28 @@ struct MPlayChromePlayer: View {
         seekGeneration += 1
         let token = seekGeneration
         seekPending = true
+        armSeekPendingWatchdog(token: token)
         // Seek auto-plays (the old KSOptions.isSeekedAutoPlay == true behaviour).
         audio.begin()
         engine.seek(to: time, autoPlay: true) {
             guard seekGeneration == token else { return }
+            seekPending = false
+        }
+    }
+
+    /// Safety net only: seekPending is normally cleared by the
+    /// seek's PLAYBACK_RESTART completion.  If the core never emits
+    /// it (a wedged seek), the chrome would otherwise stay bricked
+    /// forever — slider disabled (.disabled(seekPending)), the
+    /// gesture layer blocked, and syncTime() frozen.  After a
+    /// generous deadline, release the UI gate so the user can at
+    /// least act again; playback recovery itself is the seek
+    /// path's job (view flush + timebase re-anchor), not this
+    /// timer's.
+    private func armSeekPendingWatchdog(token: Int) {
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 12_000_000_000)
+            guard seekGeneration == token, seekPending else { return }
             seekPending = false
         }
     }
