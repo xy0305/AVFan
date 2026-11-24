@@ -59,6 +59,7 @@ struct MPlayChromePlayer: View {
     @State private var qualityGeneration = 0
     @StateObject private var onlineSubtitles = OnlineSubtitleModel()
     @State private var showOnlineSubtitles = false
+    @State private var showProbe = false
     @State private var editingSubtitlePosition = false
     @State private var adjustSubtitleAfterDismiss = false
     @State private var playbackActive = false
@@ -182,6 +183,9 @@ struct MPlayChromePlayer: View {
             adjustSubtitleAfterDismiss = true
             showOnlineSubtitles = false
         }) }
+        .sheet(isPresented: $showProbe) {
+            PlaybackProbeView(engine: engine)
+        }
         .onChange(of: showOnlineSubtitles) { _, presented in
             if presented { cancelPlayerDrag(); hideTask?.cancel(); showChrome = true }
         }
@@ -576,6 +580,8 @@ struct MPlayChromePlayer: View {
                             }
                         }
                     }
+                    Divider()
+                    Button("播放探针") { showProbe = true }
                 } label: {
                     Image(systemName: "arrow.up.left.and.arrow.down.right")
                         .font(.system(size: 18, weight: .regular))

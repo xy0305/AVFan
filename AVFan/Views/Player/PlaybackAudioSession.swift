@@ -108,6 +108,7 @@ struct AudioOwnedMPlayVideoView: UIViewRepresentable {
         context.coordinator.openedURL = url
         if let player = engine.player { view.attach(player: player) }
         engine.pictureInPictureController = view.pictureInPictureController
+        engine.frameProbeView = view
         installStopCommand(context: context)
         return view
     }
@@ -131,6 +132,7 @@ struct AudioOwnedMPlayVideoView: UIViewRepresentable {
             context.coordinator.openedURL = url
             if let player = engine.player { view.attach(player: player) }
             engine.pictureInPictureController = view.pictureInPictureController
+            engine.frameProbeView = view
             installStopCommand(context: context)
         }
     }
@@ -149,6 +151,9 @@ struct AudioOwnedMPlayVideoView: UIViewRepresentable {
             }
             if coordinator.engine.pictureInPictureController === view.pictureInPictureController {
                 coordinator.engine.pictureInPictureController = nil
+            }
+            if coordinator.engine.frameProbeView === view {
+                coordinator.engine.frameProbeView = nil
             }
             coordinator.onStop()
             view.detach()

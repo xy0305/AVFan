@@ -41,6 +41,7 @@
 		AF1100000000000000000009 /* PlaybackProgressStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF110000000000000000000A /* PlaybackProgressStore.swift */; };
 		AF110000000000000000000B /* PlaybackAudioSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF110000000000000000000C /* PlaybackAudioSession.swift */; };
 		AF110000000000000000000D /* PlaybackVideoMetrics.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF110000000000000000000E /* PlaybackVideoMetrics.swift */; };
+		AF11000000000000000000F6 /* PlaybackProbeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF11000000000000000000F5 /* PlaybackProbeView.swift */; };
 		AF110000000000000000000F /* PlaybackDiagnostic.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF1100000000000000000010 /* PlaybackDiagnostic.swift */; };
 		AF1100000000000000000011 /* SeekPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF1100000000000000000012 /* SeekPreview.swift */; };
 		AF1100000000000000000013 /* PlaybackAdjustmentPan.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF1100000000000000000014 /* PlaybackAdjustmentPan.swift */; };
@@ -157,6 +158,7 @@
 		AF110000000000000000000A /* PlaybackProgressStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackProgressStore.swift; sourceTree = "<group>"; };
 		AF110000000000000000000C /* PlaybackAudioSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackAudioSession.swift; sourceTree = "<group>"; };
 		AF110000000000000000000E /* PlaybackVideoMetrics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackVideoMetrics.swift; sourceTree = "<group>"; };
+		AF11000000000000000000F5 /* PlaybackProbeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackProbeView.swift; sourceTree = "<group>"; };
 		AF1100000000000000000010 /* PlaybackDiagnostic.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackDiagnostic.swift; sourceTree = "<group>"; };
 		AF1100000000000000000012 /* SeekPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SeekPreview.swift; sourceTree = "<group>"; };
 		AF1100000000000000000014 /* PlaybackAdjustmentPan.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackAdjustmentPan.swift; sourceTree = "<group>"; };
@@ -494,6 +496,7 @@
 			children = (
 				AF110000000000000000000C /* PlaybackAudioSession.swift */,
 				AF110000000000000000000E /* PlaybackVideoMetrics.swift */,
+				AF11000000000000000000F5 /* PlaybackProbeView.swift */,
 				AF1100000000000000000010 /* PlaybackDiagnostic.swift */,
 				AF1100000000000000000012 /* SeekPreview.swift */,
 				AF1100000000000000000014 /* PlaybackAdjustmentPan.swift */,
@@ -607,6 +610,7 @@
 				AF1100000000000000000009 /* PlaybackProgressStore.swift in Sources */,
 				AF110000000000000000000B /* PlaybackAudioSession.swift in Sources */,
 				AF110000000000000000000D /* PlaybackVideoMetrics.swift in Sources */,
+				AF11000000000000000000F6 /* PlaybackProbeView.swift in Sources */,
 				AF110000000000000000000F /* PlaybackDiagnostic.swift in Sources */,
 				AF1100000000000000000011 /* SeekPreview.swift in Sources */,
 				AF1100000000000000000013 /* PlaybackAdjustmentPan.swift in Sources */,

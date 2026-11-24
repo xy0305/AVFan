@@ -204,6 +204,49 @@ final class MPlayFrameStore {
     }
 }
 
+/// Point-in-time readout of the whole frame path, assembled from
+/// the real counters on the real path (frame store -> scheduler ->
+/// display layer, plus the post chain's live settings).  Built for
+/// the in-player probe panel: every value is read off the object
+/// that owns it, nothing is estimated or synthesised.
+struct MPlayPlaybackProbe {
+    // Frame intake (frame store).
+    var storeVideoFrames = 0
+    var storeSubtitleFrames = 0
+    // Scheduler / display layer.
+    var enqueuedFrames = 0
+    var notReadyDrops = 0
+    var formatFailures = 0
+    var sampleFailures = 0
+    var layerStatus = "unknown"
+    var layerError: String?
+    var timebaseTime: Double?
+    var timebaseRate: Double?
+    // Most recent frame to reach the scheduler.
+    var lastFrameFormat = "—"
+    var lastFrameWidth = 0
+    var lastFrameHeight = 0
+    var lastFramePTS = -1.0
+    var lastFrameID: UInt64 = 0
+    // Colour tagging as carried by the frame's pixel buffer
+    // (attachments) and as baked into the format description the
+    // sample buffers are built with.  "—" = absent at that stage.
+    var bufferPrimaries = "—"
+    var bufferTransfer = "—"
+    var bufferMatrix = "—"
+    var formatPrimaries = "—"
+    var formatTransfer = "—"
+    var formatMatrix = "—"
+    // Post chain live state.
+    var chainEnabled = false
+    var chainSDRToHDR = 0
+    var chainUpscaling = 0
+    var chainInterpolation = false
+    var chainDolbyProfile = 0
+    var chainProcessed = 0
+    var chainDroppedBusy = 0
+}
+
 /// Enqueues frames on an AVSampleBufferDisplayLayer (original:
 /// FrameOutputScheduler).  All layer access is serialised on `queue`.
 final class MPlayFrameOutputScheduler {
@@ -217,7 +260,18 @@ final class MPlayFrameOutputScheduler {
 
     private var enqueuedFrames = 0
     private var notReadyDrops = 0
+    private var formatFailures = 0
+    private var sampleFailures = 0
     private var layerErrorReported = false
+
+    // Probe state for the most recent frame (written on `queue`).
+    private var lastFrameType: OSType = 0
+    private var lastFrameWidth = 0
+    private var lastFrameHeight = 0
+    private var lastFramePTS = -1.0
+    private var lastFrameID: UInt64 = 0
+    private var lastBufferAttachments: [CFString: String] = [:]
+    private var lastFormatExtensions: [CFString: String] = [:]
 
     /// Reported (once per failure episode) when the display layer
     /// enters .failed; MPlayVideoView forwards it to the player's
@@ -253,7 +307,18 @@ final class MPlayFrameOutputScheduler {
     private func enqueueOnQueue(_ frame: MPlayFrame) {
         if displayLayer.status == .failed {
             recoverFromFailureOnQueue()
+        } else if layerErrorReported {
+            // The layer recovered: re-arm the once-per-episode
+            // report so a later failure episode is reported too
+            // (previously the flag latched for the scheduler's
+            // whole lifetime and later failures went silent).
+            layerErrorReported = false
         }
+        lastFrameType = CVPixelBufferGetPixelFormatType(frame.pixelBuffer)
+        lastFrameWidth = CVPixelBufferGetWidth(frame.pixelBuffer)
+        lastFrameHeight = CVPixelBufferGetHeight(frame.pixelBuffer)
+        lastFramePTS = frame.ptsSeconds
+        lastFrameID = frame.frameID
         guard displayLayer.isReadyForMoreMediaData else {
             // Display-layer backpressure: drop rather than stall the
             // VO thread's delivery chain (the vo itself never blocks;
@@ -274,6 +339,7 @@ final class MPlayFrameOutputScheduler {
                 formatDescriptionOut: &description
             )
             guard rc == noErr, let description else {
+                formatFailures += 1
                 MPlayDiagnostics.log("frame_output: format description failed rc=\(rc)")
                 return
             }
@@ -281,6 +347,28 @@ final class MPlayFrameOutputScheduler {
             formatKeyWidth = width
             formatKeyHeight = height
             formatKeyType = type
+            // Probe + log: capture the colour tagging at both
+            // stages (buffer attachments -> format description
+            // extensions) whenever the description is (re)built, so
+            // a tagging mismatch is visible in the probe panel and
+            // in the diagnostics log without a debugger.
+            lastBufferAttachments = Self.colourAttachments(of: buffer)
+            if let extensions = CMFormatDescriptionGetExtensions(description) as NSDictionary? {
+                var captured: [CFString: String] = [:]
+                for key in Self.colourKeys {
+                    if let value = extensions[key as String] as? String {
+                        captured[key] = value
+                    }
+                }
+                lastFormatExtensions = captured
+            } else {
+                lastFormatExtensions = [:]
+            }
+            MPlayDiagnostics.log(
+                "frame_output fmt=\(Self.fourCC(type)) \(width)x\(height) "
+                + "buffer[\(Self.colourSummary(lastBufferAttachments))] "
+                + "format[\(Self.colourSummary(lastFormatExtensions))]"
+            )
         }
         guard let formatDescription else { return }
         let timescale: Int32 = 90_000
@@ -300,6 +388,7 @@ final class MPlayFrameOutputScheduler {
             sampleBufferOut: &sampleBuffer
         )
         guard rc == noErr, let sampleBuffer else {
+            sampleFailures += 1
             MPlayDiagnostics.log("frame_output: sample buffer creation failed rc=\(rc)")
             return
         }
@@ -384,6 +473,84 @@ final class MPlayFrameOutputScheduler {
     }
 
     func stats() -> (enqueued: Int, notReadyDrops: Int) {
-        (enqueuedFrames, notReadyDrops)
+        // Counters are written on `queue`; read them there too
+        // (previously read unsynchronised from arbitrary threads).
+        queue.sync { (enqueuedFrames, notReadyDrops) }
+    }
+
+    // MARK: - Probe (runtime readout for the in-player probe panel)
+
+    private static let colourKeys: [CFString] = [
+        kCVImageBufferColorPrimariesKey,
+        kCVImageBufferTransferFunctionKey,
+        kCVImageBufferYCbCrMatrixKey,
+    ]
+
+    private static func colourAttachments(of buffer: CVPixelBuffer) -> [CFString: String] {
+        var captured: [CFString: String] = [:]
+        for key in colourKeys {
+            if let value = CVBufferGetAttachment(buffer, key, nil) as? String {
+                captured[key] = value
+            }
+        }
+        return captured
+    }
+
+    private static func colourSummary(_ values: [CFString: String]) -> String {
+        let primaries = values[kCVImageBufferColorPrimariesKey] ?? "—"
+        let transfer = values[kCVImageBufferTransferFunctionKey] ?? "—"
+        let matrix = values[kCVImageBufferYCbCrMatrixKey] ?? "—"
+        return "primaries=\(primaries) transfer=\(transfer) matrix=\(matrix)"
+    }
+
+    static func fourCC(_ type: OSType) -> String {
+        let bytes: [UInt8] = [
+            UInt8((type >> 24) & 0xFF), UInt8((type >> 16) & 0xFF),
+            UInt8((type >> 8) & 0xFF), UInt8(type & 0xFF),
+        ]
+        if bytes.allSatisfy({ $0 >= 0x20 && $0 < 0x7F }) {
+            return String(bytes: bytes, encoding: .ascii) ?? "\(type)"
+        }
+        return String(format: "0x%08x", type)
+    }
+
+    /// Scheduler/display-layer half of the probe readout.  Runs on
+    /// `queue` so every counter and the layer state are read under
+    /// the same serialisation that writes them.
+    func probeSnapshot() -> MPlayPlaybackProbe {
+        queue.sync {
+            var probe = MPlayPlaybackProbe()
+            probe.enqueuedFrames = enqueuedFrames
+            probe.notReadyDrops = notReadyDrops
+            probe.formatFailures = formatFailures
+            probe.sampleFailures = sampleFailures
+            switch displayLayer.status {
+            case .unknown: probe.layerStatus = "unknown"
+            case .ready: probe.layerStatus = "ready"
+            case .rendering: probe.layerStatus = "rendering"
+            case .failed: probe.layerStatus = "failed"
+            @unknown default: probe.layerStatus = "other"
+            }
+            if let error = displayLayer.error {
+                let nsError = error as NSError
+                probe.layerError = "\(nsError.domain) \(nsError.code)"
+            }
+            if let timebase = displayLayer.controlTimebase {
+                probe.timebaseTime = CMTimeGetSeconds(CMTimebaseGetTime(timebase))
+                probe.timebaseRate = CMTimebaseGetRate(timebase)
+            }
+            probe.lastFrameFormat = Self.fourCC(lastFrameType)
+            probe.lastFrameWidth = lastFrameWidth
+            probe.lastFrameHeight = lastFrameHeight
+            probe.lastFramePTS = lastFramePTS
+            probe.lastFrameID = lastFrameID
+            probe.bufferPrimaries = lastBufferAttachments[kCVImageBufferColorPrimariesKey] ?? "—"
+            probe.bufferTransfer = lastBufferAttachments[kCVImageBufferTransferFunctionKey] ?? "—"
+            probe.bufferMatrix = lastBufferAttachments[kCVImageBufferYCbCrMatrixKey] ?? "—"
+            probe.formatPrimaries = lastFormatExtensions[kCVImageBufferColorPrimariesKey] ?? "—"
+            probe.formatTransfer = lastFormatExtensions[kCVImageBufferTransferFunctionKey] ?? "—"
+            probe.formatMatrix = lastFormatExtensions[kCVImageBufferYCbCrMatrixKey] ?? "—"
+            return probe
+        }
     }
 }

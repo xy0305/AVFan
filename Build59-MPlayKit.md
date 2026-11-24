@@ -306,3 +306,28 @@ RPU 侧数据通路依赖原版分叉内核，stock mpv 0.41 无对应组件
 跨 vo 边界到 Swift 的确切生产点未能提取（类型字段已实测：
 rpuData + 解析后 ColorMap + 软解平面 payloads；播放路径未发现
 用它变换像素的消费者）。
+
+## 装机三报修复（黑屏有画但全压黑 · 显示侧复审 + 运行时探针）
+
+装机三报（116/123）：「是有画面，但是全是黑的，只能看到水印」——帧里烧录的 IPPA/MOODYZ 水印（近白）隐约可见、其余内容全压成黑。定性随之改变：解码、帧送达、显示呈现三段都通了，死点在色彩/亮度转换（传递函数/矩阵/打标错位、或某道 pass 以错误输入域作用于 SDR 帧）。
+
+显示侧全链复审结论（逐环，代码证据）：
+- vo draw_frame 出口：VT 帧 planes[3] 取 CVPixelBufferRef + CFRetain 与 hwdec_ios_gl 同约定，正确；软解打包 + fo_attach_color（0004）的 709/PQ/HLG/601/2020 映射逐项正确（本轮未动 0004/0005 语义）。
+- FrameStore：纯透传 + 计数，无丢帧点；计数此前无任何界面消费。
+- 调度器/CMSampleBuffer：格式描述由真实帧缓冲构造（附件随之传播）、timing 用帧 PTS/时长、未设 DisplayImmediately（时间基节奏下正确）；isReady 丢帧有计数但从未上屏；图层 status 有查、error 无人持续读取——运行时对这一段是全盲的，这是本轮探针要补的洞。
+- 时间基：主机时钟创建、速率由 nudge/transport 同步（17d5c84 后路径已通，三报症状亦证明节奏在跑）。
+- 显示层装配：layerClass 后备层、字幕子层透明（isOpaque=false、无黑底，排除均匀压暗）、videoGravity 默认值无异常。
+- 后链：代码坐实默认全关——四个开关读 UserDefaults、未设置即 off/false，setter 仅设置页开关调用，felInput 无人喂；isEnabled=false 时帧直达调度器。但 UserDefaults 跨侧载更新保留，若用户曾开过「画质增强」开关，后链即在跑；而 runSDRToHDR 的输出缓冲不带任何色彩附件（不传播、不重打标），其着色器却按 PQ 域参数写值——此路径一旦开启，输出必然被错误呈现，与三报样貌相容。本轮不凭猜改它，先由探针读其实时状态定性。
+- 播放器选项：无 tone/target/EQ 类选项；vo/hwdec 符合预期。
+- 与原版对照：原版 format description 由 FrameStore 侧构造后传入 enqueue、调度器按显示 tick + lead 统计出帧；原版 SDR→HDR mapper 按帧的真实打标（isSRGB/isFullRange/inputMin/MaxPQ）选数学。我方机制不同（逐缓冲建描述、时间基节奏），已证可工作，架构差异记档待探针数据再议。
+
+本轮改动：
+- 运行时探针（必交项）：调度器新增真实计数（格式描述失败、样本创建失败）与最近帧记录（像素格式/尺寸/PTS/ID、缓冲附件与格式描述扩展的 primaries/transfer/matrix），格式描述重建时同步写入诊断日志；MPlayVideoView.probeSnapshot() 组装帧仓库计数 + 调度器状态 + 后链实时状态；播放器 chrome「画面与方向」菜单新增「播放探针」面板（PlaybackProbeView），含播放器侧 hwdec-current/current-vo/video-params（primaries/gamma/colormatrix/colorlevels/pixelformat）与 time-pos，0.5 秒刷新，截图即可定位。
+- 小修（有代码证据）：图层失败上报标志此前全生命周期锁存、恢复后再失败永不再报——改为图层恢复时复位；stats() 计数改走调度队列读，消除跨线程无同步读。
+
+装机定位法（新包）：播放 IPZZ-950 后打开探针截一张图——
+- hwdec-current 非 videotoolbox → 还在软解/打包路径，查 params 与帧格式；
+- params/gamma 为 bt709 而格式描述 transfer 出现 PQ/2020 字样 → 打标在缓冲→描述一段被写错；
+- 缓冲附件与格式描述都对、后链「启用=否」却仍压黑 → 问题在系统呈现/时间基节奏，转查 status 与 timebase；
+- 后链「启用=是」且 SDR→HDR 级别非 0 → 先关设置页「画质增强」复测，即可判后链输出未打标是否元凶；
+- status=failed 或 error 有值 → 显示层拒帧，按 domain/code 查。

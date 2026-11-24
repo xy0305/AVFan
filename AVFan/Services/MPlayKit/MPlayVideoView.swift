@@ -248,6 +248,28 @@ final class MPlayVideoView: UIView {
         }
     }
 
+    // MARK: - Probe (runtime readout for the in-player probe panel)
+
+    /// Assemble the full frame-path probe: frame-store intake
+    /// counts, scheduler/display-layer state and colour tagging,
+    /// and the post chain's live settings/counters.  Every value
+    /// comes from the object that owns it on the real path.
+    func probeSnapshot() -> MPlayPlaybackProbe {
+        var probe = scheduler.probeSnapshot()
+        let counts = frameStore.counts()
+        probe.storeVideoFrames = counts.video
+        probe.storeSubtitleFrames = counts.subtitles
+        let chain = MPlayPostChain.shared
+        probe.chainEnabled = chain.isEnabled
+        probe.chainSDRToHDR = chain.sdrToHDRLevel.rawValue
+        probe.chainUpscaling = chain.upscalingLevel.rawValue
+        probe.chainInterpolation = chain.frameInterpolationEnabled
+        probe.chainDolbyProfile = chain.dolbyProfile
+        probe.chainProcessed = chain.processedFrames
+        probe.chainDroppedBusy = chain.droppedBusy
+        return probe
+    }
+
     // MARK: - Mirrored output / display matching
 
     /// Feed this view's post-chain frames to a second view as well

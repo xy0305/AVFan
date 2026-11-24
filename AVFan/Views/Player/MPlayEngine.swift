@@ -39,6 +39,12 @@ final class MPlayChromeCoordinator: ObservableObject {
     /// KSPlayer-era chrome reached the layer's pipController.
     weak var pictureInPictureController: MPlayPictureInPictureController?
 
+    /// Playback probe panel: the attached video view, filled in by
+    /// AudioOwnedMPlayVideoView exactly like the PiP slot above.
+    /// The probe panel reads the frame path's live counters and
+    /// colour tagging through this view.
+    weak var frameProbeView: MPlayVideoView?
+
     /// Full restoration: system Now Playing / remote commands,
     /// published from poll() and routed back into the transport.
     let nowPlaying = MPlayNowPlayingController()
