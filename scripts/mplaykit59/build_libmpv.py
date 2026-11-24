@@ -37,6 +37,13 @@ meson parameters vs. ours, item by item:
             -Dgl=disabled and a vendored patch adds the private
             frame_output vo (patches/0001-vo-frame-output.patch,
             applied to the extracted mpv tree by fetch_all()).
+            The patch series is append-only and accounted by prefix
+            digest in apply_patches(); its current head,
+            patches/0005-ao-audiounit-fork.patch, ports the original
+            fork's ao_audiounit rework (R-32: independent reset,
+            set_pause, per-step session error logging, stereo
+            fallback on layout failure, input-scope layout check,
+            int64-nanosecond latency in priv).
             Remaining deliberate divergences:
             * libavdevice (FFmpeg device input) stays off: no
               device/disc input sources are needed (recorded in the

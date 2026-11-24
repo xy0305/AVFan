@@ -1,0 +1,351 @@
+ao_audiounit: port the original fork's audiounit rework (R-32).
+
+Spec: ~/workspace/p115-player-re/full-restoration/R-32-fork-audiounit.md
+(driver table decoded slot by slot + per-function disassembly of the
+original SenPlayer binary against pristine mpv 0.41.0).  Six blocks,
+single file (audio/out/ao_audiounit.m):
+
+1. reset is an independent implementation: refresh the outputLatency
+   reading (stored as int64 nanoseconds), AudioUnitReset(unit, 0, 0),
+   CHECK_CA_WARN "can't reset audio unit", verbose "AudioUnit: reset
+   without stop latency=%.1fms".  The unit is NOT stopped -- stock
+   aliases .reset to stop(), so every seek/flush stopped the unit and
+   relied on a later start().  Stock's stop() and its "can't stop
+   audio unit" string (absent from the fork) are removed.
+2. set_pause is a new driver slot (stock: NULL): true ->
+   AudioOutputUnitStop + "can't pause audio unit"; false -> latency
+   refresh + AudioOutputUnitStart + "can't start audio unit".  With
+   the slot present the core engages its hw_paused bookkeeping and
+   end_time re-anchor on resume.
+3. init's AVAudioSession segment becomes four steps, each with a
+   real NSError** that is logged (the fork's verbatim strings) and
+   cleared so init continues: category, activation, multichannel
+   declaration, preferred channel count.  Stock passed error:nil to
+   all of them and swallowed every failure silently.  The
+   post-session verbose becomes the fork's full negotiation line
+   "AudioUnit: requested=%d max=%ld preferred=%ld output=%ld
+   multichannel=%d".
+4. Output channel-layout retrieval failure degrades to stereo and
+   init continues ("AudioUnit: output channel layout unavailable
+   status=%d, using stereo"); stock failed init outright there --
+   sound vs. no sound on routes whose layout query fails.
+5. After the stream format is set and before the render callback is
+   installed, the channel layout is read once more on the Input
+   scope and validated in the log ("AudioUnit: input layout
+   tag=%x channels=%d size=%zu" / "AudioUnit: input channel layout
+   unsupported status=%d channels=%d").  Read-and-log only.
+6. priv's second field changes from double device_latency (seconds)
+   to int64_t device_latency_ns; priv_size stays 16, and render_cb
+   consumes the field with stock's formula, unit conversion folded
+   into the store.
+
+Unreadable items (memo SS4) are NOT written as original facts, and
+the patch comments say so at each site:
+ - Step 1's and step 3's selector names were not recovered from the
+   fork.  Step 1 is called in the long form
+   setCategory:mode:routeSharingPolicy:options:error: with
+   AVAudioSessionRouteSharingPolicyDefault (the fork's w4=#3
+   argument is unnamed, so the policy value is an unresolved
+   divergence); step 3 uses setSupportsMultichannelContent:error:
+   as our equivalent for the BOOL+error "multichannel declaration"
+   step.
+ - The stereo-degradation branch condition was not read out; this
+   degrades on any layout-retrieval failure at that site.
+ - render_cb's consumption of the nanosecond field is stock's
+   formula equivalently rewritten, not a recovered fork formula.
+ - The fork core's own reset/set_pause call sites were not verified.
+
+diff --git a/audio/out/ao_audiounit.m b/audio/out/ao_audiounit.m
+index 8d4eb4d..8d675c6 100644
+--- a/audio/out/ao_audiounit.m
++++ b/audio/out/ao_audiounit.m
+@@ -32,9 +32,28 @@
+ 
+ struct priv {
+     AudioUnit audio_unit;
+-    double device_latency;
++    // R-32 (fork audiounit port): the fork stores the device latency
++    // as int64 nanoseconds, not stock's double seconds (memo
++    // R-32-fork-audiounit.md SS1.6: storage side proven by disassembly
++    // -- outputLatency x 1e9, fcvtzs, stored at priv+8 -- in start,
++    // reset and set_pause alike).  priv_size stays 16.  The render
++    // callback's consumption formula was NOT read out of the fork, so
++    // render_cb below keeps stock's formula with the unit conversion
++    // folded into the store (equivalent rewrite, not a claim of
++    // instruction-level identity with the fork).
++    int64_t device_latency_ns;
+ };
+ 
++// Refresh priv's latency reading from the shared audio session, in
++// nanoseconds.  Used by start, reset and set_pause(false), mirroring
++// the identical refresh sequence the fork runs in all three.
++static void refresh_device_latency(struct ao *ao)
++{
++    struct priv *p = ao->priv;
++    AVAudioSession *instance = AVAudioSession.sharedInstance;
++    p->device_latency_ns = (int64_t)([instance outputLatency] * 1e9);
++}
++
+ static OSStatus au_get_ary(AudioUnit unit, AudioUnitPropertyID inID, AudioUnitScope inScope, AudioUnitElement inElement, void **data, UInt32 *outDataSize)
+ {
+     OSStatus err;
+@@ -95,7 +114,7 @@ static OSStatus render_cb_lpcm(void *ctx, AudioUnitRenderActionFlags *aflags,
+         planes[n] = buffer_list->mBuffers[n].mData;
+ 
+     int64_t end = mp_time_ns();
+-    end += MP_TIME_S_TO_NS(p->device_latency);
++    end += p->device_latency_ns;
+     end += ca_get_latency(ts) + ca_frames_to_ns(ao, frames);
+     ao_read_data(ao, planes, frames, end, NULL, true, true);
+     return noErr;
+@@ -113,17 +132,71 @@ static bool init_audiounit(struct ao *ao)
+     NSInteger maxChannels = instance.maximumOutputNumberOfChannels;
+     NSInteger prefChannels = MIN(maxChannels, ao->channels.num);
+ 
+-    MP_VERBOSE(ao, "max channels: %ld, requested: %d\n", maxChannels, (int)ao->channels.num);
+-
+     AVAudioSessionCategoryOptions options = 0;
+     if (!(ao->init_flags & AO_INIT_EXCLUSIVE)) {
+         options |= AVAudioSessionCategoryOptionMixWithOthers;
+     }
+ 
+-    [instance setCategory:AVAudioSessionCategoryPlayback withOptions:options error:nil];
+-    [instance setMode:AVAudioSessionModeMoviePlayback error:nil];
+-    [instance setActive:YES error:nil];
+-    [instance setPreferredOutputNumberOfChannels:prefChannels error:nil];
++    // R-32 (fork audiounit port): the fork's init session segment runs
++    // four steps, each with a real NSError** that is logged and then
++    // cleared so init CONTINUES to the next step instead of stock's
++    // silent error:nil swallowing (memo SS1.3, disassembly-proven for
++    // the log-and-continue shape; the log strings below are the fork's
++    // verbatim strings).
++    //
++    // Two honest divergences, per the memo's unreadable list:
++    //  * Step 1's selector name was NOT recovered from the fork (its
++    //    five-argument shape matches the long form
++    //    setCategory:mode:routeSharingPolicy:options:error:, and its
++    //    w4=#3 argument is unnamed).  We call that long form with
++    //    AVAudioSessionRouteSharingPolicyDefault and the stock options
++    //    value; this is our equivalent, NOT a proven match of the
++    //    fork's policy argument.
++    //  * Step 3's selector name was likewise NOT recovered; only its
++    //    BOOL+error shape and its log string are known.  We use
++    //    setSupportsMultichannelContent:error: as our equivalent for
++    //    the "multichannel declaration" step; that identification is
++    //    ours, not a recovered original fact.
++    NSError *serror = nil;
++    [instance setCategory:AVAudioSessionCategoryPlayback
++                     mode:AVAudioSessionModeMoviePlayback
++     routeSharingPolicy:AVAudioSessionRouteSharingPolicyDefault
++                  options:options
++                    error:&serror];
++    if (serror) {
++        MP_ERR(ao, "AudioUnit: audio session category failed error=%s\n",
++               [[serror localizedDescription] UTF8String]);
++        serror = nil;
++    }
++    [instance setActive:YES error:&serror];
++    if (serror) {
++        MP_ERR(ao, "AudioUnit: audio session activation failed error=%s\n",
++               [[serror localizedDescription] UTF8String]);
++        serror = nil;
++    }
++    [instance setSupportsMultichannelContent:YES error:&serror];
++    if (serror) {
++        MP_ERR(ao, "AudioUnit: multichannel declaration failed error=%s\n",
++               [[serror localizedDescription] UTF8String]);
++        serror = nil;
++    }
++    [instance setPreferredOutputNumberOfChannels:prefChannels error:&serror];
++    if (serror) {
++        MP_ERR(ao, "AudioUnit: preferred channel count failed error=%s\n",
++               [[serror localizedDescription] UTF8String]);
++        serror = nil;
++    }
++
++    // The fork's post-session verbose is the full negotiation result
++    // (memo SS1.3); stock's "max channels: %ld, requested: %d" string
++    // is absent from the fork.  multichannel here is our reading of
++    // the negotiated state (preferred count above stereo), not a
++    // recovered fork expression.
++    MP_VERBOSE(ao, "AudioUnit: requested=%d max=%ld preferred=%ld "
++               "output=%ld multichannel=%d\n",
++               (int)ao->channels.num, maxChannels, prefChannels,
++               (long)instance.outputNumberOfChannels,
++               prefChannels > 2 ? 1 : 0);
+ 
+     AudioComponentDescription desc = (AudioComponentDescription) {
+         .componentType         = kAudioUnitType_Output,
+@@ -148,31 +221,43 @@ static bool init_audiounit(struct ao *ao)
+ 
+     err = au_get_ary(p->audio_unit, kAudioUnitProperty_AudioChannelLayout, kAudioUnitScope_Output,
+                      0, (void**)&layout, &size);
+-    CHECK_CA_ERROR_L(coreaudio_error_audiounit,
+-                     "unable to retrieve audio unit channel layout");
+-
+-    MP_VERBOSE(ao, "AU channel layout tag: %x (%x)\n", layout->mChannelLayoutTag, layout->mChannelBitmap);
+-
+-    layout = convert_layout(layout, &size);
+-    if (!layout) {
+-        MP_ERR(ao, "unable to convert channel layout to list format\n");
+-        goto coreaudio_error_audiounit;
+-    }
+-
+-    for (UInt32 i = 0; i < layout->mNumberChannelDescriptions; i++) {
+-        MP_VERBOSE(ao, "channel map: %i: %u\n", i, layout->mChannelDescriptions[i].mChannelLabel);
+-    }
+-
+-    if (af_fmt_is_spdif(ao->format) || instance.outputNumberOfChannels <= 2) {
++    if (err != noErr) {
++        // R-32 (fork audiounit port): where stock fails init outright
++        // here, the fork degrades to stereo and continues (memo SS1.4:
++        // the fork keeps stock's error string in an inner function and
++        // adds the stereo fallback at this call site; the exact branch
++        // condition was not read out, so this degrades on any
++        // au_get_ary failure at this site).  Sound vs. no sound on
++        // routes whose layout query fails is the point of the change.
++        MP_VERBOSE(ao, "unable to retrieve audio unit channel layout\n");
++        MP_WARN(ao, "AudioUnit: output channel layout unavailable "
++                "status=%d, using stereo\n", (int)err);
++        layout = NULL;
+         ao->channels = (struct mp_chmap)MP_CHMAP_INIT_STEREO;
+-        MP_VERBOSE(ao, "using stereo output\n");
+     } else {
+-        ao->channels.num = (uint8_t)layout->mNumberChannelDescriptions;
++        MP_VERBOSE(ao, "AU channel layout tag: %x (%x)\n", layout->mChannelLayoutTag, layout->mChannelBitmap);
++
++        layout = convert_layout(layout, &size);
++        if (!layout) {
++            MP_ERR(ao, "unable to convert channel layout to list format\n");
++            goto coreaudio_error_audiounit;
++        }
++
+         for (UInt32 i = 0; i < layout->mNumberChannelDescriptions; i++) {
+-          ao->channels.speaker[i] =
+-              ca_label_to_mp_speaker_id(layout->mChannelDescriptions[i].mChannelLabel);
++            MP_VERBOSE(ao, "channel map: %i: %u\n", i, layout->mChannelDescriptions[i].mChannelLabel);
++        }
++
++        if (af_fmt_is_spdif(ao->format) || instance.outputNumberOfChannels <= 2) {
++            ao->channels = (struct mp_chmap)MP_CHMAP_INIT_STEREO;
++            MP_VERBOSE(ao, "using stereo output\n");
++        } else {
++            ao->channels.num = (uint8_t)layout->mNumberChannelDescriptions;
++            for (UInt32 i = 0; i < layout->mNumberChannelDescriptions; i++) {
++              ao->channels.speaker[i] =
++                  ca_label_to_mp_speaker_id(layout->mChannelDescriptions[i].mChannelLabel);
++            }
++            MP_VERBOSE(ao, "using standard channel mapping\n");
+         }
+-        MP_VERBOSE(ao, "using standard channel mapping\n");
+     }
+ 
+     ca_fill_asbd(ao, &asbd);
+@@ -184,6 +269,35 @@ static bool init_audiounit(struct ao *ao)
+     CHECK_CA_ERROR_L(coreaudio_error_audiounit,
+                      "unable to set the input format on the audio unit");
+ 
++    // R-32 (fork audiounit port): the fork additionally reads the
++    // channel layout once more on the Input scope (property
++    // kAudioUnitProperty_AudioChannelLayout, scope
++    // kAudioUnitScope_Input) after setting the stream format and
++    // before installing the render callback, and validates it in the
++    // log (memo SS1.5).  Both strings are the fork's verbatim strings.
++    // This is a read-and-log step only; it does not change the
++    // negotiated format, and failure does not abort init.  (On our
++    // failure path the channels argument is logged as 0: the fork's
++    // value on its abnormal path was not read out.)
++    {
++        AudioChannelLayout *in_layout = NULL;
++        UInt32 in_size = 0;
++        OSStatus in_err = au_get_ary(p->audio_unit,
++                                     kAudioUnitProperty_AudioChannelLayout,
++                                     kAudioUnitScope_Input, 0,
++                                     (void**)&in_layout, &in_size);
++        if (in_err == noErr && in_layout) {
++            MP_VERBOSE(ao, "AudioUnit: input layout tag=%x channels=%d "
++                       "size=%zu\n", in_layout->mChannelLayoutTag,
++                       (int)in_layout->mNumberChannelDescriptions,
++                       (size_t)in_size);
++            talloc_free(in_layout);
++        } else {
++            MP_WARN(ao, "AudioUnit: input channel layout unsupported "
++                    "status=%d channels=%d\n", (int)in_err, 0);
++        }
++    }
++
+     AURenderCallbackStruct render_cb = (AURenderCallbackStruct) {
+         .inputProc       = render_cb_lpcm,
+         .inputProcRefCon = ao,
+@@ -210,19 +324,56 @@ coreaudio_error:
+     return false;
+ }
+ 
+-static void stop(struct ao *ao)
++// R-32 (fork audiounit port): independent reset.  Stock aliases
++// .reset to stop() (AudioOutputUnitStop; the unit must be restarted
++// by a later start()).  The fork's reset refreshes the latency
++// reading and calls AudioUnitReset WITHOUT stopping the unit, so a
++// seek/flush leaves the render callback mounted and the unit running
++// (memo SS1.1, disassembly-proven, including the log string below).
++// Stock's stop() and its "can't stop audio unit" string -- absent
++// from the fork -- are gone with it.
++static void reset(struct ao *ao)
+ {
+     struct priv *p = ao->priv;
+-    OSStatus err = AudioOutputUnitStop(p->audio_unit);
+-    CHECK_CA_WARN("can't stop audio unit");
++
++    refresh_device_latency(ao);
++
++    OSStatus err = AudioUnitReset(p->audio_unit, 0, 0);
++    CHECK_CA_WARN("can't reset audio unit");
++
++    MP_VERBOSE(ao, "AudioUnit: reset without stop latency=%.1fms\n",
++               (double)p->device_latency_ns / 1e6);
++}
++
++// R-32 (fork audiounit port): set_pause is a NEW driver slot (stock
++// leaves it NULL, so pause falls back to reset/start and the core's
++// hw_paused bookkeeping and end_time re-anchor never engage; memo
++// SS1.2).  true stops the unit, false refreshes the latency reading
++// and starts it again -- the same sequences the fork runs.
++static bool set_pause(struct ao *ao, bool paused)
++{
++    struct priv *p = ao->priv;
++    OSStatus err;
++
++    if (paused) {
++        err = AudioOutputUnitStop(p->audio_unit);
++        CHECK_CA_WARN("can't pause audio unit");
++    } else {
++        refresh_device_latency(ao);
++        err = AudioOutputUnitStart(p->audio_unit);
++        CHECK_CA_WARN("can't start audio unit");
++    }
++    // The fork returns its CHECK_CA_WARN helper's result here; for a
++    // pull-based AO the core ignores this return value (internal.h),
++    // so the constant carries no behaviour.
++    return true;
+ }
+ 
+ static void start(struct ao *ao)
+ {
+     struct priv *p = ao->priv;
+-    AVAudioSession *instance = AVAudioSession.sharedInstance;
+ 
+-    p->device_latency = [instance outputLatency];
++    refresh_device_latency(ao);
+ 
+     OSStatus err = AudioOutputUnitStart(p->audio_unit);
+     CHECK_CA_WARN("can't start audio unit");
+@@ -259,7 +410,8 @@ const struct ao_driver audio_out_audiounit = {
+     .name           = "audiounit",
+     .uninit         = uninit,
+     .init           = init,
+-    .reset          = stop,
++    .reset          = reset,
++    .set_pause      = set_pause,
+     .start          = start,
+     .priv_size      = sizeof(struct priv),
+ };
