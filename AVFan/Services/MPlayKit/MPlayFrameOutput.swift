@@ -526,7 +526,6 @@ final class MPlayFrameOutputScheduler {
             probe.sampleFailures = sampleFailures
             switch displayLayer.status {
             case .unknown: probe.layerStatus = "unknown"
-            case .ready: probe.layerStatus = "ready"
             case .rendering: probe.layerStatus = "rendering"
             case .failed: probe.layerStatus = "failed"
             @unknown default: probe.layerStatus = "other"
