@@ -216,3 +216,48 @@ state 读取与 DV profile/显示标准刷新整体异步跳主队列执行（�
 hwdec_devs 注册 VideoToolbox 设备（无 load_api），hwdec=videotoolbox
 静默回落软解、帧走 fo_pack_image 打包而非原版的 VT 零拷贝直通——
 不影响起播，影响性能与保真度。
+
+## 装机二测修复（2026-11-24，IPZZ-950 黑屏有声）
+
+现象：死锁修复（17d5c84）装机后，播放能进行、有声音，画面仍全黑。
+定性：核心时钟已走、音频支路正常，问题收窄在视频支路
+（解码输出 → vo → Swift 帧管线 → 显示层）。逐环审计结论：
+
+1. **根因（架构性，已坐实）：vo 从未注册 VideoToolbox 解码设备。**
+   上一节记的「非阻塞性偏差」就是本轮根因。mpv 0.41.0 源码链：
+   播放器请求 `hwdec=videotoolbox`（非 copy 型）→ vd_lavc.c 的
+   `hwdec_create_dev()` 只能从 VO 的 `hwdec_devs` 按
+   (IMGFMT_VIDEOTOOLBOX, AV_HWDEVICE_TYPE_VIDEOTOOLBOX) 取设备 →
+   我们的 vo `preinit` 是空的、从未 create/add → 设备创建失败 →
+   `hwdec-software-fallback=yes` 下静默回落软解。管线注释曾断言
+   「VT 解码路径是 FFmpeg hwaccel + mpv 的 hwdec_vt 设备驱动、
+   不受影响」——双重误判：hwdec_vt（ra_hwdec_videotoolbox）只由
+   gpu 后端加载，且其 init 在无 GL/PL interop 时直接拒绝
+   （hwdec_vt.c）；而我们的 vo 连设备列表都没建。原版帧是 VT
+   解码器自己的 CVPixelBuffer（IOSurface、自带色彩附件、零拷贝），
+   我们则从第一天起就全靠从未在真机出过画的软解打包路径。
+2. **打包路径自身的缺陷（已坐实）：** `fo_pack_image` 用 NULL
+   属性建 CVPixelBuffer（未指定 IOSurface 属性、无 Metal 兼容
+   标记），且从不把帧的色彩描述（params.color.primaries /
+   .transfer、params.repr.sys）写成 buffer 附件——主机据此建的
+   format description 不带任何色彩信息，与 VT 缓冲的规格不在
+   一个级别。该路径在 112 死在第一帧、114/115 是其首次真机运行，
+   结果即黑屏。显示层一侧（时间基锚定、isReadyForMoreMediaData
+   守卫、format description 按 (w,h,type) 缓存、字幕层透明合成、
+   视图装配与 attach）逐项审过，无第二处可坐实的错误。
+3. 修法（新补丁 `0004-vo-frame-output-vt-hwdec.patch`，只动
+   vo_frame_output.c）：preinit 按 vo_mediacodec_embed 的形状自建
+   设备——`hwdec_devices_create()` + `av_hwdevice_ctx_create(
+   AV_HWDEVICE_TYPE_VIDEOTOOLBOX)` + 注册 mp_hwdec_ctx 并
+   `hwdec_devices_add`；uninit 先 remove 再 unref/destroy（满足
+   hwdec_devices_destroy 的断言）。同时修打包路径：建缓冲带
+   IOSurface + Metal 兼容属性，新增 `fo_attach_color()` 把色彩
+   描述从 mp_image_params 写入附件。管线脚本里那段误判注释已
+   同步改正。未动：杜比映射数值（39177e5）、nudge 修复
+   （17d5c84）、任何 Swift 文件（与杜比播放还原线零冲突）。
+4. 装机验证要点：播 IPZZ-950 应出画面且有声；Diagnostics 里
+   hwdec-current 应为 videotoolbox；拖动进度、暂停/恢复正常。
+   若个别老编码文件仍走软解（VT 不支持的编码），其帧现在走
+   修过的打包路径（带附件的 IOSurface 缓冲）；万一那种文件仍
+   黑屏，黑屏域即被单独钉在打包路径上，届时按计数器
+   （enqueued / notReadyDrops）再查，不要再动已通的硬解路径。

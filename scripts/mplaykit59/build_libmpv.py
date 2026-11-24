@@ -915,10 +915,14 @@ def build_mpv(src, build_dir, prefix, cross, penv):
     # With gl disabled, plain-gl / videotoolbox-gl / videotoolbox-pl
     # are disabled explicitly as well — they are .require() chains on
     # gl/libplacebo and would otherwise sit at "auto".  The
-    # VideoToolbox *decoder* path is unaffected: it is FFmpeg hwaccel
-    # plus mpv's hwdec_vt device driver, neither needs GL, and frames
-    # reach the vo as IMGFMT_VIDEOTOOLBOX (planes[3] =
-    # CVPixelBufferRef).
+    # VideoToolbox *decoder* path needs more than FFmpeg's hwaccel:
+    # a non-copying hwdec takes its device from the VO's hwdec_devs,
+    # and upstream's ra_hwdec_videotoolbox (the hwdec_vt driver) is
+    # loaded only by the gpu backends and refuses to init without a
+    # GL or libplacebo interop.  The frame_output vo therefore
+    # creates and registers the VT device itself (patch 0004);
+    # with it, frames reach the vo as IMGFMT_VIDEOTOOLBOX
+    # (planes[3] = CVPixelBufferRef).
     # gl-cocoa/cocoa and coreaudio are macOS-only and must not be
     # probed on iOS.
     # avfoundation is disabled explicitly: left at auto it turns ON

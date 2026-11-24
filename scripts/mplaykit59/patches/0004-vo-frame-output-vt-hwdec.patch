@@ -1,0 +1,248 @@
+vo_frame_output.c: register a VideoToolbox decode device, and pack
+software frames into display-grade buffers.
+
+Two defects, one symptom (device testing, 2026-11-24: playback runs
+and audio plays, but the picture is black):
+
+1. preinit() never published a decode device.  A non-copying hwdec
+   can only take its device from the VO's hwdec_devs
+   (vd_lavc.c: hwdec_create_dev() queries
+   hwdec_devices_get_by_imgfmt_and_type() and gives up with "Could
+   not create device" when no ctx matches), so the player's
+   hwdec=videotoolbox request could never initialise and every
+   stream silently fell back to software decoding — the frame
+   pipeline never once took the zero-copy CVPixelBuffer path the
+   original uses.  Upstream's ra_hwdec_videotoolbox cannot fill the
+   gap: only the gpu backends load it, and its init refuses to run
+   without a GL or libplacebo interop (hwdec_vt.c), both disabled
+   here by design.  preinit() therefore does what that driver's
+   init does after its interop exists — av_hwdevice_ctx_create(
+   AV_HWDEVICE_TYPE_VIDEOTOOLBOX) + hwdec_devices_add() — the same
+   shape as vo_mediacodec_embed's preinit.  uninit() removes the
+   ctx and destroys the device list (hwdec_devices_destroy asserts
+   both).
+
+2. The software fallback that defect 1 made permanent packs frames
+   into bare CVPixelBuffers: created with NULL attributes (backing
+   store unspecified — no IOSurface properties, no Metal
+   compatibility) and with no colour attachments, so the format
+   description the host builds from the buffer carries no primaries
+   / transfer / YCbCr matrix at all.  VideoToolbox buffers carry
+   all of this natively.  fo_pack_image() now creates its buffers
+   with IOSurface + Metal-compatibility attributes, and a new
+   fo_attach_color() copies the colour description from the frame's
+   mp_image_params (params.color.primaries / .transfer,
+   params.repr.sys) onto the packed buffer, so the retained
+   software path produces the same class of buffer the hardware
+   path does.
+
+diff --git a/video/out/vo_frame_output.c b/video/out/vo_frame_output.c
+index 07dd178..57a06c5 100644
+--- a/video/out/vo_frame_output.c
++++ b/video/out/vo_frame_output.c
+@@ -54,6 +54,8 @@
+ #include <string.h>
+ 
+ #include <CoreVideo/CoreVideo.h>
++#include <libavutil/buffer.h>
++#include <libavutil/hwcontext.h>
+ #include <libplacebo/colorspace.h>
+ 
+ #include "common/common.h"
+@@ -61,6 +63,7 @@
+ #include "mpv/frame_output.h"
+ #include "options/m_option.h"
+ #include "sub/osd.h"
++#include "video/hwdec.h"
+ #include "video/img_format.h"
+ #include "video/mp_image.h"
+ #include "video/out/vo.h"
+@@ -182,6 +185,12 @@ struct priv {
+     int64_t delivered;
+     int64_t dropped;
+     bool warned_no_consumer;
++
++    // VideoToolbox decode device, created in preinit() and published
++    // through vo->hwdec_devs (patch 0004).  av_device_ref is NULL
++    // when device creation failed; playback then uses software
++    // frames, which draw_frame() packs instead.
++    struct mp_hwdec_ctx hwctx;
+ };
+ 
+ static const char *fo_sink_name(struct priv *p)
+@@ -191,6 +200,83 @@ static const char *fo_sink_name(struct priv *p)
+ 
+ // ------------------------------------------------------- CVPixelBuffer pack
+ 
++// Attach the frame's colour description (primaries / transfer /
++// YCbCr matrix) to a freshly packed buffer (patch 0004).  A bare
++// CVPixelBufferCreate buffer carries no attachments at all, so the
++// format description the host builds from it
++// (CMVideoFormatDescriptionCreateForImageBuffer propagates buffer
++// attachments into the description) says nothing about how the
++// planes are encoded, and the display compositor has to guess.
++// VideoToolbox decoder buffers carry their own attachments; packed
++// software frames must be given the equivalent treatment, from the
++// same mp_image_params the VO already receives.
++static void fo_attach_color(CVPixelBufferRef pb, struct mp_image *img)
++{
++    CFStringRef primaries = NULL;
++    switch (img->params.color.primaries) {
++    case PL_COLOR_PRIM_BT_709:
++        primaries = kCVImageBufferColorPrimaries_ITU_R_709_2;
++        break;
++    case PL_COLOR_PRIM_BT_2020:
++        primaries = kCVImageBufferColorPrimaries_ITU_R_2020;
++        break;
++    case PL_COLOR_PRIM_BT_601_525:
++    case PL_COLOR_PRIM_BT_470M:
++        primaries = kCVImageBufferColorPrimaries_SMPTE_C;
++        break;
++    case PL_COLOR_PRIM_BT_601_625:
++    case PL_COLOR_PRIM_EBU_3213:
++        primaries = kCVImageBufferColorPrimaries_EBU_3213;
++        break;
++    default:
++        break;
++    }
++    if (primaries)
++        CVBufferSetAttachment(pb, kCVImageBufferColorPrimariesKey,
++                              primaries, kCVAttachmentMode_ShouldPropagate);
++
++    CFStringRef transfer = NULL;
++    switch (img->params.color.transfer) {
++    case PL_COLOR_TRC_PQ:
++        transfer = kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ;
++        break;
++    case PL_COLOR_TRC_HLG:
++        transfer = kCVImageBufferTransferFunction_ITU_R_2100_HLG;
++        break;
++    case PL_COLOR_TRC_SRGB:
++    case PL_COLOR_TRC_BT_1886:
++        transfer = kCVImageBufferTransferFunction_ITU_R_709_2;
++        break;
++    default:
++        break;
++    }
++    if (transfer)
++        CVBufferSetAttachment(pb, kCVImageBufferTransferFunctionKey,
++                              transfer, kCVAttachmentMode_ShouldPropagate);
++
++    CFStringRef matrix = NULL;
++    switch (img->params.repr.sys) {
++    case PL_COLOR_SYSTEM_BT_601:
++        matrix = kCVImageBufferYCbCrMatrix_ITU_R_601_4;
++        break;
++    case PL_COLOR_SYSTEM_BT_709:
++        matrix = kCVImageBufferYCbCrMatrix_ITU_R_709_2;
++        break;
++    case PL_COLOR_SYSTEM_BT_2020_NC:
++    case PL_COLOR_SYSTEM_BT_2020_C:
++        matrix = kCVImageBufferYCbCrMatrix_ITU_R_2020;
++        break;
++    case PL_COLOR_SYSTEM_SMPTE_240M:
++        matrix = kCVImageBufferYCbCrMatrix_SMPTE_240M_1995;
++        break;
++    default:
++        break;
++    }
++    if (matrix)
++        CVBufferSetAttachment(pb, kCVImageBufferYCbCrMatrixKey,
++                              matrix, kCVAttachmentMode_ShouldPropagate);
++}
++
+ // Pack a software mp_image into a new CVPixelBuffer (+1, transferred
+ // to the caller).  Only called for formats query_format() advertises.
+ static CVPixelBufferRef fo_pack_image(struct mp_image *img)
+@@ -218,9 +304,27 @@ static CVPixelBufferRef fo_pack_image(struct mp_image *img)
+         return NULL;
+     }
+ 
++    // The buffer must be IOSurface-backed and Metal-compatible,
++    // like every buffer VideoToolbox itself hands out (patch 0004):
++    // the host feeds these buffers to an AVSampleBufferDisplayLayer
++    // and to a Metal post chain, both of which consume IOSurfaces.
++    // A NULL-attributes create leaves the backing store unspecified.
++    CFMutableDictionaryRef attrs = CFDictionaryCreateMutable(
++        NULL, 0, &kCFTypeDictionaryKeyCallBacks,
++        &kCFTypeDictionaryValueCallBacks);
++    CFMutableDictionaryRef io_attrs = CFDictionaryCreateMutable(
++        NULL, 0, &kCFTypeDictionaryKeyCallBacks,
++        &kCFTypeDictionaryValueCallBacks);
++    CFDictionarySetValue(attrs, kCVPixelBufferIOSurfacePropertiesKey,
++                         io_attrs);
++    CFRelease(io_attrs);
++    CFDictionarySetValue(attrs, kCVPixelBufferMetalCompatibilityKey,
++                         kCFBooleanTrue);
++
+     CVPixelBufferRef pb = NULL;
+     CVReturn rc = CVPixelBufferCreate(NULL, img->w, img->h, ostype,
+-                                      NULL, &pb);
++                                      attrs, &pb);
++    CFRelease(attrs);
+     if (rc != kCVReturnSuccess || !pb)
+         return NULL;
+     if (CVPixelBufferLockBaseAddress(pb, 0) != kCVReturnSuccess) {
+@@ -265,6 +369,7 @@ static CVPixelBufferRef fo_pack_image(struct mp_image *img)
+     }
+ 
+     CVPixelBufferUnlockBaseAddress(pb, 0);
++    fo_attach_color(pb, img);
+     return pb;
+ }
+ 
+@@ -419,6 +524,39 @@ static int control(struct vo *vo, uint32_t request, void *data)
+ 
+ static int preinit(struct vo *vo)
+ {
++    struct priv *p = vo->priv;
++
++    // Publish a VideoToolbox decode device (patch 0004).  A
++    // non-copying hwdec can only take its device from the VO's
++    // hwdec_devs (vd_lavc.c: hwdec_create_dev() queries
++    // hwdec_devices_get_by_imgfmt_and_type() and fails with "Could
++    // not create device" when no matching ctx is registered), so
++    // without this the player's hwdec=videotoolbox request could
++    // never initialise and every stream silently fell back to
++    // software decoding and the pack path above.  Upstream's
++    // ra_hwdec_videotoolbox is not an alternative here: it is loaded
++    // only by the gpu backends and its init refuses to run without
++    // a GL or libplacebo interop (hwdec_vt.c), both of which this
++    // pipeline disables by design.  Creating the AVHWDeviceContext
++    // directly is exactly what that driver's init does once its
++    // interop exists (av_hwdevice_ctx_create +
++    // hwdec_devices_add), and it is the vo_mediacodec_embed
++    // preinit pattern.  The original's fork necessarily did the
++    // equivalent: its frames arrive as IMGFMT_VIDEOTOOLBOX.
++    vo->hwdec_devs = hwdec_devices_create();
++    AVBufferRef *ref = NULL;
++    if (av_hwdevice_ctx_create(&ref, AV_HWDEVICE_TYPE_VIDEOTOOLBOX,
++                               NULL, NULL, 0) == 0 && ref) {
++        p->hwctx = (struct mp_hwdec_ctx){
++            .driver_name = "videotoolbox",
++            .av_device_ref = ref,
++            .hw_imgfmt = IMGFMT_VIDEOTOOLBOX,
++        };
++        hwdec_devices_add(vo->hwdec_devs, &p->hwctx);
++    } else {
++        MP_VERBOSE(vo, "frame_output: VideoToolbox device creation "
++                   "failed; software frames will be packed instead\n");
++    }
+     return 0;
+ }
+ 
+@@ -427,6 +565,14 @@ static void uninit(struct vo *vo)
+     struct priv *p = vo->priv;
+     MP_VERBOSE(vo, "frame_output: delivered=%lld dropped=%lld\n",
+                (long long)p->delivered, (long long)p->dropped);
++    if (vo->hwdec_devs) {
++        if (p->hwctx.av_device_ref) {
++            hwdec_devices_remove(vo->hwdec_devs, &p->hwctx);
++            av_buffer_unref(&p->hwctx.av_device_ref);
++        }
++        hwdec_devices_destroy(vo->hwdec_devs);
++        vo->hwdec_devs = NULL;
++    }
+ }
+ 
+ #define OPT_BASE_STRUCT struct priv
