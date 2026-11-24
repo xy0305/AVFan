@@ -12,13 +12,17 @@
 //    `profile5`, and `convert(i:p:t:map:) -> RGB8` (all symbol-
 //    original, IOS intermediates main_syms_demangled.txt).  Our
 //    implementation mirrors that shape exactly.  The profile5
-//    constants are the public ITU-R BT.2124 IPT constants (the
-//    LMS<->IPT and BT.2020-RGB->LMS matrices), combined by matrix
-//    inversion in code so the provenance is auditable.  The
-//    original's baked Map.profile5 values were NOT extracted (that
-//    would need disassembly, which the RE did not do), so numeric
-//    identity with the original is not claimed — structure and
-//    algorithm are aligned, constants are the public spec's.
+//    constants and the whole convert chain are EXTRACTED from
+//    the original binary by disassembly (2026-11-24, at the
+//    user's explicit demand for the original Dolby mapping):
+//    every value below names its source in
+//    ~/workspace/p115-player-re/DOLBY-EXTRACTION.md — the Map's
+//    21 doubles from the profile5 one-time initializer's
+//    __const block, matrices A/B and the tone/gamut constants
+//    from convert's own __const loads, and the two 4096-entry
+//    LUTs reproduced from their initializer formulas (ST 2084
+//    PQ EOTF and the sRGB OETF, both bit-matching the spec
+//    constants the original baked in).
 //  - RPU parsing: see MPlayDoviRPU at the bottom of this file.
 //  - FEL: the original registers CoreCustom `dovi-fel` /
 //    `dovi-fel-hwdec` in its forked core (its demux/dovi_split.c +
@@ -107,66 +111,168 @@ enum DolbyP5ColorCorrection {
         var yccOffset: Vector3
         var rgbToLMS: Matrix3
 
-        /// Profile 5's fixed map, built from the public BT.2124
-        /// IPT constants (see the file header for provenance):
-        ///   RGB(BT.2020) -> LMS and LMS -> IPT are the published
-        ///   matrices; yccToRGB is their combined inverse
-        ///   (IPT -> LMS -> RGB), yccOffset is zero (IPT is
-        ///   already centred), rgbToLMS is the published matrix.
-        static let profile5: Map = {
-            let rgbToLMS = Matrix3(
-                m00: 0.4120, m01: 0.5239, m02: 0.0641,
-                m10: 0.1656, m11: 0.7206, m12: 0.1138,
-                m20: 0.0600, m21: 0.2522, m22: 0.6878
-            )
-            let lmsToIPT = Matrix3(
-                m00: 0.4000, m01: 0.4000, m02: 0.2000,
-                m10: 4.4550, m11: -4.8510, m12: 0.3960,
-                m20: 0.8056, m21: 0.3572, m22: -1.1628
-            )
-            let iptToRGB = rgbToLMS.inverted().multiplied(by: lmsToIPT.inverted())
-            return Map(yccToRGB: iptToRGB,
-                       yccOffset: Vector3(x: 0, y: 0, z: 0),
-                       rgbToLMS: rgbToLMS)
-        }()
+        /// Profile 5's fixed map — the original's baked values,
+        /// extracted from its one-time initializer (which copies
+        /// a __const block at 0x103bbd8f0 in the original binary;
+        /// DOLBY-EXTRACTION.md §1).  All 21 values are exact
+        /// dyadic rationals (the RPU DM wire quantization), so
+        /// these literals reproduce the originals bit-for-bit.
+        static let profile5 = Map(
+            yccToRGB: Matrix3(
+                m00: 1.168701171875, m01: 0.0, m02: 1.684814453125,
+                m10: 1.168701171875, m11: -0.18798828125, m12: -0.65283203125,
+                m20: 1.168701171875, m21: 2.149658203125, m22: 0.0),
+            yccOffset: Vector3(x: 0.0625, y: 0.5, z: 0.5),
+            rgbToLMS: Matrix3(
+                m00: 0.4407958984375, m01: 0.53533935546875, m02: 0.0238037109375,
+                m10: 0.1619873046875, m11: 0.7586669921875, m12: 0.079345703125,
+                m20: 0.0, m21: 0.0257568359375, m22: 0.9742431640625)
+        )
     }
 
     static func clamp01(_ value: Double) -> Double {
-        min(1.0, max(0.0, value))
+        // Original @0x1019492f0: min(max(x, 0), 1), NaN -> 0.
+        if value.isNaN { return 0 }
+        return min(1.0, max(0.0, value))
     }
 
-    /// ST 2084 PQ EOTF for a normalised signal value:
-    /// L = (max(N^(1/m2) − c1, 0) / (c2 − c3·N^(1/m2)))^(1/m1).
-    private static func pqEOTF(_ n: Double) -> Double {
-        let m1 = 0.1593017578125
-        let m2 = 78.84375
-        let c1 = 0.8359375
-        let c2 = 18.8515625
-        let c3 = 18.6875
-        let np = pow(clamp01(n), 1.0 / m2)
-        return pow(max(np - c1, 0) / (c2 - c3 * np), 1.0 / m1)
+    // MARK: Extracted convert chain (DOLBY-EXTRACTION.md §2/§3)
+
+    /// Matrix A of the original's convert (__const 0x103bc7178
+    /// in the original binary): LMS -> linear BT.2020 RGB.  It
+    /// is the inverse of the original's full-precision rgbToLMS
+    /// (against the extracted fixed-point Map values it inverts
+    /// to within 1.84e-4; see the report).
+    private static let matrixA = Matrix3(
+        m00: 3.06441879, m01: -2.16597676, m02: 0.10155818,
+        m10: -0.65612108, m11: 1.78554118, m12: -0.12943749,
+        m20: 0.01736321, m21: -0.04725154, m22: 1.03004253
+    )
+
+    /// Matrix B of the original's convert (__const 0x103bc71c0):
+    /// linear BT.2020 RGB -> linear BT.709 RGB (matches the
+    /// published conversion matrix to 5e-7).
+    private static let matrixB = Matrix3(
+        m00: 1.660491, m01: -0.5876411, m02: -0.0728499,
+        m10: -0.1245505, m11: 1.1328999, m12: -0.0083494,
+        m20: -0.0181508, m21: -0.1005789, m22: 1.1187297
+    )
+
+    /// Shared LUT index rule of both original lookup helpers
+    /// (0x101949884 / 0x101949ba4): round(min(x, 1) * 4095) with
+    /// .5 away from zero, clamped to [0, 4095]; NaN -> 0.
+    private static func lutIndex(_ x: Double) -> Int {
+        if x.isNaN { return 0 }
+        let scaled = (min(x, 1.0) * 4095.0).rounded(.toNearestOrAwayFromZero)
+        if scaled <= 0 { return 0 }
+        if scaled >= 4095 { return 4095 }
+        return Int(scaled)
     }
 
-    private static func sRGBEncode(_ linear: Double) -> Double {
-        let x = clamp01(linear)
-        return x <= 0.0031308 ? 12.92 * x : 1.055 * pow(x, 1.0 / 2.4) - 0.055
+    /// The original's 4096-entry PQ LUT ([Double] static,
+    /// initializer @0x101949328): entry[i] = pqEOTF(i / 4095)
+    /// with the ST 2084 EOTF in normalised form (no x10000):
+    ///   t = x^(1/m2);  (max(t - c1, 0) / max(c2 - c3*t, 1e-6))^(1/m1)
+    /// Constants as baked in the original: 1/m2 =
+    /// 0.012683313515655966 (= 32/2523), 1/m1 =
+    /// 6.277394636015326 (= 16384/2610), c1 = 0.8359375
+    /// (= 3424/4096), c2 = 18.8515625 (= 2413/128),
+    /// c3 = 18.6875 (= 2392/128).
+    private static let pqLUT: [Double] = {
+        (0...4095).map { i in
+            let x = Double(i) / 4095.0
+            let t = pow(x, 0.012683313515655966)
+            let numerator = max(t - 0.8359375, 0)
+            let denominator = max(18.8515625 - 18.6875 * t, 1e-6)
+            return pow(numerator / denominator, 6.277394636015326)
+        }
+    }()
+
+    /// The original's 4096-entry sRGB byte LUT ([UInt8] static,
+    /// initializer @0x1019494a8): entry[i] =
+    /// UInt8(round(sRGB(i / 4095) * 255)) with the IEC 61966-2-1
+    /// piecewise OETF (12.92 / 0.0031308 / 1.055 / -0.055,
+    /// exponent 0.4166666666666667 = 1/2.4).
+    private static let srgbByteLUT: [UInt8] = {
+        (0...4095).map { i in
+            let x = Double(i) / 4095.0
+            let y = x <= 0.0031308
+                ? 12.92 * x
+                : 1.055 * pow(x, 0.4166666666666667) - 0.055
+            return UInt8((y * 255.0).rounded(.toNearestOrAwayFromZero))
+        }
+    }()
+
+    /// Hue-preserving tone map of the original (@0x101949990):
+    /// BT.2020 luma Y (0.2627 / 0.678 / 0.0593); if Y <= 0 the
+    /// result is black, else every component is scaled by
+    /// (10000*Y / (10000*Y + 180)) / Y and clamped at 0.
+    private static func toneMap(_ v: Vector3) -> Vector3 {
+        let y = 0.2627 * v.x + 0.678 * v.y + 0.0593 * v.z
+        guard y > 0 else { return Vector3(x: 0, y: 0, z: 0) }
+        let s = (10000.0 * y / (10000.0 * y + 180.0)) / y
+        // Original: per-component fcsel (product >= 0 ? product : 0),
+        // which also maps a NaN product to 0.
+        func clamped(_ c: Double) -> Double {
+            let product = c * s
+            return product >= 0 ? product : 0
+        }
+        return Vector3(x: clamped(v.x), y: clamped(v.y), z: clamped(v.z))
     }
 
-    /// One IPT pixel -> displayable sRGB.  i is intensity
-    /// (0...1), p/t are the protan/tritan axes centred at 0
-    /// (±0.5).  Steps: IPT -> BT.2020 RGB in the PQ domain via the
-    /// map, PQ EOTF to linear, sRGB encode.  This is the CPU
-    /// reference path; the post chain's pkDoviP5Kernel0 performs
-    /// the same correction in the YUV domain on the GPU.
+    /// One component's gamut factor of the original
+    /// (@0x101949a34): how far the component may move away from
+    /// the luma point Y before leaving [0, 1], capped by `cap`.
+    /// NaN/Inf -> 0; denominators within 1e-6 use the 1e-6 form.
+    private static func gamutFactor(_ c: Double, luma y: Double, cap: Double) -> Double {
+        if !c.isFinite { return 0 }
+        if c >= 0, c <= 1 { return cap }
+        if c < 0 {
+            let denom = y - c
+            let raw = denom > 1e-6 ? y / denom : y / 1e-6
+            return min(raw, cap)
+        }
+        let denom = c - y
+        let raw = denom > 1e-6 ? (1 - y) / denom : (1 - y) / 1e-6
+        return min(raw, cap)
+    }
+
+    /// Gamut compression of the original (@0x101949ac0):
+    /// BT.709 luma Y (0.2126 / 0.7152 / 0.0722, clamp01'ed);
+    /// the factor is the chained minimum over the three
+    /// components (each call's result caps the next), and every
+    /// component is pulled toward Y by that factor.
+    private static func gamutMap(_ v: Vector3) -> Vector3 {
+        let y = clamp01(0.2126 * v.x + 0.7152 * v.y + 0.0722 * v.z)
+        var f = gamutFactor(v.x, luma: y, cap: 1.0)
+        f = gamutFactor(v.y, luma: y, cap: f)
+        f = gamutFactor(v.z, luma: y, cap: f)
+        return Vector3(x: y + (v.x - y) * f,
+                       y: y + (v.y - y) * f,
+                       z: y + (v.z - y) * f)
+    }
+
+    /// One IPT pixel -> displayable sRGB, replicating the
+    /// original's convert @0x10194911c stage for stage
+    /// (DOLBY-EXTRACTION.md §2): map application (subtract
+    /// offset, yccToRGB, PQ LUT per component, rgbToLMS),
+    /// matrix A to linear BT.2020, hue-preserving tone map,
+    /// matrix B to BT.709, gamut compression toward BT.709
+    /// luma, and the sRGB byte LUT.  This is the CPU path (the
+    /// original uses it for stills/screenshots); the post
+    /// chain's GPU P5 pass is a separate implementation.
     static func convert(i: Double, p: Double, t: Double, map: Map) -> RGB8 {
         let ycc = Vector3(x: i, y: p, z: t) - map.yccOffset
         let rgbPQ = map.yccToRGB.apply(ycc)
-        let r = sRGBEncode(pqEOTF(rgbPQ.x))
-        let g = sRGBEncode(pqEOTF(rgbPQ.y))
-        let b = sRGBEncode(pqEOTF(rgbPQ.z))
-        return RGB8(r: UInt8((r * 255).rounded()),
-                    g: UInt8((g * 255).rounded()),
-                    b: UInt8((b * 255).rounded()))
+        let linear = Vector3(x: pqLUT[lutIndex(rgbPQ.x)],
+                             y: pqLUT[lutIndex(rgbPQ.y)],
+                             z: pqLUT[lutIndex(rgbPQ.z)])
+        let lms = map.rgbToLMS.apply(linear)
+        let rgb2020 = toneMap(matrixA.apply(lms))
+        let rgb709 = gamutMap(matrixB.apply(rgb2020))
+        return RGB8(r: srgbByteLUT[lutIndex(rgb709.x)],
+                    g: srgbByteLUT[lutIndex(rgb709.y)],
+                    b: srgbByteLUT[lutIndex(rgb709.z)])
     }
 }
 
