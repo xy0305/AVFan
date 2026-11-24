@@ -14,7 +14,6 @@ struct SettingsView: View {
     @State private var postSDRToHDR = MPlayPostChain.shared.sdrToHDRLevel != .off
     @State private var postUpscaling = MPlayPostChain.shared.upscalingLevel != .off
     @State private var postInterpolation = MPlayPostChain.shared.frameInterpolationEnabled
-    @State private var postDoviP5 = MPlayPostChain.shared.doviP5CorrectionEnabled
 
     var body: some View {
         Form {
@@ -72,11 +71,7 @@ struct SettingsView: View {
                     .onChange(of: postInterpolation) { _, newValue in
                         MPlayPostChain.shared.setVideoFrameInterpolationEnabled(newValue)
                     }
-                Toggle("杜比视界 Profile 5 色彩校正", isOn: $postDoviP5)
-                    .onChange(of: postDoviP5) { _, newValue in
-                        MPlayPostChain.shared.setDolbyVisionP5CorrectionEnabled(newValue)
-                    }
-                Text("MPlayKit 的 Metal 帧后处理链（自研实现，效果与原版 SenPlayer 的闭源着色器不做等同声明）。默认全部关闭，开启后增加 GPU 占用与功耗。")
+                Text("MPlayKit 的 Metal 帧后处理链（自研实现，效果与原版 SenPlayer 的闭源着色器不做等同声明）。默认全部关闭，开启后增加 GPU 占用与功耗。杜比视界内容不经后链做逐帧色彩变换：与原版一致，打标后交系统呈现（见 DOLBY-PLAYBACK.md）。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

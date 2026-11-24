@@ -259,8 +259,10 @@ enum DolbyP5ColorCorrection {
     /// matrix A to linear BT.2020, hue-preserving tone map,
     /// matrix B to BT.709, gamut compression toward BT.709
     /// luma, and the sRGB byte LUT.  This is the CPU path (the
-    /// original uses it for stills/screenshots); the post
-    /// chain's GPU P5 pass is a separate implementation.
+    /// original uses it for stills/screenshots).  The playback
+    /// path has no P5 pixel transform at all — DV frames are
+    /// tagged and presented by the system compositor
+    /// (DOLBY-PLAYBACK.md).
     static func convert(i: Double, p: Double, t: Double, map: Map) -> RGB8 {
         let ycc = Vector3(x: i, y: p, z: t) - map.yccOffset
         let rgbPQ = map.yccToRGB.apply(ycc)

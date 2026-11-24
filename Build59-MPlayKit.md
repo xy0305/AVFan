@@ -261,3 +261,48 @@ hwdec_devs 注册 VideoToolbox 设备（无 load_api），hwdec=videotoolbox
    修过的打包路径（带附件的 IOSurface 缓冲）；万一那种文件仍
    黑屏，黑屏域即被单独钉在打包路径上，届时按计数器
    （enqueued / notReadyDrops）再查，不要再动已通的硬解路径。
+
+## 播放路径杜比呈现对齐（2026-11-24，逆向报告 DOLBY-PLAYBACK.md）
+
+原版播放 DV 的呈现链（全部有二进制证据，详见
+~/workspace/p115-player-re/DOLBY-PLAYBACK.md）：
+
+1. 内核侧：分叉 mpv 新增 demux/dovi_split.c（P7 双层拆 BL/EL 流）
+   与 filters/f_dovi_rpu.c（逐帧提取+解析 RPU、挂帧侧数据 type 23）；
+   vo 选项 vo-frame_outputvo-dovi-p7-to-p81 在流选择层生效
+   （profile==7 且开关开时对 EL 流做流级处理）。
+2. 帧管线侧：FrameStore 的后处理成员只有 hdrVivid/sdrToHDR/
+   upscaler/interpolator/deinterlacer/previewScaler——**没有杜比
+   映射器**；FrameOutputView.enqueue 是纯封装（用调用方给的
+   formatDescription 建 CMSampleBuffer 直接入队），不做任何像素
+   处理；打标代码设置/传播的是标准 HDR 附件键（primaries/
+   transfer/matrix + MasteringDisplayColorVolume +
+   ContentLightLevelInfo），二进制未导入任何杜比专用附件键，
+   SampleDescriptionExtensionAtoms 零代码引用（无 dvcC 原子）。
+3. Metal 后链：随包 metallib 只有 ONE 个内核 pkFrameKernel0
+   （SDR→HDR：toneLUT + inputMinPQ/inputMaxPQ 等标量），**无任何
+   DV/P5 内核、无 RPU 参数**。
+4. 结论：原版播放呈现 =「内核备好 BL+RPU、标准 HDR 打标、系统
+   合成器呈现」；DolbyP5ColorCorrection.convert 只活在静帧/截图
+   路径（上一轮已提取数值并对齐，39177e5）。
+
+本轮改动（只限杜比呈现路径）：
+
+- **删播放 P5 GPU pass**：MPlayPostChain 原先对 profile 5 默认
+  开启逐帧 GPU 校正（pkDoviP5Kernel0）——原版播放路径没有这一
+  级，属我方多加的像素变换。已删路由、pipeline、runDoviP5、
+  metal 内核、设置页开关与 UserDefaults 键；DV 流（profile≠0）
+  现在整体跳过 tone pass（SDR→HDR 也只作用于非 DV 帧）。
+- **补附件传播**：后链此前任何 pass 的输出都不带附件，DV/HDR
+  帧只要开超分/插帧就丢打标。保色 pass（upscale、interp）输出
+  现按原版做法 CVBufferPropagateAttachments 传播源帧附件；
+  SDR→HDR 输出不复制源标签（其信号语义已变，属既有非 DV 议题）。
+- 未动：帧送达逻辑（17d5c84 nudge 修复、51186ba 的 vo 补丁
+  0004）、CPU convert 与提取数值（39177e5）、空间音频、PiP。
+
+未能对齐（如实记档）：dovi_split 的 P7 EL 合成与 f_dovi_rpu 的
+RPU 侧数据通路依赖原版分叉内核，stock mpv 0.41 无对应组件
+（blocked，证据见 DOLBY-PLAYBACK.md）；逐帧 DolbyP5FrameMetadata
+跨 vo 边界到 Swift 的确切生产点未能提取（类型字段已实测：
+rpuData + 解析后 ColorMap + 软解平面 payloads；播放路径未发现
+用它变换像素的消费者）。

@@ -33,8 +33,10 @@
 //    走 DolbyP5ColorCorrection.convert。口径差异如实标注：
 //    原版作用在显示转换前的像素缓冲（IPT 平面）上；我方 reader
 //    的帧已经过 mpv SW 渲染的 YUV→RGB 转换，通道域不同，本路
-//    为近似——全保真路径在显示管线的 pkDoviP5Kernel0 与
-//    MPlayCapturedFrame（MPlayCapture.swift）。
+//    为近似——全保真路径是 CPU 侧 DolbyP5ColorCorrection
+//    .convert（原版数值已提取）与 MPlayCapturedFrame
+//    （MPlayCapture.swift）；原版播放路径本身不做逐帧 P5
+//    像素变换（DOLBY-PLAYBACK.md），显示管线无 P5 pass。
 //
 //  线程模型：全部状态只在自己的串行队列上变更；still/cancel/close
 //  从任意线程调用都只是投递到队列。completion 在队列上回调，UI 侧
