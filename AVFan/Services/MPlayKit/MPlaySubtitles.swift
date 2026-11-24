@@ -230,6 +230,36 @@ extension MPlayPlayer {
     /// is single-source, so the source dimension collapses).
     func setSubtitleSettings(_ settings: SubtitleSettings) {
         setProp("sub-visibility", settings.visible ? "yes" : "no")
+        // SubtitleBootstrap literal pairs (R-08 memo §II,
+        // SubtitleBootstrap.configuration @0x101928248): the four
+        // static pairs below are measured literals from the
+        // original's bootstrap assembly.  The fifth pair,
+        // sub-chinese-conversion, takes a runtime parameter in the
+        // original (its literal field values were not extracted —
+        // memo §VI.2); our SubtitleSettings carries it as an Int
+        // (0 off / 1 s2t / 2 t2s), mapped to mpv's tokens here —
+        // that mapping is ours, the key and its place in the
+        // bootstrap set are the original's.
+        setProp("sub-clear-on-seek", "no")
+        setProp("demuxer-mkv-subtitle-preroll", "yes")
+        setProp("demuxer-mkv-subtitle-preroll-secs", "5")
+        setProp("demuxer-mkv-subtitle-preroll-secs-index", "10")
+        if settings.chineseConversion == 1 {
+            setProp("sub-chinese-conversion", "s2t")
+        } else if settings.chineseConversion == 2 {
+            setProp("sub-chinese-conversion", "t2s")
+        }
+        // SubtitleBootstrap.options(initial:) keys whose values are
+        // runtime fields in the original (memo §II): sub-fonts-dir
+        // (below, from fontsDirectory) and sub-font-provider (from
+        // fontProvider).  The remaining keys (config-dir,
+        // secondary-sub-fonts-dir, secondary-sub-font-provider,
+        // sub-font, secondary-sub-font) have no field landing in
+        // SubtitleSettings today and their original literal values
+        // were not extracted, so they are not set.
+        if !settings.fontProvider.isEmpty {
+            setProp("sub-font-provider", settings.fontProvider)
+        }
         if let dir = settings.fontsDirectory {
             setProp("sub-fonts-dir", dir)
         }

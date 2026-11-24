@@ -70,7 +70,7 @@ final class MPlayPlayer {
     var core: OpaquePointer? = nil
     /// frame_output vo 的 sink 名（全量还原阶段 A 的像素帧管线）：
     /// 视图按这个名字注册帧回调（mp_frame_output_register），init
-    /// 把它作为 vo-frame-output-sink 选项强制写给 core——入参
+    /// 把它作为 vo-frame_outputvo-sink 选项强制写给 core——入参
     /// options 不能覆盖，否则 vo 找不到消费者、画面全丢。原版
     /// n30 的「共享渲染上下文」在像素帧架构下没有对应物：实例间
     /// 不再共享任何渲染状态，帧经 sink 注册表按名路由。
@@ -196,26 +196,53 @@ final class MPlayPlayer {
         queue = DispatchQueue(label: "avfan.mplaykit.player.\(assignedSource)")
         queue.setSpecific(key: specificKey, value: 1)
 
-        // 默认选项与原版创建选项的对应（报告 1.3）：
-        //   hwdec：原版 Android 注入 mediacodec；iOS 对应 videotoolbox。
-        //   hwdec-software-fallback：原版注入 yes，此处一致。
-        // vo=frame_output 是阶段 A 像素帧管线（与原版 iOS 同构：
-        // frame_output vo → CVPixelBuffer → AVSampleBufferDisplayLayer，
-        // IOS-FINDINGS §1/§3）；keep-open 是播放器侧的常规取值；
-        // cache 自阶段 D 起走 MPlayCachePolicy 分段模型（结构与字段名
-        // 对齐原版 CachePolicy，具体数值是我方取值、不可恢复，见
-        // MPlayCachePolicy.swift 的映射说明）。
-        // 入参 options 覆盖默认值，但 vo-frame-output-sink 在合并后
-        // 强制写回本实例的 sink 名（见 frameSinkName 的注释）。
+        // 默认选项集 = 原版 PlayerConfiguration.defaultOptions 的
+        // 17 对实测值（R-08 备忘 full-restoration/
+        // R-08-default-options.md §一，逐指令提取自 SenPlayer
+        // 6.4.0 二进制，构造点 0x10193cef8）。逐项说明：
+        //   vo：值 `frame_outputvo` 是 14 字符、二进制内真实字节
+        //   （小字符串逐字节解码），按字节原样使用、不「纠正」为
+        //   frame_output；我方 fork 的 vo 登记名与 options_prefix
+        //   已同步改为 frame_outputvo / vo-frame_outputvo
+        //   （patches/0001），与原版 fork 的选项命名空间一致
+        //   （vo-frame_outputvo-display-fps 等常量实测同源）。
+        //   autosync=120：推断级——原版构造时把立即数 0x78 经
+        //   整数→字符串转换桩生成该值（备忘 §一注 2），非字面量
+        //   直读，按推断级落地。
+        //   原版默认集明确不存在的键（备忘 §一注 3）：keep-open、
+        //   cache=yes、demuxer-max-bytes / demuxer-max-back-bytes、
+        //   网络组、sub-* 字幕组。我方旧自选默认 keep-open=yes 与
+        //   hwdec-software-fallback=yes 已移除——前者原版没有；
+        //   后者属于 PlaybackOptions.apply 的打开时追加项且原版
+        //   字面量是 `3` 不是 yes，已改到 open() 里按原版落
+        //   （见 open 的注释）。cache 相关只剩 CachePolicy 的
+        //   cache-secs（R-02：默认 30）。
+        // 合并语义与原版 Player.init(options:) 实测一致（备忘
+        // §五）：defaultOptions 打底、调用方同名覆盖；
+        // vo-frame_outputvo-sink 在合并后强制写回本实例的 sink
+        // 名（见 frameSinkName 的注释），入参不能覆盖。
         var merged: [String: String] = [
-            "vo": "frame_output",
+            "terminal": "no",
+            "input-media-keys": "yes",
+            "subs-match-os-language": "yes",
+            "vo": "frame_outputvo",
+            "force-window": "yes",
             "hwdec": "videotoolbox",
-            "hwdec-software-fallback": "yes",
-            "keep-open": "yes",
+            "hwdec-codecs": "h264,vc1,hevc,vp8,vp9,av1,prores,prores_raw,ffv1,dpx,mpeg2video",
+            "deinterlace": "no",
+            "dovi-fel-hwdec": "auto",
+            "vd-lavc-videotoolbox-reorder": "adaptive",
+            "vd-lavc-videotoolbox-reorder-frames": "4",
+            "framedrop": "no",
+            "hr-seek-framedrop": "yes",
+            "ao": "audiounit",
+            "autosync": "120",
+            "audio-format": "float",
+            "volume-max": "1000",
         ]
         for (key, value) in cachePolicy.mpvOptions { merged[key] = value }
         for (key, value) in options { merged[key] = value }
-        merged["vo-frame-output-sink"] = frameSinkName
+        merged["vo-frame_outputvo-sink"] = frameSinkName
         mergedOptions = merged
 
         guard let handle = mpv_create() else { throw MPlayError.createFailed }
@@ -277,6 +304,23 @@ final class MPlayPlayer {
             if startSeconds > 0 {
                 _ = mpv_set_property_string(core, "start", "+\(startSeconds)")
             }
+            // PlaybackOptions.apply 在打开/加载时追加的选项
+            // （R-08 备忘 §四，apply @0x101941b88 尾段实测）：
+            //   hwdec-software-fallback：字面量 `3`（不是 yes），
+            //   无条件写。
+            //   dovi-fel：bool 字段 ? yes : no——我方对应运行时
+            //   字段是 setDolbyVisionFELHardwareDecode 维护的
+            //   felHWDecRequested 标记，按其当前值写。
+            //   备忘同段另两项未落：vo-frame_outputvo-display-fps
+            //   （值来自带下限钳制的 Int 字段、我方无对应字段）与
+            //   vo-frame_outputvo-dovi-p7-to-p81（bool 字段、其
+            //   默认值未在备忘中提取）——无对应运行时字段/默认值
+            //   时不编造，见交付报告的未动盲区清单。
+            _ = mpv_set_property_string(core, "hwdec-software-fallback", "3")
+            self.felLock.lock()
+            let felRequested = self.felHWDecRequested
+            self.felLock.unlock()
+            _ = mpv_set_property_string(core, "dovi-fel", felRequested ? "yes" : "no")
             let tag = self.nextReplyTag
             self.nextReplyTag += 1
             if let completion {

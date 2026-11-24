@@ -33,6 +33,32 @@ struct MPlayPlayerConfiguration {
     var options: [String: String] = [:]
 }
 
+/// The original's PlaybackOptions field defaults, extracted from
+/// each field's variable initialization expression (R-08 memo
+/// §IV): hardwareDecode/isAutoPlay true; preciseStart/
+/// isAccurateSeek/seekUsePacketCache/isAudioSource false;
+/// decodeThreads 8; startPlayRate 1.0; startPlayTime 0.0; isLive
+/// nil (inference: the shared stub returns enum tag 2).  userAgent/
+/// referer/headers/formatOptions were NOT verified literal by
+/// literal in the memo (suspected nil / empty), so they carry no
+/// claimed-original value here.  AVFan's chrome drives the
+/// equivalents through MPlayPlayer.open's parameters today; this
+/// struct records the original defaults at the shape the original
+/// carries them, and the apply-at-open literals live in open()
+/// (hwdec-software-fallback=3, dovi-fel from the FEL flag).
+struct MPlayPlaybackOptions {
+    var hardwareDecode: Bool = true
+    var isAutoPlay: Bool = true
+    var preciseStart: Bool = false
+    var isAccurateSeek: Bool = false
+    var seekUsePacketCache: Bool = false
+    var isAudioSource: Bool = false
+    var decodeThreads: Int = 8
+    var startPlayRate: Double = 1.0
+    var startPlayTime: Double = 0.0
+    var isLive: Bool? = nil
+}
+
 struct MPlayChapter {
     var index: Int
     var title: String
@@ -547,12 +573,19 @@ extension MPlayPlayer {
 
     // MARK: - Cache
 
-    /// configureAuxiliaryCache() — re-applies the standard
-    /// CachePolicy's mpv options to the running core.
+    /// configureAuxiliaryCache() — the original's function of the
+    /// same name (@0x101942380) sets exactly three options, all
+    /// measured literals (R-08 memo §III): cache-on-disk=no,
+    /// demuxer-cache-unselected-tracks=no, cache-secs=30.  It is a
+    /// Player-layer call independent of CachePolicy (the two land
+    /// on the same cache-secs option with the same default 30;
+    /// R-02 memo §IV.1).  Our previous version re-applied the
+    /// CachePolicy mpv options here — that conflated the two
+    /// unrelated mechanisms and is corrected.
     func configureAuxiliaryCache() {
-        for (key, value) in MPlayCachePolicy.standard.mpvOptions {
-            setProp(key, value)
-        }
+        setOption(name: "cache-on-disk", value: "no")
+        setOption(name: "demuxer-cache-unselected-tracks", value: "no")
+        setOption(name: "cache-secs", value: "30")
     }
 
     // MARK: - Preview (delegates to MPlayPreviewReader)
