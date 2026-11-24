@@ -56,6 +56,10 @@ final class MPlayVideoView: UIView {
     private weak var attachedPlayer: MPlayPlayer?
     private var lastSyncedRate: Double = -1
     private var lastSyncHostTime: CFTimeInterval = 0
+    /// A nudge's player-state read is in flight on the main queue
+    /// (see nudgeTimeSync — the read must never happen on the VO
+    /// thread itself).
+    private var syncCheckInFlight = false
 
     /// Mirrored output (the original's setMirroredRenderView): a
     /// second view fed the same post-chain frames this view enqueues.
@@ -78,6 +82,9 @@ final class MPlayVideoView: UIView {
         scheduler.onLayerError = { [weak self] message in
             self?.attachedPlayer?.noteSurfaceError(message)
         }
+        // VO thread: this closure runs inside the vo's draw_frame.
+        // Nothing on this path may block or call the player API
+        // (see the VO-THREAD RULE on nudgeTimeSync).
         frameStore.onVideoFrame = { [weak self] frame in
             guard let self else { return }
             // Stage C: the Metal post chain sits between the store
@@ -192,6 +199,7 @@ final class MPlayVideoView: UIView {
         displayLink = nil
         displayCriteriaAppliedGeneration = .max
         lastSyncedRate = -1
+        syncCheckInFlight = false
     }
 
     // MARK: - Time sync
@@ -206,19 +214,37 @@ final class MPlayVideoView: UIView {
     /// Per-frame drift control: re-align the timebase when the
     /// player's rate changed since the last sync, or when a second
     /// has passed (cheap drift correction without a separate timer).
+    ///
+    /// VO-THREAD RULE: this runs inside the vo's draw_frame (via the
+    /// frame sink), so it must never call the player API itself.
+    /// mpv's core thread blocks in vo_wait_frame() until draw_frame
+    /// returns, while every client-API property read waits for the
+    /// core's dispatch trap (mp_dispatch_lock) — reading state here
+    /// deadlocked playback on the very first frame (core waiting on
+    /// the VO thread, VO thread waiting on the core: black screen,
+    /// time-pos pinned at 0, demuxer cache still filling).  The read
+    /// therefore hops to the main queue, which the core never waits
+    /// on; the re-anchor lands a few milliseconds late, well inside
+    /// this nudge's one-second cadence.
     private func nudgeTimeSync(with frame: MPlayFrame) {
-        guard let player = attachedPlayer, frame.ptsSeconds >= 0 else { return }
-        let state = player.state()
-        let rate = state.paused ? 0 : 1.0
+        guard frame.ptsSeconds >= 0, attachedPlayer != nil else { return }
         let now = CACurrentMediaTime()
-        if rate != lastSyncedRate || now - lastSyncHostTime > 1.0 {
-            scheduler.syncPlaybackTime(position: frame.ptsSeconds, rate: rate)
-            lastSyncedRate = rate
-            lastSyncHostTime = now
+        guard lastSyncedRate < 0 || now - lastSyncHostTime > 1.0,
+              !syncCheckInFlight else { return }
+        syncCheckInFlight = true
+        let pts = frame.ptsSeconds
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.syncCheckInFlight = false
+            guard let player = self.attachedPlayer else { return }
+            let rate = player.state().paused ? 0 : 1.0
+            self.scheduler.syncPlaybackTime(position: pts, rate: rate)
+            self.lastSyncedRate = rate
+            self.lastSyncHostTime = CACurrentMediaTime()
             // Keep the post chain's DV profile current (drives the
             // Profile 5 correction pass; changes only per file).
             MPlayPostChain.shared.dolbyProfile = player.dolbyVisionProfile()?.profile ?? 0
-            refreshDisplayCriteria()
+            self.refreshDisplayCriteria()
         }
     }
 

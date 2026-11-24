@@ -197,3 +197,22 @@ publicSubtitleQuery / onVideoMetrics / resumeKey / startFromBeginning）。
    profile 读取与 RPU 解析对真实样本的回归、PreviewReader 的
    SW 渲染方向（旋转源）与 dolby-vision-profile 回读。
 7. 版本号保持 59；本轮全部提交只在本地 `feat/mplaykit-59`，未 push。
+
+## 装机首测修复（2026-11-24，IPZZ-950 黑屏卡死）
+
+现象：时长/轨道/缓存正常，画面全黑、time-pos 钉 0、播放器自认为在播放。
+根因（mpv 0.41.0 源码坐实）：核心线程输出第一帧后在 `vo_wait_frame()`
+里等 VO 线程画完（player/video.c 的 STATUS_READY 路径，video_latency_hacks
+未开）；我们的 VO 回调链在 draw_frame 内经 `nudgeTimeSync` 同步调用
+`player.state()`，属性读取走 `mp_dispatch_lock`、须等核心线程进入
+dispatch 处理点——核心正堵在 vo_wait_frame 里，两边互等，第一帧即
+永久死锁（播放器队列为传导环节）。解复用/缓存线程独立，故缓存照涨。
+这违反 frame_output.h 自定的契约（VO 线程回调不得阻塞、不得回调
+client API）；原版帧路径同样不回读播放器状态，时间同步由播放器侧驱动。
+修法（仅 MPlayVideoView.swift）：nudge 在 VO 线程只做本地节流判断，
+state 读取与 DV profile/显示标准刷新整体异步跳主队列执行（核心永不
+等主队列），语义与 1 秒节流节奏不变；detach 复位在途标志。
+另记一项非阻塞性偏差（后续单独处理）：vo_frame_output 未给
+hwdec_devs 注册 VideoToolbox 设备（无 load_api），hwdec=videotoolbox
+静默回落软解、帧走 fo_pack_image 打包而非原版的 VT 零拷贝直通——
+不影响起播，影响性能与保真度。
