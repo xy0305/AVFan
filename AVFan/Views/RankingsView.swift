@@ -50,7 +50,8 @@ private enum RankingSource: String, CaseIterable, Identifiable {
         case .avbase:
             return [RankingTerm(id: "recent", label: "最新作品"),
                     RankingTerm(id: "bydate", label: "按发售日"),
-                    RankingTerm(id: "search", label: "番号搜索")]
+                    RankingTerm(id: "search", label: "番号搜索"),
+                    RankingTerm(id: "talents", label: "女优排行")]
         case .zhongzhitong:
             return []  // dynamic: bundled catalog years/months (build 44)
         case .javlibrary:
@@ -64,11 +65,15 @@ private enum RankingSource: String, CaseIterable, Identifiable {
 private enum RankingTarget: Hashable, Identifiable {
     case movie(RankingBoardEntry)
     case actor(String)
+    /// AVBase talent ranking rows open the AVBase works wall for
+    /// that actress (build 61), not the AVFan cast match.
+    case avbaseTalent(String)
 
     var id: String {
         switch self {
         case .movie(let entry): return "movie|" + entry.id
         case .actor(let name): return "actor|" + name
+        case .avbaseTalent(let name): return "avbase-talent|" + name
         }
     }
 }
@@ -152,6 +157,7 @@ private struct ExternalRankingsView: View {
     @State private var avPage = 1
     @State private var avHasMore = false
     @State private var avLoadingMore = false
+    @State private var avLoadMoreError: String?
     @State private var avDay = Date()
     @State private var avQuery = ""
     @State private var avSubmittedQuery = ""
@@ -294,6 +300,7 @@ private struct ExternalRankingsView: View {
             switch target {
             case .movie(let entry): RankingMovieTargetView(entry: entry)
             case .actor(let name): RankingActorTargetView(name: name)
+            case .avbaseTalent(let name): AVBaseTalentWorksView(name: name)
             }
         }
         .task(id: loadKey) { await load() }
@@ -331,14 +338,30 @@ private struct ExternalRankingsView: View {
                           spacing: 14) {
                     ForEach(entries) { entry in
                         Button {
-                            target = entry.isActor
-                                ? .actor(entry.actorName ?? entry.title)
-                                : .movie(entry)
+                            if source == .avbase && entry.isActor {
+                                target = .avbaseTalent(entry.actorName ?? entry.title)
+                            } else {
+                                target = entry.isActor
+                                    ? .actor(entry.actorName ?? entry.title)
+                                    : .movie(entry)
+                            }
                         } label: {
                             RankingGridCell(entry: entry, source: source)
                         }
                         .buttonStyle(.plain)
                     }
+                }
+                if source == .avbase, let avLoadMoreError {
+                    HStack(spacing: 10) {
+                        Text(avLoadMoreError)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Button("重试") {
+                            Task { await loadMoreAVBase() }
+                        }
+                        .font(.caption.weight(.semibold))
+                    }
+                    .frame(maxWidth: .infinity)
                 }
                 if (source == .javranking && jrHasMore) || (source == .avbase && avHasMore) {
                     Button {
@@ -354,7 +377,14 @@ private struct ExternalRankingsView: View {
                         }
                     }
                     .buttonStyle(.bordered)
-                    .disabled(jrLoadingMore || avLoadingMore || loading)
+                    // Build 61: AVBase pagination must not be gated
+                    // on the first-page `loading` flag — build 60
+                    // held it true across the trailing preResolve
+                    // (dozens of serial AVFan searches), which left
+                    // this button grey and its taps swallowed for
+                    // minutes after the list appeared.
+                    .disabled(source == .avbase ? avLoadingMore
+                                                : (jrLoadingMore || loading))
                 }
             }
         }
@@ -382,7 +412,11 @@ private struct ExternalRankingsView: View {
         }
         loading = true
         errorMessage = nil
+        avLoadMoreError = nil
         defer { loading = false }
+        // AVBase talent rows are people, not codes: warming them
+        // through the AVFan match store would be pointless work.
+        var skipWarm = false
         do {
             switch source {
             case .zhongzhitong:
@@ -443,6 +477,16 @@ private struct ExternalRankingsView: View {
                 // RankingMatchStore exact-code match as every other
                 // board, landing on the AVFan detail page.
                 avHasMore = false
+                if term == "talents" {
+                    // 女优排行 (build 61): a single snapshot page of
+                    // people rows (actorName set, avatar as cover);
+                    // taps open the AVBase works wall, no pagination.
+                    entries = try await AVBaseClient.shared
+                        .loadTalentRanking(date: avDateString)
+                    updatedText = "实时抓取自 AVBase"
+                    skipWarm = true
+                    break
+                }
                 let result: AVBaseBoardPage
                 switch term {
                 case "bydate":
@@ -488,8 +532,17 @@ private struct ExternalRankingsView: View {
             Task {
                 for url in coverURLs { await ImageLoader.shared.warm(url) }
             }
-            await store.preResolve(entries: entries, locale: settings.locale,
-                                   ageCookie: settings.legalAgeCookie)
+            // Build 61: release `loading` BEFORE the warm-up.
+            // preResolve walks the page serially (one AVFan search
+            // per fresh code, rate-limited) and can run for minutes;
+            // build 60 kept the flag up across it, which disabled
+            // the AVBase 加载更多 button and its handler's guard
+            // for the whole warm-up — the reported "点了没反应".
+            loading = false
+            if !skipWarm {
+                await store.preResolve(entries: entries, locale: settings.locale,
+                                       ageCookie: settings.legalAgeCookie)
+            }
         } catch is CancellationError {
             return
         } catch {
@@ -527,13 +580,21 @@ private struct ExternalRankingsView: View {
         }
     }
 
-    /// AVBase pagination (build 60): same contract as JAV Ranking's
-    /// loadMore — appends the next page deduped by entry id and
-    /// pre-resolves only the new slice; a failed page quietly ends
-    /// pagination. The term/date/query snapshot guards against the
-    /// surface changing mid-flight.
+    /// AVBase pagination. Build 61 rework of the build-60 version:
+    /// - no longer gated on the first-page `loading` flag (that
+    ///   guard, held up by load()'s trailing preResolve, is what
+    ///   made the button dead on device);
+    /// - dedupe is by normalized code, not entry id — build 60's
+    ///   id embeds the rank, so a repeated page (the site ignoring
+    ///   ?page=) would have appended as "fresh" rows;
+    /// - a page that adds no new code ends pagination;
+    /// - a failed page keeps the entries AND the button, and says
+    ///   so on screen with a retry — build 60 silently swallowed
+    ///   the error and killed pagination.
+    /// The term/date/query snapshot guards against the surface
+    /// changing mid-flight.
     private func loadMoreAVBase() async {
-        guard source == .avbase, avHasMore, !loading, !avLoadingMore else { return }
+        guard source == .avbase, avHasMore, !avLoadingMore else { return }
         avLoadingMore = true
         defer { avLoadingMore = false }
         let forTerm = term
@@ -553,17 +614,29 @@ private struct ExternalRankingsView: View {
             guard term == forTerm, avDateString == forDate,
                   avSubmittedQuery.trimmingCharacters(in: .whitespacesAndNewlines) == forQuery
             else { return }
-            let known = Set(entries.map(\.id))
-            let fresh = result.entries.filter { !known.contains($0.id) }
+            let known = Set(entries.compactMap {
+                $0.code.map { RankingMatchStore.key(for: $0) }
+            })
+            let fresh = result.entries.filter { entry in
+                guard let code = entry.code else { return false }
+                return !known.contains(RankingMatchStore.key(for: code))
+            }
+            guard !fresh.isEmpty else {
+                // Empty page, or the site repeated a page: over.
+                avHasMore = false
+                avLoadMoreError = nil
+                return
+            }
             entries += fresh
             avPage += 1
             avHasMore = result.hasMore
+            avLoadMoreError = nil
             await store.preResolve(entries: fresh, locale: settings.locale,
                                    ageCookie: settings.legalAgeCookie)
         } catch is CancellationError {
             return
         } catch {
-            avHasMore = false
+            avLoadMoreError = "下一页没加载出来，检查网络后点重试。"
         }
     }
 
@@ -615,13 +688,24 @@ private struct RankingGridCell: View {
         VStack(spacing: 5) {
             ZStack(alignment: .topLeading) {
                 if entry.isActor {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .fill(Color.secondary.opacity(0.15))
-                        Image(systemName: "person.fill")
-                            .foregroundStyle(.secondary)
+                    if let avatar = entry.coverURL {
+                        // Build 61: AVBase talent rows carry the
+                        // actress's own image — the only avatar
+                        // source; shown as-is (no HQ probing, that
+                        // chain is for work covers).
+                        RemoteImage(url: avatar, contentMode: .fill)
+                            .aspectRatio(3.0 / 4.0, contentMode: .fill)
+                            .clipped()
+                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    } else {
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .fill(Color.secondary.opacity(0.15))
+                            Image(systemName: "person.fill")
+                                .foregroundStyle(.secondary)
+                        }
+                        .aspectRatio(3.0 / 4.0, contentMode: .fill)
                     }
-                    .aspectRatio(3.0 / 4.0, contentMode: .fill)
                 } else {
                     // Cover policy (build 46, owner's rule): match an
                     // HQ cover first (probeDisplaysWinner lets the
@@ -757,6 +841,194 @@ private struct RankingActorTargetView: View {
                                                 ageCookie: settings.legalAgeCookie,
                                                 force: attempt > 0)
             if resolved == nil { failed = true }
+        }
+    }
+}
+
+// MARK: - AVBase talent works wall (build 61)
+
+/// A talent's AVBase page: header (avatar + name + whatever
+/// profile fields the page actually carried — nothing invented)
+/// over her works grid. Works behave exactly like the board's:
+/// coverURL nil so the grid's HQ chain resolves covers, taps go
+/// through RankingMatchStore into the AVFan detail page (magnets
+/// and 115 live there), and pagination is the build-61 mechanism
+/// (actual-return hasMore, code dedupe, visible retryable errors).
+private struct AVBaseTalentWorksView: View {
+    let name: String
+    @EnvironmentObject private var settings: AppSettings
+    @ObservedObject private var store = RankingMatchStore.shared
+    @State private var profile: AVBaseTalentProfile?
+    @State private var total: Int?
+    @State private var entries: [RankingBoardEntry] = []
+    @State private var page = 1
+    @State private var hasMore = false
+    @State private var loading = false
+    @State private var loadingMore = false
+    @State private var errorMessage: String?
+    @State private var loadMoreError: String?
+    @State private var target: RankingTarget?
+    @State private var attempt = 0
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                header
+                content
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+            .padding(.bottom, 110)
+        }
+        .navigationTitle(name)
+        .navigationBarTitleDisplayMode(.inline)
+        .navigationDestination(item: $target) { target in
+            if case .movie(let entry) = target {
+                RankingMovieTargetView(entry: entry)
+            }
+        }
+        .task(id: attempt) { await loadFirst() }
+    }
+
+    @ViewBuilder
+    private var header: some View {
+        if let profile {
+            HStack(alignment: .top, spacing: 12) {
+                RemoteImage(url: profile.avatarURL, contentMode: .fill)
+                    .frame(width: 72, height: 96)
+                    .clipped()
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(profile.name)
+                        .font(.headline)
+                    if !profile.summary.isEmpty {
+                        Text(profile.summary)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    if let total, total > 0 {
+                        Text("出演作品 \(total) 部")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Spacer()
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if loading && entries.isEmpty {
+            HStack { Spacer(); ProgressView(); Spacer() }
+                .padding(.vertical, 40)
+        } else if let errorMessage, entries.isEmpty {
+            VStack(spacing: 12) {
+                Text(errorMessage)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                Button("重试") { attempt += 1 }
+                    .buttonStyle(.bordered)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 32)
+        } else {
+            VStack(spacing: 14) {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 3),
+                          spacing: 14) {
+                    ForEach(entries) { entry in
+                        Button {
+                            target = .movie(entry)
+                        } label: {
+                            RankingGridCell(entry: entry, source: .avbase)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                if let loadMoreError {
+                    HStack(spacing: 10) {
+                        Text(loadMoreError)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Button("重试") {
+                            Task { await loadMore() }
+                        }
+                        .font(.caption.weight(.semibold))
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                if hasMore {
+                    Button {
+                        Task { await loadMore() }
+                    } label: {
+                        if loadingMore {
+                            ProgressView()
+                        } else {
+                            Text("加载更多")
+                                .font(.subheadline.weight(.semibold))
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(loadingMore)
+                }
+            }
+        }
+    }
+
+    private func loadFirst() async {
+        loading = true
+        errorMessage = nil
+        loadMoreError = nil
+        defer { loading = false }
+        do {
+            let result = try await AVBaseClient.shared.loadTalent(name: name, page: 1)
+            if let fetched = result.profile { profile = fetched }
+            if let fetchedTotal = result.page.total { total = fetchedTotal }
+            entries = result.page.entries
+            page = 1
+            hasMore = result.page.hasMore
+            // Same rule as the board: never hold `loading` across
+            // the serial warm-up.
+            loading = false
+            await store.preResolve(entries: entries, locale: settings.locale,
+                                   ageCookie: settings.legalAgeCookie)
+        } catch is CancellationError {
+            return
+        } catch {
+            errorMessage = (error as? LocalizedError)?.errorDescription
+                ?? "女优页加载失败，请稍后重试。"
+        }
+    }
+
+    private func loadMore() async {
+        guard hasMore, !loadingMore else { return }
+        loadingMore = true
+        defer { loadingMore = false }
+        do {
+            let result = try await AVBaseClient.shared.loadTalent(name: name, page: page + 1)
+            let known = Set(entries.compactMap {
+                $0.code.map { RankingMatchStore.key(for: $0) }
+            })
+            let fresh = result.page.entries.filter { entry in
+                guard let code = entry.code else { return false }
+                return !known.contains(RankingMatchStore.key(for: code))
+            }
+            guard !fresh.isEmpty else {
+                hasMore = false
+                loadMoreError = nil
+                return
+            }
+            entries += fresh
+            page += 1
+            hasMore = result.page.hasMore
+            loadMoreError = nil
+            await store.preResolve(entries: fresh, locale: settings.locale,
+                                   ageCookie: settings.legalAgeCookie)
+        } catch is CancellationError {
+            return
+        } catch {
+            loadMoreError = "下一页没加载出来，检查网络后点重试。"
         }
     }
 }

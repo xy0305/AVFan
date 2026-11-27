@@ -1,10 +1,13 @@
 import Foundation
 
-// Build 60: AVBase board transport. Three surfaces, all plain
+// Build 60: AVBase board transport. Surfaces, all plain
 // public pages on www.avbase.net — no login, no /api/:
 //   最新作品   /works/recent?page=N
 //   按发售日   /works/date/<yyyy-MM-dd>?page=N
 //   番号搜索   /works?q=<keyword>&page=N
+// Build 61 adds:
+//   女优排行   /talents/popular?date=<yyyy-MM-dd>
+//   女优作品页 /talents/<name>?page=N
 //
 // Politeness mirrors the other live boards: a single serial lane
 // with at least one second between requests, the app's mobile UA.
@@ -21,6 +24,14 @@ struct AVBaseBoardPage {
     let entries: [RankingBoardEntry]
     let hasMore: Bool
     let total: Int?
+}
+
+/// One page of a talent's works wall plus her profile (build 61).
+/// The profile rides every page's props; page 1's copy is the one
+/// the header keeps.
+struct AVBaseTalentPage {
+    let profile: AVBaseTalentProfile?
+    let page: AVBaseBoardPage
 }
 
 actor AVBaseClient {
@@ -48,6 +59,50 @@ actor AVBaseClient {
                            query: [URLQueryItem(name: "q", value: keyword)], page: page)
     }
 
+    /// 女优排行 (build 61): /talents/popular?date=<JST today>. The
+    /// snapshot for the requested day may not exist yet — avbase.js
+    /// falls back to the latest issue, and so does this: one retry
+    /// without the date before giving up as empty.
+    func loadTalentRanking(date: String) async throws -> [RankingBoardEntry] {
+        var components = URLComponents(string: Self.origin + "/talents/popular")!
+        components.queryItems = [URLQueryItem(name: "date", value: date)]
+        guard let datedURL = components.url else { throw RankingSourcesError.avbaseEmpty }
+        var rows = AVBaseParser.talentRanking(html: try await fetchHTML(datedURL))
+        if rows.isEmpty {
+            guard let latestURL = URL(string: Self.origin + "/talents/popular") else {
+                throw RankingSourcesError.avbaseEmpty
+            }
+            rows = AVBaseParser.talentRanking(html: try await fetchHTML(latestURL))
+        }
+        guard !rows.isEmpty else { throw RankingSourcesError.avbaseEmpty }
+        return rows.map { row in
+            RankingBoardEntry(rank: row.rank, code: nil, title: row.name,
+                              coverURL: row.avatarURL, actresses: [],
+                              actorName: row.name)
+        }
+    }
+
+    /// 女优作品页 (build 61): /talents/<name>?page=N — the profile
+    /// and the works list ride the same pageProps, so one fetch
+    /// returns both. Pagination shares the works surfaces' rule.
+    func loadTalent(name: String, page: Int) async throws -> AVBaseTalentPage {
+        let page = max(1, page)
+        let encoded = name.addingPercentEncoding(
+            withAllowedCharacters: CharacterSet.urlPathAllowed) ?? name
+        var components = URLComponents(string: Self.origin + "/talents/\(encoded)")!
+        components.queryItems = [URLQueryItem(name: "page", value: String(page))]
+        guard let url = components.url else { throw RankingSourcesError.avbaseEmpty }
+        let html = try await fetchHTML(url)
+        guard let props = AvbaseMetadata.props(html) else {
+            throw RankingSourcesError.avbaseChallenged
+        }
+        let parsed = AVBaseParser.page(props: props)
+        let board = try finishPage(works: parsed.works, total: parsed.total,
+                                   page: page, key: "talent|\(name)")
+        return AVBaseTalentPage(profile: AVBaseParser.talentProfile(props: props),
+                                page: board)
+    }
+
     private func loadPage(key: String, path: String, query: [URLQueryItem],
                           page: Int) async throws -> AVBaseBoardPage {
         let page = max(1, page)
@@ -59,33 +114,36 @@ actor AVBaseClient {
         guard let parsed = AVBaseParser.page(html: html) else {
             throw RankingSourcesError.avbaseChallenged
         }
-        // Dedupe by code within the page (RankingMatchStore keys
-        // everything by code; a duplicate row would double-list).
+        return try finishPage(works: parsed.works, total: parsed.total,
+                              page: page, key: key)
+    }
+
+    /// Shared page shaping: dedupe by code within the page
+    /// (RankingMatchStore keys everything by code; a duplicate row
+    /// would double-list), then judge pagination by what actually
+    /// came back (build 61 — AVBaseParser.hasMore; the declared
+    /// total no longer decides).
+    private func finishPage(works rawWorks: [AVBaseWork], total: Int?,
+                            page: Int, key: String) throws -> AVBaseBoardPage {
         var seen = Set<String>()
-        let works = parsed.works.filter { seen.insert($0.code).inserted }
+        let works = rawWorks.filter { seen.insert($0.code).inserted }
         if works.isEmpty {
             // An empty later page just ends pagination; an empty
             // first page is the board's error state.
             if page <= 1 { throw RankingSourcesError.avbaseEmpty }
-            return AVBaseBoardPage(entries: [], hasMore: false, total: parsed.total)
+            return AVBaseBoardPage(entries: [], hasMore: false, total: total)
         }
         if page <= 1 { firstPageCounts[key] = works.count }
         let pageSize = firstPageCounts[key] ?? works.count
-        let hasMore: Bool
-        if let total = parsed.total {
-            hasMore = pageSize > 0 && page * pageSize < total
-        } else {
-            // No declared total: a full page implies there may be
-            // more; a short page is the last one.
-            hasMore = pageSize > 0 && works.count >= pageSize
-        }
+        let hasMore = AVBaseParser.hasMore(pageCount: works.count,
+                                           firstPageCount: pageSize)
         let entries = works.enumerated().map { index, work in
             RankingBoardEntry(rank: (page - 1) * pageSize + index + 1,
                               code: work.code, title: work.title,
                               coverURL: nil, actresses: work.actresses,
                               actorName: nil)
         }
-        return AVBaseBoardPage(entries: entries, hasMore: hasMore, total: parsed.total)
+        return AVBaseBoardPage(entries: entries, hasMore: hasMore, total: total)
     }
 
     // MARK: - Transport (URLSession → WKWebView fallback)

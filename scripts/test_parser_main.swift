@@ -1191,7 +1191,95 @@ enum ParserTests {
         expect(AVBaseParser.productScore(["image_url": "https://example.com/x.jpg"]) == 4,
                "avbase product score: image_url is +4")
 
-        print("PASS: home, detail magnets, ranking merge, hot casts, HQ cover sources, empty shell, block detection, cover policy, login signals, ranking tabs, pagination, news, series, detail cover identity, page map, cast cards, prefix links, filter form, homepage panel, auto-next, home main list, movie toolbar, tab hygiene, tab locale guard, drawer shortcuts, poster quality, javbus, tenhow, amazon, avbase catalogue, trailer and stills, library sync parsing, cast profile, comments sanitize, related lists, preview whitelist, filmography, real list fragments, number prefix, avfan trailer preference, hot searches, strip splice guard, real-page strip triples, canonical identity, same-file identity, javranking boards, original-cover types, dmm graphql boards, avbase boards")
+        // Build 61: pagination is judged by actual returns only.
+        expect(AVBaseParser.hasMore(pageCount: 30, firstPageCount: 30),
+               "avbase hasMore: a full page may have a successor")
+        expect(!AVBaseParser.hasMore(pageCount: 29, firstPageCount: 30),
+               "avbase hasMore: a short page is the last one")
+        expect(!AVBaseParser.hasMore(pageCount: 0, firstPageCount: 30),
+               "avbase hasMore: an empty page ends pagination")
+        expect(!AVBaseParser.hasMore(pageCount: 10, firstPageCount: 0),
+               "avbase hasMore: no observed page size → no next page")
+
+        // Build 61: talent ranking — DOM cards are primary (rank
+        // badge and movement on the parent spans, ruby name +
+        // furigana, card img as avatar), per the avbase.js contract.
+        let avb61RankHTML = """
+        <html><head><title>AVBase talents fixture</title></head><body>
+        <div class="grid">
+          <div class="relative"><span>1</span><span aria-label="前回より2位上昇">↑2</span>
+            <article><a href="/talents/女優A子"><img src="/avatars/a.jpg" alt="女優A子"></a>
+            <a href="/talents/女優A子"><ruby>女優A子<rt>じょゆうえーこ</rt></ruby></a></article></div>
+          <div class="relative"><span>2</span><span aria-label="初登場">初登場</span>
+            <article><a href="/talents/女優B子"><img data-src="https://www.avbase.net/avatars/b.jpg"></a>
+            <a href="/talents/女優B子"><ruby>女優B子<rt>じょゆうびーこ</rt></ruby></a></article></div>
+        </div>
+        <script id="__NEXT_DATA__" type="application/json">{"props":{"pageProps":{"snapshot":{"items":[]}}}}</script>
+        </body></html>
+        """
+        let avb61Rank = AVBaseParser.talentRanking(html: avb61RankHTML)
+        expect(avb61Rank.count == 2, "avbase talent ranking DOM count, got \(avb61Rank.count)")
+        expect(avb61Rank.first?.rank == 1 && avb61Rank.first?.name == "女優A子",
+               "avbase talent ranking first row, got \(String(describing: avb61Rank.first))")
+        expect(avb61Rank.first?.furigana == "じょゆうえーこ",
+               "avbase talent ranking furigana from rt, got \(avb61Rank.first?.furigana ?? "nil")")
+        expect(avb61Rank.first?.avatarURL == "https://www.avbase.net/avatars/a.jpg",
+               "avbase talent ranking avatar absolutized, got \(avb61Rank.first?.avatarURL ?? "nil")")
+        expect(avb61Rank.first?.movementText == "上升 2 位",
+               "avbase talent ranking movement, got \(avb61Rank.first?.movementText ?? "nil")")
+        expect(avb61Rank.last?.movementText == "新进榜"
+               && avb61Rank.last?.avatarURL == "https://www.avbase.net/avatars/b.jpg",
+               "avbase talent ranking second row movement + data-src avatar, got \(String(describing: avb61Rank.last))")
+
+        // Build 61: talent ranking JSON fallback — snapshot.items
+        // is names only (talent.primary, else talent.actors[0]).
+        let avb61RankFallbackHTML = """
+        <html><body><p>no cards here</p>
+        <script id="__NEXT_DATA__" type="application/json">{"props":{"pageProps":{"snapshot":{"items":[{"talent":{"primary":{"name":"女優C子"}}},{"talent":{"actors":[{"name":"女優D子"}]}}]}}}}</script>
+        </body></html>
+        """
+        let avb61RankFallback = AVBaseParser.talentRanking(html: avb61RankFallbackHTML)
+        expect(avb61RankFallback.map(\.name) == ["女優C子", "女優D子"]
+               && avb61RankFallback.map(\.rank) == [1, 2]
+               && avb61RankFallback.allSatisfy { $0.avatarURL == nil },
+               "avbase talent ranking snapshot fallback, got \(avb61RankFallback)")
+
+        // Build 61: talent profile — name/avatar under primary,
+        // measurements under meta.basic_info (numbers stringify).
+        let avb61Info: [String: Any] = ["birthday": "1998-04-01", "height": 160,
+                                        "bust": 88, "waist": 58, "hip": 85,
+                                        "cup": "F", "prefectures": "東京都"]
+        let avb61Primary: [String: Any] = ["name": "女優A子", "ruby": "じょゆうえーこ",
+                                           "image_url": "/avatars/a.jpg"]
+        let avb61Talent: [String: Any] = ["primary": avb61Primary,
+                                          "meta": ["basic_info": avb61Info] as [String: Any]]
+        let avb61TalentProps: [String: Any] = [
+            "talent": avb61Talent,
+            "works": [["work_id": "IPZZ-936", "title": "talent work", "prefix": "ipzz"]],
+            "total": 1,
+        ]
+        let avb61Profile = AVBaseParser.talentProfile(props: avb61TalentProps)
+        expect(avb61Profile?.name == "女優A子", "avbase talent profile name, got \(avb61Profile?.name ?? "nil")")
+        expect(avb61Profile?.avatarURL == "https://www.avbase.net/avatars/a.jpg",
+               "avbase talent profile avatar, got \(avb61Profile?.avatarURL ?? "nil")")
+        expect(avb61Profile?.height == "160",
+               "avbase talent profile numeric height stringifies, got \(avb61Profile?.height ?? "nil")")
+        expect(avb61Profile?.summary == "假名 じょゆうえーこ\n生年月日 1998-04-01\n出身地 東京都\n身長 160cm\nサイズ B88(F) W58 H85",
+               "avbase talent profile summary, got \(avb61Profile?.summary ?? "nil")")
+        // The works list rides the same pageProps as the profile.
+        let avb61TalentPage = AVBaseParser.page(props: avb61TalentProps)
+        expect(avb61TalentPage.works.map(\.code) == ["IPZZ-936"] && avb61TalentPage.total == 1,
+               "avbase talent page works, got \(avb61TalentPage)")
+        // avFindTalent scan: no direct key, a nested talent-shaped
+        // value with profile fields is still found.
+        expect(AVBaseParser.talentProfile(props: ["other": avb61Talent])?.name == "女優A子",
+               "avbase talent profile scan fallback")
+        // A bare name normalizes but invents no profile fields.
+        let avb61Bare = AVBaseParser.normTalent(["name": "女優X子"])
+        expect(avb61Bare?.name == "女優X子" && avb61Bare?.summary == "",
+               "avbase bare talent has an empty summary, got \(String(describing: avb61Bare))")
+
+        print("PASS: home, detail magnets, ranking merge, hot casts, HQ cover sources, empty shell, block detection, cover policy, login signals, ranking tabs, pagination, news, series, detail cover identity, page map, cast cards, prefix links, filter form, homepage panel, auto-next, home main list, movie toolbar, tab hygiene, tab locale guard, drawer shortcuts, poster quality, javbus, tenhow, amazon, avbase catalogue, trailer and stills, library sync parsing, cast profile, comments sanitize, related lists, preview whitelist, filmography, real list fragments, number prefix, avfan trailer preference, hot searches, strip splice guard, real-page strip triples, canonical identity, same-file identity, javranking boards, original-cover types, dmm graphql boards, avbase boards, avbase talents and pagination")
     }
 }
 

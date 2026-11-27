@@ -262,4 +262,257 @@ enum AVBaseParser {
               let minutes = Int(match[1]), minutes > 0 else { return nil }
         return minutes
     }
+
+    // MARK: - Pagination rule (build 61)
+
+    /// Whether another page is expected, judged ONLY by what the
+    /// current page actually returned (avCollectAllWorks' stop
+    /// conditions reduced to one page): a page that came back full
+    /// — at least the observed first-page size — may have a
+    /// successor; a short or empty page is the last one. Build 60
+    /// also trusted the declared total, whose key/shape on
+    /// /works/recent is not the one readTotal looks for, so the
+    /// total branch is gone: actual returns decide.
+    static func hasMore(pageCount: Int, firstPageCount: Int) -> Bool {
+        firstPageCount > 0 && pageCount >= firstPageCount
+    }
+
+    // MARK: - Talent ranking (build 61, avRankFromHtml / avRankFromProps)
+
+    /// One row of /talents/popular. The JSON snapshot carries names
+    /// only; rank badges, movement badges and avatars exist only in
+    /// the server-rendered cards, so the DOM parse is primary (the
+    /// avbase.js order) and the snapshot is the fallback.
+    static func talentRanking(html: String) -> [AVBaseTalentRankEntry] {
+        let fromDOM = talentRankingFromDOM(html)
+        if !fromDOM.isEmpty { return fromDOM }
+        guard let props = AvbaseMetadata.props(html) else { return [] }
+        return talentRankingFromProps(props)
+    }
+
+    static func talentRankingFromDOM(_ html: String) -> [AVBaseTalentRankEntry] {
+        guard let root = try? JRHTML.tree(html) else { return [] }
+        var cards: [(parent: JRNode, article: JRNode)] = []
+        func collect(_ node: JRNode) {
+            for child in node.children {
+                if child.tag == "article" { cards.append((node, child)) }
+                collect(child)
+            }
+        }
+        collect(root)
+        var out: [AVBaseTalentRankEntry] = []
+        var seen = Set<String>()
+        for (parent, article) in cards {
+            let links = article.all {
+                $0.tag == "a" && ($0.attrs["href"] ?? "").contains("/talents/")
+            }
+            guard !links.isEmpty else { continue }
+            let img = article.all { $0.tag == "img" }.first
+            var name = ""
+            var furigana: String?
+            if let ruby = article.all({ $0.tag == "ruby" }).first {
+                if let rt = ruby.children.first(where: { $0.tag == "rt" }) {
+                    let text = clean(rt.text)
+                    furigana = text.isEmpty ? nil : text
+                }
+                name = clean(ruby.children.filter { $0.tag != "rt" }
+                    .map(\.text).joined(separator: " "))
+            }
+            if name.isEmpty, let alt = img?.attrs["alt"] { name = clean(alt) }
+            if name.isEmpty { name = clean(links.last?.text) }
+            guard !name.isEmpty, seen.insert(name).inserted else { continue }
+            var rank = 0
+            var movement: String?
+            for span in parent.children where span.tag == "span" {
+                let text = clean(span.text)
+                if rank == 0, let value = Int(text), (1...999).contains(value),
+                   text == String(value) {
+                    rank = value
+                    continue
+                }
+                if movement == nil {
+                    movement = rankMovement(label: span.attrs["aria-label"]
+                                                ?? span.attrs["title"] ?? "",
+                                            glyph: text)
+                }
+            }
+            out.append(AVBaseTalentRankEntry(
+                rank: rank == 0 ? out.count + 1 : rank,
+                name: name,
+                furigana: furigana,
+                avatarURL: absoluteURL(img?.attrs["src"] ?? img?.attrs["data-src"]),
+                movementText: movement))
+        }
+        return out.sorted { $0.rank < $1.rank }
+    }
+
+    /// avRankMovement: badge label/glyph → display text.
+    static func rankMovement(label: String, glyph: String) -> String? {
+        let l = clean(label)
+        let t = clean(glyph)
+        if l.contains("初登場") || t.contains("初登場") { return "新进榜" }
+        if let match = JRHTML.matches(#"↑\s*(\d+)"#, t).first { return "上升 \(match[1]) 位" }
+        if let match = JRHTML.matches(#"(\d+)\s*位"#, l).first,
+           l.contains("上昇") || l.contains("アップ") { return "上升 \(match[1]) 位" }
+        if t.contains("↑") || l.contains("上昇") || l.contains("アップ") { return "上升" }
+        if let match = JRHTML.matches(#"↓\s*(\d+)"#, t).first { return "下降 \(match[1]) 位" }
+        if let match = JRHTML.matches(#"(\d+)\s*位"#, l).first,
+           l.contains("下降") || l.contains("ダウン") { return "下降 \(match[1]) 位" }
+        if t.contains("↓") || l.contains("下降") || l.contains("ダウン") { return "下降" }
+        if l.contains("同順位") || t == "→" || t == "-" { return "持平" }
+        return nil
+    }
+
+    /// JSON fallback: snapshot.items is just the names in rank
+    /// order (talent.primary, else talent.actors[0]) — no avatars,
+    /// no movement.
+    static func talentRankingFromProps(_ props: [String: Any]) -> [AVBaseTalentRankEntry] {
+        var snapshot = props["snapshot"] as? [String: Any]
+        if snapshot == nil,
+           let superjson = props["_superjson"] as? [String: Any],
+           let values = superjson["values"] as? [String: Any] {
+            snapshot = values["snapshot"] as? [String: Any]
+        }
+        let items = snapshot?["items"] as? [Any] ?? []
+        var out: [AVBaseTalentRankEntry] = []
+        for item in items {
+            guard let entry = item as? [String: Any],
+                  let talent = entry["talent"] as? [String: Any] else { continue }
+            var primary = talent["primary"] as? [String: Any]
+            if primary == nil, let actors = talent["actors"] as? [Any] {
+                primary = actors.first as? [String: Any]
+            }
+            guard let name = AvbaseMetadata.string(primary?["name"]) else { continue }
+            out.append(AVBaseTalentRankEntry(rank: out.count + 1, name: clean(name),
+                                             furigana: nil, avatarURL: nil,
+                                             movementText: nil))
+        }
+        return out
+    }
+
+    // MARK: - Talent profile (build 61, avNormTalent / avFindTalent)
+
+    static func talentProfile(html: String) -> AVBaseTalentProfile? {
+        guard let props = AvbaseMetadata.props(html) else { return nil }
+        return talentProfile(props: props)
+    }
+
+    /// avFindTalent: props.talent / .actress / .actor / .person
+    /// first; otherwise the first pageProps value that normalizes
+    /// AND carries at least one profile field.
+    static func talentProfile(props: [String: Any]) -> AVBaseTalentProfile? {
+        for key in ["talent", "actress", "actor", "person"] {
+            if let raw = props[key] as? [String: Any], let profile = normTalent(raw) {
+                return profile
+            }
+        }
+        for (_, value) in props {
+            guard let raw = value as? [String: Any],
+                  let profile = normTalent(raw) else { continue }
+            if profile.birthday != nil || profile.height != nil || profile.bust != nil
+                || profile.avatarURL != nil || profile.prefecture != nil {
+                return profile
+            }
+        }
+        return nil
+    }
+
+    /// avNormTalent: the site's real shape is
+    /// { primary: { name, ruby, image_url },
+    ///   meta: { basic_info: { birthday, height, bust, waist, hip,
+    ///   cup, prefectures }, wikipedia }, actors: [...] } — the name
+    /// and avatar live under primary, the measurements under
+    /// meta.basic_info; a flat talent.name reads nothing.
+    static func normTalent(_ raw: [String: Any]) -> AVBaseTalentProfile? {
+        let primary = raw["primary"] as? [String: Any] ?? raw
+        let meta = raw["meta"] as? [String: Any] ?? [:]
+        let info = meta["basic_info"] as? [String: Any]
+            ?? raw["basic_info"] as? [String: Any] ?? [:]
+        let name = clean(AvbaseMetadata.string(primary["name"])
+            ?? AvbaseMetadata.string(raw["name"]))
+        guard !name.isEmpty else { return nil }
+        func field(_ key: String) -> String? {
+            let value = looseString(info[key]) ?? looseString(raw[key])
+            return value.flatMap { clean($0).isEmpty ? nil : clean($0) }
+        }
+        return AVBaseTalentProfile(
+            name: name,
+            ruby: field("ruby") ?? AvbaseMetadata.string(primary["ruby"])
+                .flatMap { clean($0).isEmpty ? nil : clean($0) },
+            avatarURL: absoluteURL(AvbaseMetadata.string(primary["image_url"])
+                ?? AvbaseMetadata.string(raw["image_url"])),
+            birthday: field("birthday"),
+            prefecture: looseString(info["prefectures"])
+                .flatMap { clean($0).isEmpty ? nil : clean($0) } ?? field("prefecture"),
+            height: field("height"),
+            bust: field("bust"),
+            waist: field("waist"),
+            hip: field("hip"),
+            cup: field("cup"))
+    }
+
+    // MARK: - Shared helpers
+
+    /// Strings pass through AvbaseMetadata.string; JSON numbers
+    /// (height, bust…) stringify instead of dropping.
+    static func looseString(_ value: Any?) -> String? {
+        if let text = AvbaseMetadata.string(value) { return text }
+        if let number = value as? NSNumber { return number.stringValue }
+        return nil
+    }
+
+    /// avAbsUrl against the AVBase origin.
+    static func absoluteURL(_ raw: String?) -> String? {
+        let text = clean(raw)
+        if text.isEmpty { return nil }
+        if text.hasPrefix("http://") || text.hasPrefix("https://") { return text }
+        if text.hasPrefix("//") { return "https:" + text }
+        if text.hasPrefix("/") { return AvbaseMetadata.origin + text }
+        return AvbaseMetadata.origin + "/" + text
+    }
+}
+
+struct AVBaseTalentRankEntry: Equatable {
+    var rank: Int
+    var name: String
+    var furigana: String?
+    /// AVBase's own actor image — the only avatar source there is
+    /// (the HQ cover chain is for works, not people).
+    var avatarURL: String?
+    var movementText: String?
+}
+
+struct AVBaseTalentProfile: Equatable {
+    var name: String
+    var ruby: String?
+    var avatarURL: String?
+    var birthday: String?
+    var prefecture: String?
+    var height: String?
+    var bust: String?
+    var waist: String?
+    var hip: String?
+    var cup: String?
+
+    /// avTalentProfileText, minus the work count (the parser does
+    /// not know it; the works page adds it from the list total).
+    /// Empty when the page carried no profile fields — the header
+    /// then shows the name only, never invented data.
+    var summary: String {
+        var bits: [String] = []
+        if let ruby, !ruby.isEmpty { bits.append("假名 \(ruby)") }
+        if let birthday, !birthday.isEmpty { bits.append("生年月日 \(birthday)") }
+        if let prefecture, !prefecture.isEmpty { bits.append("出身地 \(prefecture)") }
+        if let height, !height.isEmpty {
+            bits.append("身長 \(height)\(height.hasSuffix("cm") ? "" : "cm")")
+        }
+        var size: [String] = []
+        if let bust, !bust.isEmpty {
+            size.append("B\(bust)\(cup.map { "(\($0))" } ?? "")")
+        }
+        if let waist, !waist.isEmpty { size.append("W\(waist)") }
+        if let hip, !hip.isEmpty { size.append("H\(hip)") }
+        if !size.isEmpty { bits.append("サイズ \(size.joined(separator: " "))") }
+        return bits.joined(separator: "\n")
+    }
 }
