@@ -657,6 +657,50 @@ private struct ExternalRankingsView: View {
     }
 }
 
+/// Build 62: actor-row avatar with a deterministic cell size.
+///
+/// The frame is pinned by `frame(maxWidth: .infinity)` +
+/// `aspectRatio(3/4, .fit)`, so the cell is exactly the grid column
+/// wide and 4/3 as tall in EVERY state — loading, loaded, failed,
+/// or no avatar at all. The image is centre-cropped by scaledToFill
+/// inside that fixed frame (clipped, never overflowing), and the
+/// placeholder fills the same frame with the icon centred. This is
+/// deliberately NOT RemoteImage (its ZStack reports a size derived
+/// from the loaded image's native aspect, which made build 61's
+/// talent rows overflow their columns unevenly) and NOT CoverImage
+/// (the HQ probe / jacket crop chain is for work covers only).
+/// The avatar URL is AVBase's own actor image, used as-is —
+/// avbase.js defines no larger-size variant for it.
+private struct TalentAvatarView: View {
+    let url: String?
+    @State private var image: UIImage?
+    @State private var settled = false
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color.secondary.opacity(0.15))
+            if let image {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+            } else if url == nil || settled {
+                Image(systemName: "person.fill")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .aspectRatio(3.0 / 4.0, contentMode: .fit)
+        .clipped()
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .task(id: url) {
+            settled = false
+            image = await ImageLoader.shared.load(url, maxPixelSize: 800)
+            settled = true
+        }
+    }
+}
+
 private struct RankingGridCell: View {
     let entry: RankingBoardEntry
     let source: RankingSource
@@ -688,24 +732,18 @@ private struct RankingGridCell: View {
         VStack(spacing: 5) {
             ZStack(alignment: .topLeading) {
                 if entry.isActor {
-                    if let avatar = entry.coverURL {
-                        // Build 61: AVBase talent rows carry the
-                        // actress's own image — the only avatar
-                        // source; shown as-is (no HQ probing, that
-                        // chain is for work covers).
-                        RemoteImage(url: avatar, contentMode: .fill)
-                            .aspectRatio(3.0 / 4.0, contentMode: .fill)
-                            .clipped()
-                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    } else {
-                        ZStack {
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .fill(Color.secondary.opacity(0.15))
-                            Image(systemName: "person.fill")
-                                .foregroundStyle(.secondary)
-                        }
-                        .aspectRatio(3.0 / 4.0, contentMode: .fill)
-                    }
+                    // Build 61: AVBase talent rows carry the
+                    // actress's own image — the only avatar source;
+                    // shown as-is (no HQ probing, that chain is for
+                    // work covers). Build 62: rendered by the
+                    // dedicated TalentAvatarView — build 61 put the
+                    // avatar through RemoteImage, whose size is
+                    // negotiated from the image's native aspect, so
+                    // cells overflowed their column by different
+                    // amounts per photo and rows went ragged (and
+                    // the no-avatar placeholder, a sizeless ZStack,
+                    // collapsed and pushed its icon off-centre).
+                    TalentAvatarView(url: entry.coverURL)
                 } else {
                     // Cover policy (build 46, owner's rule): match an
                     // HQ cover first (probeDisplaysWinner lets the
@@ -894,10 +932,12 @@ private struct AVBaseTalentWorksView: View {
     private var header: some View {
         if let profile {
             HStack(alignment: .top, spacing: 12) {
-                RemoteImage(url: profile.avatarURL, contentMode: .fill)
+                // Build 62: same TalentAvatarView as the ranking
+                // grid (it reused the same RemoteImage); 72×96 is
+                // exactly 3:4, so its internal aspect fit lands
+                // on the same fixed frame.
+                TalentAvatarView(url: profile.avatarURL)
                     .frame(width: 72, height: 96)
-                    .clipped()
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                 VStack(alignment: .leading, spacing: 4) {
                     Text(profile.name)
                         .font(.headline)
