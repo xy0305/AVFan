@@ -1118,7 +1118,80 @@ enum ParserTests {
         expect(DMMCoverURLs.digital("mkmp00659").first?.contains("awsimgsrc.dmm.co.jp") == true,
                "dmm entry cover is the official FANZA image")
 
-        print("PASS: home, detail magnets, ranking merge, hot casts, HQ cover sources, empty shell, block detection, cover policy, login signals, ranking tabs, pagination, news, series, detail cover identity, page map, cast cards, prefix links, filter form, homepage panel, auto-next, home main list, movie toolbar, tab hygiene, tab locale guard, drawer shortcuts, poster quality, javbus, tenhow, amazon, avbase catalogue, trailer and stills, library sync parsing, cast profile, comments sanitize, related lists, preview whitelist, filmography, real list fragments, number prefix, avfan trailer preference, hot searches, strip splice guard, real-page strip triples, canonical identity, same-file identity, javranking boards, original-cover types, dmm graphql boards")
+        // Build 60: AVBase board parsing. No real page fixture can
+        // be captured from the build machine (its egress gets a
+        // Cloudflare 403 from avbase.net), so this page is built to
+        // the field structure documented in avbase.js v1.8.0:
+        // __NEXT_DATA__ → props.pageProps.works + total, work fields
+        // work_id / prefix / title / casts[].actor / tags[].name /
+        // min_date / products[].iteminfo{description, volume}.
+        let avbaseHTML = """
+        <html><head><title>AVBase fixture</title></head><body>
+        <script id="__NEXT_DATA__" type="application/json">{"props":{"pageProps":{"total":42,"works":[{"work_id":"MBMP-173","prefix":"mbm","title":"サンプル作品タイトル","min_date":"Sat Dec 05 2026 09:00:00 GMT+0900 (Japan Standard Time)","casts":[{"actor":{"name":"女優A子"}},{"actor":{"name":"女優B子"}}],"tags":[{"name":"巨乳"},{"name":"単体作品"}],"products":[{"product_id":"mbmp00173","thumbnail_url":"https://example.com/thumb.jpg","iteminfo":{"volume":"90分"}},{"product_id":"mbmp00173","image_url":"https://example.com/cover.jpg","thumbnail_url":"https://example.com/thumb2.jpg","iteminfo":{"description":"あらすじテキスト","volume":"120分"},"sample_image_urls":["https://example.com/s1.jpg"]}]},{"work_id":"IPZZ-936","title":"二作目タイトル","min_date":"2026-11-05","casts":[],"tags":[]},{"foo":"not a work"}],"decoys":[{"work_id":"XXXX-000"}]}},"buildId":"test-build"}</script>
+        </body></html>
+        """
+        let avbasePage = AVBaseParser.page(html: avbaseHTML)
+        expect(avbasePage != nil, "avbase page parses from __NEXT_DATA__")
+        expect(avbasePage?.total == 42, "avbase total, got \(String(describing: avbasePage?.total))")
+        expect(avbasePage?.works.count == 2, "avbase works count, got \(avbasePage?.works.count ?? -1)")
+        let avFirst = avbasePage?.works.first
+        expect(avFirst?.code == "MBMP-173", "avbase bare code is the aggregate id, got \(avFirst?.code ?? "nil")")
+        expect(avFirst?.siteCode == "mbm:MBMP-173", "avbase site code keeps the maker prefix, got \(avFirst?.siteCode ?? "nil")")
+        expect(avFirst?.releaseDate == "2026-12-05", "avbase JS-date min_date normalized, got \(avFirst?.releaseDate ?? "nil")")
+        expect(avFirst?.actresses == ["女優A子", "女優B子"], "avbase casts, got \(avFirst?.actresses ?? [])")
+        expect(avFirst?.genres == ["巨乳", "単体作品"], "avbase tags as genres, got \(avFirst?.genres ?? [])")
+        expect(avFirst?.durationMinutes == 120, "avbase duration from the picked product, got \(String(describing: avFirst?.durationMinutes))")
+        expect(avFirst?.summary == "あらすじテキスト", "avbase summary from the picked product, got \(avFirst?.summary ?? "nil")")
+        let avSecond = avbasePage?.works.last
+        expect(avSecond?.code == "IPZZ-936" && avSecond?.siteCode == "IPZZ-936",
+               "avbase prefix-less work: code == site code")
+        expect(avSecond?.releaseDate == "2026-11-05", "avbase ISO min_date passthrough")
+        expect(avSecond?.durationMinutes == nil, "avbase no products → no duration")
+        expect(AVBaseParser.page(html: "<html><body>no data</body></html>") == nil,
+               "avbase page without __NEXT_DATA__ is nil (challenged path)")
+
+        // avExtractWorks fallback: no preferred key, the largest
+        // work-like array anywhere in pageProps wins.
+        let avFallbackJSON = "{\"result\":[{\"work_id\":\"SONE-001\",\"title\":\"fallback title\"}],\"noise\":[1,2,3]}"
+        let avFallbackProps = (try? JSONSerialization.jsonObject(with: Data(avFallbackJSON.utf8))) as? [String: Any] ?? [:]
+        let avFallback = AVBaseParser.page(props: avFallbackProps)
+        expect(avFallback.works.map(\.code) == ["SONE-001"], "avbase scan fallback finds the works array, got \(avFallback.works.map(\.code))")
+        expect(avFallback.total == nil, "avbase missing total stays nil")
+
+        // avAggregateId / avNormDate / avParseMinutes contracts.
+        expect(AVBaseParser.aggregateID(number: nil, code: "mbm:MBMP-173") == "MBMP-173",
+               "aggregate id strips the maker prefix")
+        expect(AVBaseParser.aggregateID(number: "MBMP 173", code: nil) == "MBMP173",
+               "aggregate id strips spaces")
+        expect(AVBaseParser.aggregateID(number: "MBMP\u{3000}173", code: nil) == "MBMP173",
+               "aggregate id strips full-width spaces")
+        expect(AVBaseParser.aggregateID(number: "", code: "") == "", "aggregate id empty")
+        expect(AVBaseParser.normDate("2026/11/5") == "2026-11-05", "normDate slash format")
+        expect(AVBaseParser.normDate("Dec 5, 2026") == "2026-12-05", "normDate english format")
+        expect(AVBaseParser.normDate("Sat Dec 05 2026 09:00:00 GMT+0900 (Japan Standard Time)") == "2026-12-05",
+               "normDate JS Date string")
+        expect(AVBaseParser.normDate("") == nil && AVBaseParser.normDate("未定") == nil,
+               "normDate rejects non-dates")
+        expect(AVBaseParser.parseMinutes("120分") == 120, "parseMinutes 分")
+        expect(AVBaseParser.parseMinutes("95min") == 95, "parseMinutes min")
+        expect(AVBaseParser.parseMinutes("120") == nil, "parseMinutes bare number is nil per the JS contract")
+
+        // avPickProduct: image-less products still form the pool;
+        // the description-bearing one (score 1) beats the empty one.
+        let avPoolWork = AVBaseParser.mapWork([
+            "work_id": "ABP-123",
+            "title": "pool check",
+            "products": [
+                ["iteminfo": ["description": "d1", "volume": "30分"]],
+                [String: Any](),
+            ],
+        ])
+        expect(avPoolWork?.summary == "d1" && avPoolWork?.durationMinutes == 30,
+               "avbase pick falls back to the full pool without images, got \(String(describing: avPoolWork))")
+        expect(AVBaseParser.productScore(["image_url": "https://example.com/x.jpg"]) == 4,
+               "avbase product score: image_url is +4")
+
+        print("PASS: home, detail magnets, ranking merge, hot casts, HQ cover sources, empty shell, block detection, cover policy, login signals, ranking tabs, pagination, news, series, detail cover identity, page map, cast cards, prefix links, filter form, homepage panel, auto-next, home main list, movie toolbar, tab hygiene, tab locale guard, drawer shortcuts, poster quality, javbus, tenhow, amazon, avbase catalogue, trailer and stills, library sync parsing, cast profile, comments sanitize, related lists, preview whitelist, filmography, real list fragments, number prefix, avfan trailer preference, hot searches, strip splice guard, real-page strip triples, canonical identity, same-file identity, javranking boards, original-cover types, dmm graphql boards, avbase boards")
     }
 }
 

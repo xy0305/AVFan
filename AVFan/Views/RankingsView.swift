@@ -1,8 +1,10 @@
 import SwiftUI
 
 // Build 42/43: the rankings tab keeps ALL of AVFan's own boards and
-// adds the five external boards ported from AVDB — DMM, JAV Ranking,
-// MissAV, 中指通, JAVLibrary. (JavDB's own rankings were the ones the
+// adds the external boards ported from AVDB — DMM, JAV Ranking,
+// MissAV, 中指通, JAVLibrary. Build 60 adds AVBase （最新作品 /
+// 按发售日 / 番号搜索， live from avbase.net's public pages).
+// (JavDB's own rankings were the ones the
 // owner said to skip.) External entries are keyed by code; tapping one
 // resolves the code against AVFan's own search and opens the AVFan
 // detail page (RankingMatchStore caches resolutions on disk and
@@ -15,7 +17,7 @@ private struct RankingTerm: Identifiable, Hashable {
 }
 
 private enum RankingSource: String, CaseIterable, Identifiable {
-    case dmm, javranking, missav, zhongzhitong, javlibrary
+    case dmm, javranking, missav, avbase, zhongzhitong, javlibrary
 
     var id: String { rawValue }
 
@@ -24,6 +26,7 @@ private enum RankingSource: String, CaseIterable, Identifiable {
         case .dmm: return "DMM"
         case .javranking: return "JAV Ranking"
         case .missav: return "MissAV"
+        case .avbase: return "AVBase"
         case .zhongzhitong: return "中指通"
         case .javlibrary: return "JAVLibrary"
         }
@@ -44,6 +47,10 @@ private enum RankingSource: String, CaseIterable, Identifiable {
             return [RankingTerm(id: "today-hot", label: "今日热门"),
                     RankingTerm(id: "weekly-hot", label: "本周热门"),
                     RankingTerm(id: "monthly-hot", label: "本月热门")]
+        case .avbase:
+            return [RankingTerm(id: "recent", label: "最新作品"),
+                    RankingTerm(id: "bydate", label: "按发售日"),
+                    RankingTerm(id: "search", label: "番号搜索")]
         case .zhongzhitong:
             return []  // dynamic: bundled catalog years/months (build 44)
         case .javlibrary:
@@ -73,7 +80,7 @@ private enum RankingBoard: Hashable {
 }
 
 /// Rankings tab container (build 43): a board picker on top — AVFan's
-/// own boards first (NativeRankingsView, untouched), then the five
+/// own boards first (NativeRankingsView, untouched), then the
 /// external boards.
 struct RankingsView: View {
     @State private var board: RankingBoard = .native
@@ -139,6 +146,26 @@ private struct ExternalRankingsView: View {
     @State private var jrHasMore = false
     @State private var jrLoadingMore = false
 
+    // AVBase (build 60): ?page=N pagination, the 按发售日 day being
+    // browsed, and the 番号搜索 query (submitted separately from the
+    // text field's live contents so typing alone never reloads).
+    @State private var avPage = 1
+    @State private var avHasMore = false
+    @State private var avLoadingMore = false
+    @State private var avDay = Date()
+    @State private var avQuery = ""
+    @State private var avSubmittedQuery = ""
+
+    /// AVBase dates are JST release dates (yyyy-MM-dd).
+    private var avDateString: String {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(identifier: "Asia/Tokyo")
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.string(from: avDay)
+    }
+
     init(source: RankingSource) {
         self.source = source
         _term = State(initialValue: source.terms.first?.id ?? "")
@@ -150,7 +177,14 @@ private struct ExternalRankingsView: View {
     @State private var target: RankingTarget?
     @State private var loadAttempt = 0
 
-    private var loadKey: String { "\(source.rawValue)|\(term)|\(zztMonth)|\(loadAttempt)" }
+    private var loadKey: String {
+        var key = "\(source.rawValue)|\(term)|\(zztMonth)|\(loadAttempt)"
+        if source == .avbase {
+            if term == "bydate" { key += "|\(avDateString)" }
+            if term == "search" { key += "|\(avSubmittedQuery)" }
+        }
+        return key
+    }
 
     private var javlibraryConfigured: Bool {
         external.enabled && !(external.token() ?? "").isEmpty
@@ -210,6 +244,39 @@ private struct ExternalRankingsView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
+                if source == .avbase && term == "bydate" {
+                    HStack(spacing: 10) {
+                        Button {
+                            shiftAVDay(-1)
+                        } label: {
+                            Label("前一天", systemImage: "chevron.left")
+                                .font(.subheadline)
+                        }
+                        .buttonStyle(.bordered)
+                        DatePicker("", selection: $avDay, displayedComponents: .date)
+                            .labelsHidden()
+                        Button {
+                            shiftAVDay(1)
+                        } label: {
+                            Label("后一天", systemImage: "chevron.right")
+                                .font(.subheadline)
+                        }
+                        .buttonStyle(.bordered)
+                        Spacer()
+                    }
+                }
+                if source == .avbase && term == "search" {
+                    HStack(spacing: 8) {
+                        TextField("输入番号或关键词", text: $avQuery)
+                            .textFieldStyle(.roundedBorder)
+                            .autocorrectionDisabled()
+                            .textInputAutocapitalization(.never)
+                            .onSubmit { submitAVSearch() }
+                        Button("搜索") { submitAVSearch() }
+                            .buttonStyle(.bordered)
+                            .disabled(avQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+                }
                 if let updatedText {
                     Text(updatedText)
                         .font(.caption)
@@ -234,7 +301,12 @@ private struct ExternalRankingsView: View {
 
     @ViewBuilder
     private var content: some View {
-        if source == .javlibrary && !javlibraryConfigured {
+        if source == .avbase && term == "search" && avSubmittedQuery.isEmpty {
+            Text("输入番号（例如 IPZZ-936）或关键词搜索 AVBase 的作品库。点进条目会按番号精确匹配 AVFan 详情页，磁力和 115 推送都在详情页上。")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .padding(.vertical, 24)
+        } else if source == .javlibrary && !javlibraryConfigured {
             Text("JAVLibrary 排行走外部数据库服务。请先在「设置 → 外部数据库」填好服务器和令牌并启用，再回到这里。")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
@@ -268,11 +340,13 @@ private struct ExternalRankingsView: View {
                         .buttonStyle(.plain)
                     }
                 }
-                if source == .javranking && jrHasMore {
+                if (source == .javranking && jrHasMore) || (source == .avbase && avHasMore) {
                     Button {
-                        Task { await loadMore() }
+                        Task {
+                            if source == .avbase { await loadMoreAVBase() } else { await loadMore() }
+                        }
                     } label: {
-                        if jrLoadingMore {
+                        if jrLoadingMore || avLoadingMore {
                             ProgressView()
                         } else {
                             Text("加载更多")
@@ -280,7 +354,7 @@ private struct ExternalRankingsView: View {
                         }
                     }
                     .buttonStyle(.bordered)
-                    .disabled(jrLoadingMore || loading)
+                    .disabled(jrLoadingMore || avLoadingMore || loading)
                 }
             }
         }
@@ -361,6 +435,34 @@ private struct ExternalRankingsView: View {
             case .missav:
                 entries = try await MissAVRankings.load(term: term)
                 updatedText = "实时抓取自 MissAV"
+            case .avbase:
+                // Live from AVBase's public pages (build 60) —
+                // __NEXT_DATA__ parsed on device, entries keyed by
+                // the bare code with NO AVBase cover (the grid's HQ
+                // chain resolves covers). Taps go through the same
+                // RankingMatchStore exact-code match as every other
+                // board, landing on the AVFan detail page.
+                avHasMore = false
+                let result: AVBaseBoardPage
+                switch term {
+                case "bydate":
+                    result = try await AVBaseClient.shared.loadDate(avDateString, page: 1)
+                case "search":
+                    let keyword = avSubmittedQuery
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !keyword.isEmpty else {
+                        entries = []
+                        updatedText = nil
+                        return
+                    }
+                    result = try await AVBaseClient.shared.loadSearch(query: keyword, page: 1)
+                default:
+                    result = try await AVBaseClient.shared.loadRecent(page: 1)
+                }
+                entries = result.entries
+                avPage = 1
+                avHasMore = result.hasMore
+                updatedText = "实时抓取自 AVBase"
             case .javlibrary:
                 let snapshot = try await ExternalLibraryClient.shared
                     .fetchJAVLibraryRankings(kind: term)
@@ -423,6 +525,62 @@ private struct ExternalRankingsView: View {
         } catch {
             jrHasMore = false
         }
+    }
+
+    /// AVBase pagination (build 60): same contract as JAV Ranking's
+    /// loadMore — appends the next page deduped by entry id and
+    /// pre-resolves only the new slice; a failed page quietly ends
+    /// pagination. The term/date/query snapshot guards against the
+    /// surface changing mid-flight.
+    private func loadMoreAVBase() async {
+        guard source == .avbase, avHasMore, !loading, !avLoadingMore else { return }
+        avLoadingMore = true
+        defer { avLoadingMore = false }
+        let forTerm = term
+        let forDate = avDateString
+        let forQuery = avSubmittedQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        do {
+            let result: AVBaseBoardPage
+            switch forTerm {
+            case "bydate":
+                result = try await AVBaseClient.shared.loadDate(forDate, page: avPage + 1)
+            case "search":
+                guard !forQuery.isEmpty else { return }
+                result = try await AVBaseClient.shared.loadSearch(query: forQuery, page: avPage + 1)
+            default:
+                result = try await AVBaseClient.shared.loadRecent(page: avPage + 1)
+            }
+            guard term == forTerm, avDateString == forDate,
+                  avSubmittedQuery.trimmingCharacters(in: .whitespacesAndNewlines) == forQuery
+            else { return }
+            let known = Set(entries.map(\.id))
+            let fresh = result.entries.filter { !known.contains($0.id) }
+            entries += fresh
+            avPage += 1
+            avHasMore = result.hasMore
+            await store.preResolve(entries: fresh, locale: settings.locale,
+                                   ageCookie: settings.legalAgeCookie)
+        } catch is CancellationError {
+            return
+        } catch {
+            avHasMore = false
+        }
+    }
+
+    private func shiftAVDay(_ offset: Int) {
+        if let shifted = Calendar(identifier: .gregorian)
+            .date(byAdding: .day, value: offset, to: avDay) {
+            avDay = shifted
+        }
+    }
+
+    private func submitAVSearch() {
+        let keyword = avQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !keyword.isEmpty else { return }
+        avSubmittedQuery = keyword
+        // Force a reload even when the same keyword is re-submitted
+        // (loadKey is unchanged in that case).
+        loadAttempt += 1
     }
 }
 

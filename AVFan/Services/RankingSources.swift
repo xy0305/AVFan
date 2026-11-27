@@ -41,6 +41,8 @@ enum RankingSourcesError: LocalizedError {
     case missavChallenged
     case missavEmpty
     case javrankingEmpty
+    case avbaseChallenged
+    case avbaseEmpty
 
     var errorDescription: String? {
         switch self {
@@ -48,6 +50,8 @@ enum RankingSourcesError: LocalizedError {
         case .missavChallenged: return "MissAV 触发了人机验证，原生请求被拦。稍后再试，或在浏览器打开 MissAV 核对。"
         case .missavEmpty: return "MissAV 榜单页没有解析到条目。"
         case .javrankingEmpty: return "JAV Ranking 榜单页没有解析到条目。"
+        case .avbaseChallenged: return "AVBase 触发了人机验证，原生请求和网页回退都被拦。稍后再试，或在浏览器打开 AVBase 核对。"
+        case .avbaseEmpty: return "AVBase 页面没有解析到条目。"
         }
     }
 }

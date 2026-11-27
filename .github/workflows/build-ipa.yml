@@ -46,6 +46,7 @@ jobs:
             AVFan/Services/TenhowPoster.swift \
             AVFan/Services/TenhowActorLinks.swift \
             AVFan/Services/CataloguePoster.swift \
+            AVFan/Services/AVBaseParser.swift \
             scripts/test_parser_main.swift
           "$RUNNER_TEMP/parser-tests"
 
