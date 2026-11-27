@@ -1125,38 +1125,38 @@ enum ParserTests {
         // __NEXT_DATA__ → props.pageProps.works + total, work fields
         // work_id / prefix / title / casts[].actor / tags[].name /
         // min_date / products[].iteminfo{description, volume}.
-        let avbaseHTML = """
+        let avb60HTML = """
         <html><head><title>AVBase fixture</title></head><body>
         <script id="__NEXT_DATA__" type="application/json">{"props":{"pageProps":{"total":42,"works":[{"work_id":"MBMP-173","prefix":"mbm","title":"サンプル作品タイトル","min_date":"Sat Dec 05 2026 09:00:00 GMT+0900 (Japan Standard Time)","casts":[{"actor":{"name":"女優A子"}},{"actor":{"name":"女優B子"}}],"tags":[{"name":"巨乳"},{"name":"単体作品"}],"products":[{"product_id":"mbmp00173","thumbnail_url":"https://example.com/thumb.jpg","iteminfo":{"volume":"90分"}},{"product_id":"mbmp00173","image_url":"https://example.com/cover.jpg","thumbnail_url":"https://example.com/thumb2.jpg","iteminfo":{"description":"あらすじテキスト","volume":"120分"},"sample_image_urls":["https://example.com/s1.jpg"]}]},{"work_id":"IPZZ-936","title":"二作目タイトル","min_date":"2026-11-05","casts":[],"tags":[]},{"foo":"not a work"}],"decoys":[{"work_id":"XXXX-000"}]}},"buildId":"test-build"}</script>
         </body></html>
         """
-        let avbasePage = AVBaseParser.page(html: avbaseHTML)
-        expect(avbasePage != nil, "avbase page parses from __NEXT_DATA__")
-        expect(avbasePage?.total == 42, "avbase total, got \(String(describing: avbasePage?.total))")
-        expect(avbasePage?.works.count == 2, "avbase works count, got \(avbasePage?.works.count ?? -1)")
-        let avFirst = avbasePage?.works.first
-        expect(avFirst?.code == "MBMP-173", "avbase bare code is the aggregate id, got \(avFirst?.code ?? "nil")")
-        expect(avFirst?.siteCode == "mbm:MBMP-173", "avbase site code keeps the maker prefix, got \(avFirst?.siteCode ?? "nil")")
-        expect(avFirst?.releaseDate == "2026-12-05", "avbase JS-date min_date normalized, got \(avFirst?.releaseDate ?? "nil")")
-        expect(avFirst?.actresses == ["女優A子", "女優B子"], "avbase casts, got \(avFirst?.actresses ?? [])")
-        expect(avFirst?.genres == ["巨乳", "単体作品"], "avbase tags as genres, got \(avFirst?.genres ?? [])")
-        expect(avFirst?.durationMinutes == 120, "avbase duration from the picked product, got \(String(describing: avFirst?.durationMinutes))")
-        expect(avFirst?.summary == "あらすじテキスト", "avbase summary from the picked product, got \(avFirst?.summary ?? "nil")")
-        let avSecond = avbasePage?.works.last
-        expect(avSecond?.code == "IPZZ-936" && avSecond?.siteCode == "IPZZ-936",
+        let avb60Page = AVBaseParser.page(html: avb60HTML)
+        expect(avb60Page != nil, "avbase page parses from __NEXT_DATA__")
+        expect(avb60Page?.total == 42, "avbase total, got \(String(describing: avb60Page?.total))")
+        expect(avb60Page?.works.count == 2, "avbase works count, got \(avb60Page?.works.count ?? -1)")
+        let avb60First = avb60Page?.works.first
+        expect(avb60First?.code == "MBMP-173", "avbase bare code is the aggregate id, got \(avb60First?.code ?? "nil")")
+        expect(avb60First?.siteCode == "mbm:MBMP-173", "avbase site code keeps the maker prefix, got \(avb60First?.siteCode ?? "nil")")
+        expect(avb60First?.releaseDate == "2026-12-05", "avbase JS-date min_date normalized, got \(avb60First?.releaseDate ?? "nil")")
+        expect(avb60First?.actresses == ["女優A子", "女優B子"], "avbase casts, got \(avb60First?.actresses ?? [])")
+        expect(avb60First?.genres == ["巨乳", "単体作品"], "avbase tags as genres, got \(avb60First?.genres ?? [])")
+        expect(avb60First?.durationMinutes == 120, "avbase duration from the picked product, got \(String(describing: avb60First?.durationMinutes))")
+        expect(avb60First?.summary == "あらすじテキスト", "avbase summary from the picked product, got \(avb60First?.summary ?? "nil")")
+        let avb60Second = avb60Page?.works.last
+        expect(avb60Second?.code == "IPZZ-936" && avb60Second?.siteCode == "IPZZ-936",
                "avbase prefix-less work: code == site code")
-        expect(avSecond?.releaseDate == "2026-11-05", "avbase ISO min_date passthrough")
-        expect(avSecond?.durationMinutes == nil, "avbase no products → no duration")
+        expect(avb60Second?.releaseDate == "2026-11-05", "avbase ISO min_date passthrough")
+        expect(avb60Second?.durationMinutes == nil, "avbase no products → no duration")
         expect(AVBaseParser.page(html: "<html><body>no data</body></html>") == nil,
                "avbase page without __NEXT_DATA__ is nil (challenged path)")
 
         // avExtractWorks fallback: no preferred key, the largest
         // work-like array anywhere in pageProps wins.
-        let avFallbackJSON = "{\"result\":[{\"work_id\":\"SONE-001\",\"title\":\"fallback title\"}],\"noise\":[1,2,3]}"
-        let avFallbackProps = (try? JSONSerialization.jsonObject(with: Data(avFallbackJSON.utf8))) as? [String: Any] ?? [:]
-        let avFallback = AVBaseParser.page(props: avFallbackProps)
-        expect(avFallback.works.map(\.code) == ["SONE-001"], "avbase scan fallback finds the works array, got \(avFallback.works.map(\.code))")
-        expect(avFallback.total == nil, "avbase missing total stays nil")
+        let avb60FallbackJSON = "{\"result\":[{\"work_id\":\"SONE-001\",\"title\":\"fallback title\"}],\"noise\":[1,2,3]}"
+        let avb60FallbackProps = (try? JSONSerialization.jsonObject(with: Data(avb60FallbackJSON.utf8))) as? [String: Any] ?? [:]
+        let avb60Fallback = AVBaseParser.page(props: avb60FallbackProps)
+        expect(avb60Fallback.works.map(\.code) == ["SONE-001"], "avbase scan fallback finds the works array, got \(avb60Fallback.works.map(\.code))")
+        expect(avb60Fallback.total == nil, "avbase missing total stays nil")
 
         // avAggregateId / avNormDate / avParseMinutes contracts.
         expect(AVBaseParser.aggregateID(number: nil, code: "mbm:MBMP-173") == "MBMP-173",
@@ -1178,7 +1178,7 @@ enum ParserTests {
 
         // avPickProduct: image-less products still form the pool;
         // the description-bearing one (score 1) beats the empty one.
-        let avPoolWork = AVBaseParser.mapWork([
+        let avb60PoolWork = AVBaseParser.mapWork([
             "work_id": "ABP-123",
             "title": "pool check",
             "products": [
@@ -1186,8 +1186,8 @@ enum ParserTests {
                 [String: Any](),
             ],
         ])
-        expect(avPoolWork?.summary == "d1" && avPoolWork?.durationMinutes == 30,
-               "avbase pick falls back to the full pool without images, got \(String(describing: avPoolWork))")
+        expect(avb60PoolWork?.summary == "d1" && avb60PoolWork?.durationMinutes == 30,
+               "avbase pick falls back to the full pool without images, got \(String(describing: avb60PoolWork))")
         expect(AVBaseParser.productScore(["image_url": "https://example.com/x.jpg"]) == 4,
                "avbase product score: image_url is +4")
 
